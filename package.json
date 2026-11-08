@@ -17,6 +17,7 @@
     "test:layout:upstream": "vitest run --config scripts/flexily.vitest.config.ts",
     "bench:layout": "vitest bench --run --config scripts/flexily.bench.config.ts",
     "typecheck:layout": "tsc --noEmit -p packages/layout/tsconfig.json",
+    "pretypecheck:framework": "npm run lower:counter",
     "typecheck:framework": "tsc --noEmit -p tsconfig.framework.json",
     "test:framework": "vitest run --config scripts/framework.vitest.config.ts",
     "test:build": "node --test scripts/core-inputs.test.mjs scripts/lower-timers.test.mjs",
