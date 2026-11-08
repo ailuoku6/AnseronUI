@@ -1,0 +1,100 @@
+{
+  "date": "2026-11-07",
+  "host": "darwin-arm64",
+  "compiler_commit": "294bb3608da12ae6af7f54f67b47c222c93cb2aa",
+  "compiler_version": "0.2.1",
+  "llvm_helper_version": "0.2.1",
+  "llvm_version": "22.1.8",
+  "runtime_pack_version": "0.2.1",
+  "dynamic": false,
+  "node_upstream_vs_adapted_vs_native": [
+    {
+      "name": "probe-layout",
+      "kind": "exe",
+      "lines": 421,
+      "sha256": "667cc5e8827d13a57b4abbb87f4a9c1115ee54cc24c997d355660ba5032b02fc",
+      "dynamic": false,
+      "passed": true
+    },
+    {
+      "name": "probe-advanced",
+      "kind": "exe",
+      "lines": 596,
+      "sha256": "4bda0b55b7841705279d4b0a7889639df2956e777efb2afd286b997df2b9d765",
+      "dynamic": false,
+      "passed": true
+    }
+  ],
+  "node_upstream_tests": {
+    "summary": {
+      "numTotalTests": 2649,
+      "numPassedTests": 2648,
+      "numFailedTests": 0,
+      "numPendingTests": 1,
+      "success": true
+    },
+    "files": 50,
+    "relayout_consistency_cases": 1749,
+    "exclusions": [
+      "tests/logger.test.ts (optional logging removed from static entry)",
+      "tests/unmeasured-guard.test.ts (Bun tooling, fails under Node harness)",
+      "tests/performance-regression.test.ts (run separately; see separate result)"
+    ],
+    "report_sha256": "e9377a150498020f2537b1cdecf8507b64551eee819c40c1275466c99b49ac4a"
+  },
+  "separate_node_performance_regression_tests": {
+    "numTotalTests": 8,
+    "numPassedTests": 8,
+    "numFailedTests": 0,
+    "numPendingTests": 0,
+    "success": true
+  },
+  "node_benchmarks": {
+    "before": {
+      "numTotalTests": 56,
+      "numPassedTests": 55,
+      "numFailedTests": 1,
+      "numPendingTests": 0,
+      "success": false,
+      "exceptions": [
+        {
+          "name": "Flexily vs Yoga - Flat (warmed up) Flexily: 5000 nodes",
+          "status": "failed",
+          "failure": [
+            "Error: Test timed out in 120000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n    at task (file:///private/tmp/flexily-validation-deps/node_modules/vitest/dist/chunks/run.Cm2sd7-x.js:2692:43)\n    at Object.<anonymous> (file:///private/tmp/flexily-validation-deps/node_modules/vitest/dist/chunks/run.Cm2sd7-x.js:2709:16)\n    at Object.<anonymous> (file:///private/tmp/flexily-validation-deps/node_modules/vitest/dist/chunks/run.Cm2sd7-x.js:2482:28)\n    at chain (file:///private/tmp/flexily-validation-deps/node_modules/vitest/dist/chunks/run.Cm2sd7-x.js:1870:14)\n    at /private/tmp/scriptc-layout-probes-ytngs6rv/flexily/bench/yoga-compare-warmup.bench.ts:142:5\n    at file:///private/tmp/flexily-validation-deps/node_modules/vitest/dist/chunks/run.Cm2sd7-x.js:2774:52\n    at runWithSuite (file:///private/tmp/flexily-validation-deps/node_modules/vitest/dist/chunks/run.Cm2sd7-x.js:3263:8)\n    at Object.collect (file:///private/tmp/flexily-validation-deps/node_modules/vitest/dist/chunks/run.Cm2sd7-x.js:2774:22)\n    at Object.collect (file:///private/tmp/flexily-validation-deps/node_modules/vitest/dist/chunks/run.Cm2sd7-x.js:2779:51)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+          ]
+        }
+      ],
+      "report_sha256": "88e4cc58cff9da2d339463218657e63cf1a5a914ec0abcb68190a220ed8ad8ca"
+    },
+    "after": {
+      "numTotalTests": 56,
+      "numPassedTests": 55,
+      "numFailedTests": 0,
+      "numPendingTests": 1,
+      "success": true,
+      "exceptions": [
+        {
+          "name": "Flexily vs Yoga - Flat (warmed up) Flexily: 5000 nodes",
+          "status": "skipped",
+          "failure": []
+        }
+      ],
+      "report_sha256": "b9a231d66a309cc218fbcde9b862a68d9751580e28e1d4b7c2d5ba9573c62039"
+    }
+  },
+  "composable_probe": {
+    "ok": false,
+    "diagnostic_count": 14,
+    "primary_blocker": "FlexilyNode extends Node static shape; method diagnostics cascade",
+    "adapted": false
+  },
+  "not_verified": [
+    "Android/iOS library embedding",
+    "Wasm execution",
+    "all package exports",
+    "long-running RC/lifetime/leak behavior",
+    "host asynchronous text measurement adapter",
+    "complete performance gate and sub-5-percent regression bound"
+  ]
+}

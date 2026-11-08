@@ -1,0 +1,711 @@
+diff --git a/src/layout-flex-lines.ts b/src/layout-flex-lines.ts
+index 82c1b6cf..e0aaf53a 100644
+--- a/src/layout-flex-lines.ts
++++ b/src/layout-flex-lines.ts
+@@ -57,7 +57,7 @@ export let _lineLengths = new Uint16Array(MAX_FLEX_LINES)
+  * Avoids O(n*m) iteration when processing multi-line flex layouts.
+  * Each slot holds array of Node references for that line.
+  */
+-export let _lineChildren: Node[][] = Array.from({ length: MAX_FLEX_LINES }, () => [])
++export let _lineChildren: Node[][] = Array.from({ length: MAX_FLEX_LINES }, (): Node[] => [])
+ 
+ /**
+  * Pre-allocated array for per-line justify-content start offsets.
+diff --git a/src/layout-helpers.ts b/src/layout-helpers.ts
+index 5d7bfcb4..588e4436 100644
+--- a/src/layout-helpers.ts
++++ b/src/layout-helpers.ts
+@@ -59,7 +59,7 @@ export function isReverseDirection(flexDirection: number): boolean {
+  * - RTL: START->right, END->left
+  */
+ function getLogicalEdgeValue(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   physicalIndex: number,
+   _flexDirection: number,
+   direction: number = C.DIRECTION_LTR,
+@@ -85,7 +85,7 @@ function getLogicalEdgeValue(
+  * When both physical and logical are set, logical takes precedence.
+  */
+ export function resolveEdgeValue(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   physicalIndex: number, // 0=left, 1=top, 2=right, 3=bottom
+   flexDirection: number,
+   availableSize: number,
+@@ -104,7 +104,7 @@ export function resolveEdgeValue(
+  * Check if a logical edge margin is set to auto.
+  */
+ export function isEdgeAuto(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   physicalIndex: number,
+   flexDirection: number,
+   direction: number = C.DIRECTION_LTR,
+@@ -130,7 +130,7 @@ export function isEdgeAuto(
+  * - RTL: START->right, END->left
+  */
+ export function resolvePositionEdge(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   physicalIndex: number, // 0=left, 1=top, 2=right, 3=bottom
+   direction: number = C.DIRECTION_LTR,
+ ): Value {
+@@ -146,7 +146,7 @@ export function resolvePositionEdge(
+ }
+ 
+ export function resolveEdgeBorderValue(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   physicalIndex: number,
+   flexDirection: number,
+   direction: number = C.DIRECTION_LTR,
+diff --git a/src/layout-zero.ts b/src/layout-zero.ts
+index 84aba4c1..dbebf2bb 100644
+--- a/src/layout-zero.ts
++++ b/src/layout-zero.ts
+@@ -29,7 +29,7 @@ import {
+   unknownBaseWidthCount,
+   widthUsesContent,
+ } from "./utils.js"
+-import { log } from "./logger.js"
++
+ import { getTrace } from "./trace.js"
+ 
+ // Re-export helpers for backward compatibility
+@@ -233,16 +233,7 @@ function layoutNode(
+   } else {
+     incLayoutPositioningCalls()
+   }
+-  log.debug?.(
+-    "layoutNode called: availW=%d, availH=%d, offsetX=%d, offsetY=%d, absX=%d, absY=%d, children=%d",
+-    availableWidth,
+-    availableHeight,
+-    offsetX,
+-    offsetY,
+-    absX,
+-    absY,
+-    node.children.length,
+-  )
++  
+   const _t = getTrace()
+   const _tn = _t?.nextNode() ?? 0
+   _t?.layoutEnter(_tn, availableWidth, availableHeight, node.isDirty(), node.children.length)
+@@ -1379,7 +1370,7 @@ function layoutNode(
+     }
+   }
+ 
+-  log.debug?.("layoutNode: node.children=%d, relativeCount=%d", node.children.length, relativeCount)
++  
+ 
+   // Snapshot of this node's flex-line cross sizes, taken before Phase 8
+   // recurses (a nested layoutNode overwrites the module-level line arrays).
+@@ -1630,9 +1621,10 @@ function layoutNode(
+ 
+         // Compute baseline: use baselineFunc if available, otherwise use bottom of content box
+         // Store directly in child.flex.baseline (zero-alloc)
+-        if (child.baselineFunc !== null) {
++        const baseline = child.baselineFunc
++        if (baseline !== null) {
+           // Custom baseline function provided (e.g., for text nodes)
+-          child.flex.baseline = topMargin + child.baselineFunc(childWidth, childHeight)
++          child.flex.baseline = topMargin + baseline(childWidth, childHeight)
+         } else {
+           // Fallback: bottom of content box (default for non-text elements)
+           // Note: We don't recursively propagate first-child baselines to avoid O(n^depth) cost
+@@ -1768,7 +1760,7 @@ function layoutNode(
+         case C.ALIGN_FLEX_END:
+           // Lines packed at end (works with negative free space too — shifts lines up)
+           for (let i = 0; i < numLines; i++) {
+-            _lineCrossOffsets[i]! += freeSpace
++            _lineCrossOffsets[i] += freeSpace
+           }
+           break
+ 
+@@ -1777,7 +1769,7 @@ function layoutNode(
+           {
+             const centerOffset = freeSpace / 2
+             for (let i = 0; i < numLines; i++) {
+-              _lineCrossOffsets[i]! += centerOffset
++              _lineCrossOffsets[i] += centerOffset
+             }
+           }
+           break
+@@ -1788,7 +1780,7 @@ function layoutNode(
+           if (freeSpace > 0 && numLines > 1) {
+             const gap = freeSpace / (numLines - 1)
+             for (let i = 1; i < numLines; i++) {
+-              _lineCrossOffsets[i]! += gap * i
++              _lineCrossOffsets[i] += gap * i
+             }
+           }
+           break
+@@ -1799,13 +1791,13 @@ function layoutNode(
+           if (freeSpace > 0) {
+             const halfGap = freeSpace / (numLines * 2)
+             for (let i = 0; i < numLines; i++) {
+-              _lineCrossOffsets[i]! += halfGap + halfGap * 2 * i
++              _lineCrossOffsets[i] += halfGap + halfGap * 2 * i
+             }
+           } else {
+             // Negative space: center fallback
+             const centerOffset = freeSpace / 2
+             for (let i = 0; i < numLines; i++) {
+-              _lineCrossOffsets[i]! += centerOffset
++              _lineCrossOffsets[i] += centerOffset
+             }
+           }
+           break
+@@ -1816,13 +1808,13 @@ function layoutNode(
+           if (freeSpace > 0 && numLines > 0) {
+             const gap = freeSpace / (numLines + 1)
+             for (let i = 0; i < numLines; i++) {
+-              _lineCrossOffsets[i]! += gap * (i + 1)
++              _lineCrossOffsets[i] += gap * (i + 1)
+             }
+           } else if (freeSpace < 0) {
+             // Negative space: center fallback
+             const centerOffset = freeSpace / 2
+             for (let i = 0; i < numLines; i++) {
+-              _lineCrossOffsets[i]! += centerOffset
++              _lineCrossOffsets[i] += centerOffset
+             }
+           }
+           break
+@@ -1832,7 +1824,7 @@ function layoutNode(
+           if (freeSpace > 0 && numLines > 0) {
+             const extraPerLine = freeSpace / numLines
+             for (let i = 0; i < numLines; i++) {
+-              _lineCrossSizes[i]! += extraPerLine
++              _lineCrossSizes[i] += extraPerLine
+               // Recalculate offset for subsequent lines
+               if (i > 0) {
+                 _lineCrossOffsets[i] = _lineCrossOffsets[i - 1]! + _lineCrossSizes[i - 1]! + crossGap
+@@ -1855,7 +1847,7 @@ function layoutNode(
+         totalLineCrossSize += crossGap * (numLines - 1)
+         const crossStartOffset = crossAxisSize - totalLineCrossSize
+         for (let i = 0; i < numLines; i++) {
+-          _lineCrossOffsets[i]! += crossStartOffset
++          _lineCrossOffsets[i] += crossStartOffset
+         }
+       }
+     }
+@@ -1912,8 +1904,9 @@ function layoutNode(
+     // also performs no work — `markDirty()` is skipped on the empty-overrides
+     // path. This means installing the hook is safe in non-CQ trees without
+     // measurable cost.
+-    if (node.cqResolve !== null) {
+-      node.cqResolve()
++    const cqResolve = node.cqResolve
++    if (cqResolve !== null) {
++      cqResolve()
+     }
+ 
+     // -----------------------------------------------------------------------
+@@ -1953,14 +1946,7 @@ function layoutNode(
+     let currentLineLength = 0 // Length of current line
+     let currentItemSpacing = itemSpacing // Track current line's item spacing
+ 
+-    log.debug?.(
+-      "positioning children: isRow=%s, startOffset=%d, relativeCount=%d, effectiveReverse=%s, numLines=%d",
+-      isRow,
+-      startOffset,
+-      relativeCount,
+-      effectiveReverse,
+-      numLines,
+-    )
++    
+ 
+     for (const child of node.children) {
+       if (child.flex.relativeIndex < 0) continue
+@@ -2700,25 +2686,18 @@ function layoutNode(
+           : child.layout.height
+       // Use computed margin values (including auto margins)
+       const totalMainMargin = cflex.mainStartMarginValue + cflex.mainEndMarginValue
+-      log.debug?.(
+-        "  child %d: mainPos=%d -> top=%d (fractionalMainSize=%d, totalMainMargin=%d)",
+-        relIdx,
+-        mainPos,
+-        child.layout.top,
+-        fractionalMainSize,
+-        totalMainMargin,
+-      )
++      
+       if (effectiveReverse) {
+-        mainPos! -= fractionalMainSize + totalMainMargin
++        mainPos -= fractionalMainSize + totalMainMargin
+         // Add spacing only between items on the SAME LINE (not across line breaks)
+         if (lineChildIdx < currentLineLength - 1) {
+-          mainPos! -= currentItemSpacing!
++          mainPos -= currentItemSpacing!
+         }
+       } else {
+-        mainPos! += fractionalMainSize + totalMainMargin
++        mainPos += fractionalMainSize + totalMainMargin
+         // Add spacing only between items on the SAME LINE (not across line breaks)
+         if (lineChildIdx < currentLineLength - 1) {
+-          mainPos! += currentItemSpacing!
++          mainPos += currentItemSpacing!
+         }
+       }
+       relIdx++
+diff --git a/src/length.ts b/src/length.ts
+index c1928f6f..21926b78 100644
+--- a/src/length.ts
++++ b/src/length.ts
+@@ -69,12 +69,12 @@ export function parseLength(input: string, scale: LengthScale): Value {
+       if (args.some(number)) fail("unitless numbers are only multiplication or division operands")
+       if (name === "clamp") {
+         if (args.length !== 3) fail("clamp() takes exactly three lengths")
+-        return Object.freeze({ fn: "clamp", args: Object.freeze(args) as readonly [MathExpr, MathExpr, MathExpr] })
++        return Object.freeze({ fn: "clamp", args: Object.freeze([args[0]!, args[1]!, args[2]!]) as readonly [MathExpr, MathExpr, MathExpr] })
+       }
+-      return Object.freeze({ fn: name as "min" | "max", args: Object.freeze(args) })
++      return Object.freeze({ fn: name as "min" | "max", args: Object.freeze([...args]) })
+     }
+     const token = /^[+-]?(?:\d*\.\d+|\d+)(?:e[+-]?\d+)?/i.exec(input.slice(pos))?.[0]
+-    if (!token) return fail("expected a length")
++    if (!token) throw new LengthError(input, "expected a length")
+     pos += token.length
+     const value = Number(token)
+     if (input[pos] === "%") {
+@@ -89,7 +89,7 @@ export function parseLength(input: string, scale: LengthScale): Value {
+     if (unit === "cqi") return leaf(value, C.UNIT_CQI)
+     if (unit === "px") fail("px has no adapter pixel scale; use ch for columns or lh for rows")
+     if (["cqmin", "cqb", "cqmax"].includes(unit)) fail(`${unit} waits for #26239`)
+-    return fail(`unsupported length unit ${unit}; use ch, lh, % or cqi`)
++    throw new LengthError(input, `unsupported length unit ${unit}; use ch, lh, % or cqi`)
+   }
+ 
+   function product(): MathExpr {
+@@ -150,6 +150,7 @@ export function assertLengthAxis(value: Value, axis: "inline" | "block", prop: s
+       return axis === "inline" ? expr.unit === C.UNIT_LH : expr.unit === C.UNIT_CH || expr.unit === C.UNIT_CQI
+     }
+     if ("op" in expr) return mismatch(expr.left) || mismatch(expr.right)
++    if (expr.fn === "clamp") return mismatch(expr.args[0]) || mismatch(expr.args[1]) || mismatch(expr.args[2])
+     return expr.args.some(mismatch)
+   }
+   if (mismatch(value))
+diff --git a/src/node-zero.ts b/src/node-zero.ts
+index c090bcda..dbcddef0 100644
+--- a/src/node-zero.ts
++++ b/src/node-zero.ts
+@@ -39,7 +39,7 @@ import {
+   findContainerQuerySize,
+ } from "./utils.js"
+ import { isRowDirection, isEdgeAuto, resolveEdgeValue, resolveEdgeBorderValue } from "./layout-helpers.js"
+-import { log } from "./logger.js"
++
+ import { getTrace } from "./trace.js"
+ import { layoutGeneration } from "./layout-flex-lines.js"
+ 
+@@ -70,6 +70,14 @@ type StyleNumberKey =
+   | "overflow"
+   | "containerType"
+ 
++function styleValueArraysEqual(current: readonly Value[] | undefined, next: readonly Value[]): boolean {
++  if (current === undefined || current.length !== next.length) return false
++  for (let i = 0; i < current.length; i++) {
++    if (!styleValuesEqual(current[i]!, next[i]!)) return false
++  }
++  return true
++}
++
+ type FitWidthInput = readonly (number | { value: number; unit: number })[] | undefined
+ 
+ function isStyleValue(value: unknown): value is Value {
+@@ -366,37 +374,98 @@ export class Node {
+     this._style = createDefaultStyle(preset)
+   }
+ 
++  // Static field dispatch: preserve the heterogeneous Style shape.
++  private getStyleValue(key: StyleValueKey): Value {
++    switch (key) {
++      case "width": return this._style.width
++      case "height": return this._style.height
++      case "minWidth": return this._style.minWidth
++      case "minHeight": return this._style.minHeight
++      case "maxWidth": return this._style.maxWidth
++      case "maxHeight": return this._style.maxHeight
++      case "flexBasis": return this._style.flexBasis
++    }
++  }
++
++  private writeStyleValue(key: StyleValueKey, value: Value): void {
++    switch (key) {
++      case "width": this._style.width = value; return
++      case "height": this._style.height = value; return
++      case "minWidth": this._style.minWidth = value; return
++      case "minHeight": this._style.minHeight = value; return
++      case "maxWidth": this._style.maxWidth = value; return
++      case "maxHeight": this._style.maxHeight = value; return
++      case "flexBasis": this._style.flexBasis = value; return
++    }
++  }
++
++  // Static field dispatch: preserve the heterogeneous Style shape.
++  private getStyleNumber(key: StyleNumberKey): number {
++    switch (key) {
++      case "display": return this._style.display
++      case "positionType": return this._style.positionType
++      case "flexDirection": return this._style.flexDirection
++      case "flexWrap": return this._style.flexWrap
++      case "flexGrow": return this._style.flexGrow
++      case "flexShrink": return this._style.flexShrink
++      case "alignItems": return this._style.alignItems
++      case "alignSelf": return this._style.alignSelf
++      case "alignContent": return this._style.alignContent
++      case "justifyContent": return this._style.justifyContent
++      case "aspectRatio": return this._style.aspectRatio
++      case "overflow": return this._style.overflow
++      case "containerType": return this._style.containerType
++    }
++  }
++
++  private writeStyleNumber(key: StyleNumberKey, value: number): void {
++    switch (key) {
++      case "display": this._style.display = value; return
++      case "positionType": this._style.positionType = value; return
++      case "flexDirection": this._style.flexDirection = value; return
++      case "flexWrap": this._style.flexWrap = value; return
++      case "flexGrow": this._style.flexGrow = value; return
++      case "flexShrink": this._style.flexShrink = value; return
++      case "alignItems": this._style.alignItems = value; return
++      case "alignSelf": this._style.alignSelf = value; return
++      case "alignContent": this._style.alignContent = value; return
++      case "justifyContent": this._style.justifyContent = value; return
++      case "aspectRatio": this._style.aspectRatio = value; return
++      case "overflow": this._style.overflow = value; return
++      case "containerType": this._style.containerType = value; return
++    }
++  }
+   private setStyleValue(key: StyleValueKey, value: number | Value, unit: number): void {
+     if (typeof value === "object") {
+       if (key !== "flexBasis") {
+         const axis = key === "width" || key === "minWidth" || key === "maxWidth" ? "inline" : "block"
+         assertLengthAxis(value, axis, key)
+       }
+-      if (styleValuesEqual(this._style[key], value)) return
+-      this._style[key] = value
++      if (styleValuesEqual(this.getStyleValue(key), value)) return
++      this.writeStyleValue(key, value)
+       this.markDirty()
+       return
+     }
+-    if (styleValueMatches(this._style[key], value, unit)) {
++    if (styleValueMatches(this.getStyleValue(key), value, unit)) {
+       return
+     }
+-    this._style[key] = { value, unit }
++    this.writeStyleValue(key, { value, unit })
+     this.markDirty()
+   }
+ 
+   private setStyleNumber(key: StyleNumberKey, value: number): void {
+-    if (Object.is(this._style[key], value)) {
++    if (Object.is(this.getStyleNumber(key), value)) {
+       return
+     }
+-    this._style[key] = value
++    this.writeStyleNumber(key, value)
+     this.markDirty()
+   }
+ 
+   private setStyleBoolean(key: "containSize", value: boolean): void {
+-    if (this._style[key] === value) {
++    if (this._style.containSize === value) {
+       return
+     }
+-    this._style[key] = value
++    this._style.containSize = value
+     this.markDirty()
+   }
+ 
+@@ -1305,23 +1374,143 @@ export class Node {
+    */
+   setContainerQueryStyle(overrides: Partial<Style>): void {
+     let touched = false
+-    // Object.entries is fine here — this is a slow/cold path called at most
+-    // once per layoutNode pass on CQ-active nodes; the hot path is layout-zero
+-    // itself, not this mutator.
+-    for (const key of Object.keys(overrides) as (keyof Style)[]) {
+-      const v = overrides[key]
+-      if (v === undefined) continue
+-      if (styleFieldEquals(this._style[key], v)) {
+-        continue
+-      }
+-      // Type-erased write — the Partial<Style> shape guarantees v matches the
+-      // field type. Cast is local to this assignment.
+-      ;(this._style as unknown as Record<string, unknown>)[key as string] = v
++    // Explicit dispatch keeps each override statically typed.
++    const display = overrides.display
++    if (Object.hasOwn(overrides, "display") && display !== undefined && !(Object.is(this._style.display, display))) {
++      this._style.display = display
+       touched = true
+     }
+-    if (touched) {
+-      this.markDirty()
++    const positionType = overrides.positionType
++    if (Object.hasOwn(overrides, "positionType") && positionType !== undefined && !(Object.is(this._style.positionType, positionType))) {
++      this._style.positionType = positionType
++      touched = true
++    }
++    const flexDirection = overrides.flexDirection
++    if (Object.hasOwn(overrides, "flexDirection") && flexDirection !== undefined && !(Object.is(this._style.flexDirection, flexDirection))) {
++      this._style.flexDirection = flexDirection
++      touched = true
++    }
++    const flexWrap = overrides.flexWrap
++    if (Object.hasOwn(overrides, "flexWrap") && flexWrap !== undefined && !(Object.is(this._style.flexWrap, flexWrap))) {
++      this._style.flexWrap = flexWrap
++      touched = true
++    }
++    const flexGrow = overrides.flexGrow
++    if (Object.hasOwn(overrides, "flexGrow") && flexGrow !== undefined && !(Object.is(this._style.flexGrow, flexGrow))) {
++      this._style.flexGrow = flexGrow
++      touched = true
++    }
++    const flexShrink = overrides.flexShrink
++    if (Object.hasOwn(overrides, "flexShrink") && flexShrink !== undefined && !(Object.is(this._style.flexShrink, flexShrink))) {
++      this._style.flexShrink = flexShrink
++      touched = true
++    }
++    const alignItems = overrides.alignItems
++    if (Object.hasOwn(overrides, "alignItems") && alignItems !== undefined && !(Object.is(this._style.alignItems, alignItems))) {
++      this._style.alignItems = alignItems
++      touched = true
++    }
++    const alignSelf = overrides.alignSelf
++    if (Object.hasOwn(overrides, "alignSelf") && alignSelf !== undefined && !(Object.is(this._style.alignSelf, alignSelf))) {
++      this._style.alignSelf = alignSelf
++      touched = true
++    }
++    const alignContent = overrides.alignContent
++    if (Object.hasOwn(overrides, "alignContent") && alignContent !== undefined && !(Object.is(this._style.alignContent, alignContent))) {
++      this._style.alignContent = alignContent
++      touched = true
++    }
++    const justifyContent = overrides.justifyContent
++    if (Object.hasOwn(overrides, "justifyContent") && justifyContent !== undefined && !(Object.is(this._style.justifyContent, justifyContent))) {
++      this._style.justifyContent = justifyContent
++      touched = true
++    }
++    const aspectRatio = overrides.aspectRatio
++    if (Object.hasOwn(overrides, "aspectRatio") && aspectRatio !== undefined && !(Object.is(this._style.aspectRatio, aspectRatio))) {
++      this._style.aspectRatio = aspectRatio
++      touched = true
++    }
++    const overflow = overrides.overflow
++    if (Object.hasOwn(overrides, "overflow") && overflow !== undefined && !(Object.is(this._style.overflow, overflow))) {
++      this._style.overflow = overflow
++      touched = true
+     }
++    const containerType = overrides.containerType
++    if (Object.hasOwn(overrides, "containerType") && containerType !== undefined && !(Object.is(this._style.containerType, containerType))) {
++      this._style.containerType = containerType
++      touched = true
++    }
++    const width = overrides.width
++    if (Object.hasOwn(overrides, "width") && width !== undefined && !(styleValuesEqual(this._style.width, width))) {
++      this._style.width = width
++      touched = true
++    }
++    const height = overrides.height
++    if (Object.hasOwn(overrides, "height") && height !== undefined && !(styleValuesEqual(this._style.height, height))) {
++      this._style.height = height
++      touched = true
++    }
++    const minWidth = overrides.minWidth
++    if (Object.hasOwn(overrides, "minWidth") && minWidth !== undefined && !(styleValuesEqual(this._style.minWidth, minWidth))) {
++      this._style.minWidth = minWidth
++      touched = true
++    }
++    const minHeight = overrides.minHeight
++    if (Object.hasOwn(overrides, "minHeight") && minHeight !== undefined && !(styleValuesEqual(this._style.minHeight, minHeight))) {
++      this._style.minHeight = minHeight
++      touched = true
++    }
++    const maxWidth = overrides.maxWidth
++    if (Object.hasOwn(overrides, "maxWidth") && maxWidth !== undefined && !(styleValuesEqual(this._style.maxWidth, maxWidth))) {
++      this._style.maxWidth = maxWidth
++      touched = true
++    }
++    const maxHeight = overrides.maxHeight
++    if (Object.hasOwn(overrides, "maxHeight") && maxHeight !== undefined && !(styleValuesEqual(this._style.maxHeight, maxHeight))) {
++      this._style.maxHeight = maxHeight
++      touched = true
++    }
++    const flexBasis = overrides.flexBasis
++    if (Object.hasOwn(overrides, "flexBasis") && flexBasis !== undefined && !(styleValuesEqual(this._style.flexBasis, flexBasis))) {
++      this._style.flexBasis = flexBasis
++      touched = true
++    }
++    const position = overrides.position
++    if (Object.hasOwn(overrides, "position") && position !== undefined && !(styleValueArraysEqual(this._style.position, position))) {
++      this._style.position = position
++      touched = true
++    }
++    const margin = overrides.margin
++    if (Object.hasOwn(overrides, "margin") && margin !== undefined && !(styleValueArraysEqual(this._style.margin, margin))) {
++      this._style.margin = margin
++      touched = true
++    }
++    const padding = overrides.padding
++    if (Object.hasOwn(overrides, "padding") && padding !== undefined && !(styleValueArraysEqual(this._style.padding, padding))) {
++      this._style.padding = padding
++      touched = true
++    }
++    const border = overrides.border
++    if (Object.hasOwn(overrides, "border") && border !== undefined && !(styleValueArraysEqual(this._style.border, border))) {
++      this._style.border = border
++      touched = true
++    }
++    const gap = overrides.gap
++    if (Object.hasOwn(overrides, "gap") && gap !== undefined && !(styleValueArraysEqual(this._style.gap, gap))) {
++      this._style.gap = gap
++      touched = true
++    }
++    const fitWidth = overrides.fitWidth
++    if (Object.hasOwn(overrides, "fitWidth") && fitWidth !== undefined && !(styleValueArraysEqual(this._style.fitWidth, fitWidth))) {
++      this._style.fitWidth = fitWidth
++      touched = true
++    }
++    const containSize = overrides.containSize
++    if (Object.hasOwn(overrides, "containSize") && containSize !== undefined && !(this._style.containSize === containSize)) {
++      this._style.containSize = containSize
++      touched = true
++    }
++    if (touched) this.markDirty()
+   }
+ 
+   // ============================================================================
+@@ -1365,7 +1554,7 @@ export class Node {
+       Object.is(this._lastCalcH, availableHeight) &&
+       this._lastCalcDir === direction
+     ) {
+-      log.debug?.("layout skip (not dirty, constraints unchanged)")
++      
+       return
+     }
+ 
+@@ -1379,8 +1568,6 @@ export class Node {
+     this._lastCalcDir = direction
+ 
+     // Only compute debug stats when debug logging is enabled (avoid O(n) traversal in production)
+-    const start = log.debug ? Date.now() : 0
+-    const nodeCount = log.debug ? countNodes(this) : 0
+ 
+     // Reset measure statistics for this layout pass
+     Node.resetMeasureStats()
+@@ -1393,15 +1580,7 @@ export class Node {
+     this._hasNewLayout = true
+     markSubtreeLayoutSeen(this)
+ 
+-    log.debug?.(
+-      "layout: %dx%d, %d nodes in %dms (measure: calls=%d hits=%d)",
+-      width,
+-      height,
+-      nodeCount,
+-      Date.now() - start,
+-      Node.measureCalls,
+-      Node.measureCacheHits,
+-    )
++    
+   }
+ 
+   // ============================================================================
+diff --git a/src/types.ts b/src/types.ts
+index f32b40a0..f01d247e 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -231,7 +231,7 @@ export interface Style {
+ 
+   // Position
+   positionType: number
+-  position: [Value, Value, Value, Value, Value, Value] // [left, top, right, bottom, start, end]
++  position: Value[] // [left, top, right, bottom, start, end]
+ 
+   // Flex
+   flexDirection: number
+@@ -258,12 +258,12 @@ export interface Style {
+   // Spacing (per-edge: left, top, right, bottom, start, end)
+   // Physical edges: [0]=left, [1]=top, [2]=right, [3]=bottom
+   // Logical edges: [4]=start, [5]=end (resolved based on flex direction)
+-  margin: [Value, Value, Value, Value, Value, Value]
+-  padding: [Value, Value, Value, Value, Value, Value]
+-  border: [Value, Value, Value, Value, Value, Value] // [left, top, right, bottom, start, end]
++  margin: Value[]
++  padding: Value[]
++  border: Value[] // [left, top, right, bottom, start, end]
+ 
+   // Gap
+-  gap: [Value, Value] // [column, row]
++  gap: Value[] // [column, row]
+ 
+   // Overflow
+   overflow: number
+diff --git a/src/utils.ts b/src/utils.ts
+index eeffd870..8e5f7717 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -52,7 +52,7 @@ export function pointSpacing(value: Value, getter: string, path: string): number
+  * Return true when setEdgeValue would leave the edge array unchanged.
+  */
+ export function edgeValueMatches(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   edge: number,
+   value: number | Value,
+   unit: number = C.UNIT_POINT,
+@@ -87,7 +87,7 @@ export function edgeValueMatches(
+ }
+ 
+ export function edgeBorderMatches(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   edge: number,
+   value: number | Value,
+ ): boolean {
+@@ -100,7 +100,7 @@ export function edgeBorderMatches(
+  * Set a value on an edge array (supports all edge types including logical START/END).
+  */
+ export function setEdgeValue(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   edge: number,
+   value: number | Value,
+   unit: number = C.UNIT_POINT,
+@@ -148,7 +148,7 @@ export function setEdgeValue(
+  * Set a border value on an edge array.
+  */
+ export function setEdgeBorder(
+-  arr: [Value, Value, Value, Value, Value, Value],
++  arr: Value[],
+   edge: number,
+   value: number | Value,
+ ): void {
+@@ -180,14 +180,14 @@ export function getEdgeIndex(edge: number): number {
+ }
+ 
+ /** Read a stored edge Value with the existing aggregate/unknown left fallback. */
+-export function getEdgeValue(arr: [Value, Value, Value, Value, Value, Value], edge: number): Value {
++export function getEdgeValue(arr: Value[], edge: number): Value {
+   return arr[getEdgeIndex(edge)]!
+ }
+ 
+ /**
+  * Get a border value from an edge array.
+  */
+-export function getEdgeBorderValue(arr: [Value, Value, Value, Value, Value, Value], edge: number): number {
++export function getEdgeBorderValue(arr: Value[], edge: number): number {
+   return pointSpacing(getEdgeValue(arr, edge), "getBorder", "node.style.border")
+ }
+ 
+@@ -392,6 +392,7 @@ export function pctIndefinite(value: Value, available: number): boolean {
+ export function containsPercent(expr: MathExpr): boolean {
+   if ("unit" in expr) return expr.unit === C.UNIT_PERCENT || (expr.expr !== undefined && containsPercent(expr.expr))
+   if ("op" in expr) return containsPercent(expr.left) || containsPercent(expr.right)
++  if (expr.fn === "clamp") return containsPercent(expr.args[0]) || containsPercent(expr.args[1]) || containsPercent(expr.args[2])
+   for (const arg of expr.args) if (containsPercent(arg)) return true
+   return false
+ }

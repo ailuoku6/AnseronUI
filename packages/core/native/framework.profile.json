@@ -1,0 +1,35 @@
+{
+  "profile_format": 1,
+  "name": "anseronui-framework",
+  "entry": "entry.ts",
+  "emission": "llvm",
+  "optimization": "release",
+  "async_embedding": {
+    "version": 1
+  },
+  "abi": {
+    "prefix": "anseronui_framework_",
+    "init_symbol": "anseronui_framework_init",
+    "sink_register_symbol": "anseronui_framework_sink",
+    "collect_symbol": "anseronui_framework_collect",
+    "result_reset_symbol": "anseronui_framework_reset",
+    "instance_per_thread": true,
+    "localize_runtime": true
+  },
+  "exports": [
+    {
+      "export": "version",
+      "symbol": "anseronui_framework_version",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "export": "execute",
+      "symbol": "anseronui_framework_execute",
+      "params": [
+        "string"
+      ],
+      "returns": "string"
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "profile_format": 1,
+  "name": "anseronui-core",
+  "entry": "entry.ts",
+  "emission": "llvm",
+  "optimization": "release",
+  "async_embedding": {
+    "version": 1
+  },
+  "abi": {
+    "prefix": "anseronui_core_",
+    "init_symbol": "anseronui_core_init",
+    "sink_register_symbol": "anseronui_core_sink",
+    "collect_symbol": "anseronui_core_collect",
+    "result_reset_symbol": "anseronui_core_reset",
+    "instance_per_thread": true
+  },
+  "exports": [
+    {
+      "export": "create",
+      "symbol": "anseronui_core_create",
+      "params": [],
+      "returns": "void"
+    },
+    {
+      "export": "post",
+      "symbol": "anseronui_core_post",
+      "params": [
+        "string"
+      ],
+      "returns": "void"
+    },
+    {
+      "export": "step",
+      "symbol": "anseronui_core_step",
+      "params": [],
+      "returns": "string"
+    },
+    {
+      "export": "pending",
+      "symbol": "anseronui_core_pending",
+      "params": [],
+      "returns": "bool"
+    },
+    {
+      "export": "dispose",
+      "symbol": "anseronui_core_dispose",
+      "params": [],
+      "returns": "void"
+    }
+  ],
+  "npm_static": [
+    "@anseronui/core",
+    "@anseronui/ui",
+    "@anseronui/protocol",
+    "@anseronui/layout"
+  ]
+}

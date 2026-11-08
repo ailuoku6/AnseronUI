@@ -1,0 +1,111 @@
+{
+  "compiler": "0.4.8",
+  "platform": "darwin-arm64",
+  "probes": [
+    {
+      "name": "probe-layout",
+      "lines": 421,
+      "sha256": "667cc5e8827d13a57b4abbb87f4a9c1115ee54cc24c997d355660ba5032b02fc",
+      "passed": true
+    },
+    {
+      "name": "probe-advanced",
+      "lines": 596,
+      "sha256": "4bda0b55b7841705279d4b0a7889639df2956e777efb2afd286b997df2b9d765",
+      "passed": true
+    },
+    {
+      "name": "engine",
+      "lines": 16,
+      "sha256": "951f2b3bd862b14a0e0a743f286b06f139014241e9ce9132ba06ce87a096eecd",
+      "passed": true
+    }
+  ],
+  "library": {
+    "compiled": true,
+    "hostExecuted": true,
+    "passed": true
+  },
+  "wasm": {
+    "compiled": true,
+    "wasiExecuted": true,
+    "passed": true
+  },
+  "date": "2026-11-07",
+  "upstream": {
+    "repository": "https://github.com/beorn/flexily",
+    "version": "0.8.5",
+    "commit": "4850f1fb475f8147458059b45fb4f148d14a6ab4",
+    "license": "MIT"
+  },
+  "toolchain": {
+    "scriptc": "0.4.8",
+    "@scriptc/llvm-darwin-arm64": "0.4.8",
+    "@scriptc/runtime-darwin-arm64": "0.4.8",
+    "@scriptc/runtime-wasm32-wasi": "0.4.8"
+  },
+  "static_executable_flags": [
+    "--tier",
+    "static-only",
+    "--node-islands",
+    "off"
+  ],
+  "compiler_runtime_modified": false,
+  "upstream_node_tests": {
+    "numTotalTests": 2649,
+    "numPassedTests": 2648,
+    "numFailedTests": 0,
+    "numPendingTests": 1,
+    "success": true,
+    "files": 50,
+    "report_sha256": "14a684c85debfb6464ae6a66cd14ba3d514775231da1ee7fb06012ab921368f0",
+    "excluded": [
+      "tests/logger.test.ts (upstream publish/Bun tooling, outside static entry)",
+      "tests/unmeasured-guard.test.ts (benchmark-report CLI tooling)",
+      "tests/performance-regression.test.ts (run separately)"
+    ]
+  },
+  "separate_node_performance_regression_tests": {
+    "numTotalTests": 8,
+    "numPassedTests": 8,
+    "numFailedTests": 0,
+    "numPendingTests": 0,
+    "success": true,
+    "files": 1,
+    "report_sha256": "7f60742ca3bcb7cdba4ab67ab5c3837e925cd13f6deb1d96f90d23508627ede8"
+  },
+  "benchmarks_before": {
+    "numTotalTests": 56,
+    "numPassedTests": 55,
+    "numFailedTests": 0,
+    "numPendingTests": 1,
+    "success": true,
+    "files": 2,
+    "report_sha256": "edc2422a834f34a392c565c525510297ffe20baf9e576206bf8e52216c5b8e08"
+  },
+  "benchmarks_after": {
+    "numTotalTests": 56,
+    "numPassedTests": 55,
+    "numFailedTests": 0,
+    "numPendingTests": 1,
+    "success": true,
+    "files": 2,
+    "report_sha256": "795b3429a2e8f678fbf4cb9275e3acf484796ee2ceab333dff2c4533474c11a4"
+  },
+  "benchmark_limitations": [
+    "Flexily: 5000 nodes explicitly excluded in both runs after prior known 120-second timeout",
+    "Other host CPU load prevents precise comparative conclusions",
+    "No null control; no sub-5-percent regression or native/Wasm performance claim"
+  ],
+  "not_verified": [
+    "Android/iOS library embedding and real UI",
+    "Browser WASI/DOM adapter",
+    "Host asynchronous text measurement/cache integration",
+    "Device-scale/fractional coordinate policy (upstream currently rounds to integer logical units)",
+    "Long-running RC/lifetime/leak behavior",
+    "Upstream composable terminal text plugins under scriptc",
+    "Complete benchmark gate including 5000-node case"
+  ],
+  "flexily_source_sha256": "b92e97bb2e7f37815202000cd3bc0d45ae5d7f00744308fddb6983dad927ef74",
+  "layout_source_and_tests_sha256": "6a3f4756fc582c30bcf954ee1be12e6f84e5a8e9281a0bdaebde8b648b0afb52"
+}

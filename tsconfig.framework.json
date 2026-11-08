@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "ESNext.Disposable", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "@anseronui/ui",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": [
+    "packages/protocol/src/**/*.ts",
+    "packages/ui/src/**/*.ts",
+    "packages/core/src/**/*.ts",
+    "packages/core/test/**/*.ts",
+    "packages/ui-compiler/src/**/*.ts",
+    "packages/ui-compiler/test/**/*.ts",
+    "packages/render-web/src/**/*.ts",
+    "packages/render-web/test/**/*.ts",
+    "examples/**/*.tsx"
+  ]
+}

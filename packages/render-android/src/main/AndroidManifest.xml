@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The pinned AOT runtime packs pointers in values and cannot preserve heap tags. -->
+    <application android:allowNativeHeapPointerTagging="false" />
+</manifest>

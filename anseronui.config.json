@@ -1,0 +1,37 @@
+{
+  "buildId": "anseronui-demo",
+  "sourceDirs": [
+    "examples/counter",
+    "examples/async-form",
+    "examples/components",
+    "examples/extensions",
+    "examples/timers"
+  ],
+  "pages": [
+    {
+      "name": "counter",
+      "source": "examples/counter/page.tsx",
+      "export": "counterPage"
+    },
+    {
+      "name": "async-form",
+      "source": "examples/async-form/page.tsx",
+      "export": "asyncFormPage"
+    },
+    {
+      "name": "components",
+      "source": "examples/components/page.tsx",
+      "export": "componentsPage"
+    },
+    {
+      "name": "extensions",
+      "source": "examples/extensions/page.tsx",
+      "export": "extensionsPage"
+    },
+    {
+      "name": "timers",
+      "source": "examples/timers/page.tsx",
+      "export": "timersPage"
+    }
+  ]
+}

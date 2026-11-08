@@ -1,0 +1,79 @@
+{
+  "profile_format": 1,
+  "name": "anseronui-business",
+  "entry": "entry.ts",
+  "emission": "llvm",
+  "optimization": "release",
+  "async_embedding": {
+    "version": 1
+  },
+  "abi": {
+    "prefix": "anseronui_business_",
+    "init_symbol": "anseronui_business_init",
+    "sink_register_symbol": "anseronui_business_sink",
+    "collect_symbol": "anseronui_business_collect",
+    "result_reset_symbol": "anseronui_business_reset",
+    "instance_per_thread": true,
+    "localize_runtime": true
+  },
+  "exports": [
+    {
+      "export": "version",
+      "symbol": "anseronui_business_version",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "export": "create",
+      "symbol": "anseronui_business_create",
+      "params": [],
+      "returns": "void"
+    },
+    {
+      "export": "post",
+      "symbol": "anseronui_business_post",
+      "params": [
+        "string"
+      ],
+      "returns": "void"
+    },
+    {
+      "export": "advance",
+      "symbol": "anseronui_business_advance",
+      "params": [],
+      "returns": "void"
+    },
+    {
+      "export": "step",
+      "symbol": "anseronui_business_step",
+      "params": [],
+      "returns": "string"
+    },
+    {
+      "export": "coreRequest",
+      "symbol": "anseronui_business_coreRequest",
+      "params": [],
+      "returns": "string"
+    },
+    {
+      "export": "coreResult",
+      "symbol": "anseronui_business_coreResult",
+      "params": [
+        "string"
+      ],
+      "returns": "void"
+    },
+    {
+      "export": "pending",
+      "symbol": "anseronui_business_pending",
+      "params": [],
+      "returns": "bool"
+    },
+    {
+      "export": "dispose",
+      "symbol": "anseronui_business_dispose",
+      "params": [],
+      "returns": "void"
+    }
+  ]
+}

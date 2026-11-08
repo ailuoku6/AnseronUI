@@ -1,0 +1,10 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; color: #17263c; background: #edf2f8; }
+header, main { width: min(100%, 600px); margin: auto; }
+header { padding: 24px 16px 12px; }
+h1 { font-size: 24px; margin: 0 0 16px; }
+nav { display: flex; gap: 12px; }
+button, input { font: inherit; }
+nav button { border: 1px solid #cad5e5; border-radius: 8px; padding: 8px 18px; background: white; }
+#status { font-size: 13px; color: #52647e; }
+.surface { height: 640px; min-height: 480px; position: relative; background: white; }

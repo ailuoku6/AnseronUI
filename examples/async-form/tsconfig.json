@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.framework.json",
+  "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "@anseronui/ui" },
+  "include": ["./*.ts", "./*.tsx"]
+}

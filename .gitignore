@@ -1,0 +1,40 @@
+# 依赖和可重建的构建产物
+node_modules/
+.pnpm-store/
+.verification/
+dist/
+**/build/
+**/.gradle/
+.build/
+DerivedData/
+*.log
+
+# prepare:compiler 创建的固定版本编译器 checkout
+/internal/toolchain/scriptc/
+
+# 构建脚本复制到源码目录的 Core 产物和示例资源
+/packages/render-android/src/main/jniLibs/*/libanseronui.so
+core.wasm
+framework.wasm
+core.manifest.json
+/examples/native/web/public/assets/showcase.png
+/examples/native/web/public/assets/showcase.mp4
+/examples/native/ios/AnseronUIDemo.xcodeproj/
+
+# 本地环境、签名和 IDE 用户状态；保留配置示例及共享工程配置
+.env
+.env.*
+!.env.example
+!.env.*.example
+local.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+xcuserdata/
+*.xcuserstate
+.idea/workspace.xml
+.idea/tasks.xml
+.DS_Store
+*.swp
+*.swo

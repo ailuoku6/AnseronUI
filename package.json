@@ -1,0 +1,63 @@
+{
+  "name": "anseronui",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "anseronui": "scripts/anseronui.mjs"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "prepare:tools": "node scripts/prepare-tools.mjs",
+    "test:layout": "node scripts/verify-layout.mjs",
+    "test:layout:wasm": "node scripts/verify-layout.mjs --wasm",
+    "test:layout:upstream": "vitest run --config scripts/flexily.vitest.config.ts",
+    "bench:layout": "vitest bench --run --config scripts/flexily.bench.config.ts",
+    "typecheck:layout": "tsc --noEmit -p packages/layout/tsconfig.json",
+    "typecheck:framework": "tsc --noEmit -p tsconfig.framework.json",
+    "test:framework": "vitest run --config scripts/framework.vitest.config.ts",
+    "test:build": "node --test scripts/core-inputs.test.mjs scripts/lower-timers.test.mjs",
+    "test:tooling": "node --test scripts/anseronui.test.mjs",
+    "lower:counter": "node --import tsx scripts/lower-tsx.mjs examples/counter/page.tsx .verification/framework/counter.ts",
+    "dev:counter": "vite --config examples/counter/vite.config.ts",
+    "build:counter:web": "vite build --config examples/counter/vite.config.ts",
+    "dev:async-form": "vite --config examples/async-form/vite.config.ts",
+    "build:async-form:web": "vite build --config examples/async-form/vite.config.ts",
+    "prepare:compiler": "node scripts/prepare-compiler.mjs",
+    "build:core:native": "node scripts/build-core.mjs native",
+    "build:core:ios": "node scripts/build-core.mjs ios-simulator",
+    "build:core:ios-device": "node scripts/build-core.mjs ios-device",
+    "build:core:android": "node scripts/build-core.mjs android",
+    "build:core:wasm": "node scripts/build-core.mjs wasm",
+    "build:ios": "node scripts/build-app.mjs ios",
+    "build:ios-device": "node scripts/build-app.mjs ios-device",
+    "build:android": "node scripts/build-app.mjs android",
+    "build:web": "node scripts/build-app.mjs web",
+    "anseronui": "node scripts/anseronui.mjs",
+    "dev:wasm": "vite --config examples/native/web/vite.config.ts",
+    "test:core:native": "node scripts/test-native-core.mjs && node scripts/test-native-core.mjs .verification/core-native/probe async-form && node scripts/test-native-core.mjs .verification/core-native/probe components && node scripts/test-native-core.mjs .verification/core-native/probe extensions && node scripts/test-native-core.mjs .verification/core-native/probe timers",
+    "test:core:wasm": "node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs async-form && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs components && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs extensions && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs timers",
+    "build:framework": "node scripts/build-core.mjs --framework-only",
+    "build:business": "node scripts/build-core.mjs --business-only",
+    "test:browser:split": "node scripts/test-web-extensions.mjs split"
+  },
+  "devDependencies": {
+    "@types/debug": "4.1.13",
+    "@types/node": "24.10.0",
+    "debug": "4.4.3",
+    "loggily": "0.13.0",
+    "scriptc": "0.4.8",
+    "tsx": "4.22.4",
+    "typescript": "5.9.3",
+    "vitest": "5.0.4",
+    "yoga-wasm-web": "0.3.3"
+  },
+  "optionalDependencies": {
+    "@scriptc/runtime-darwin-arm64": "0.4.8",
+    "@scriptc/runtime-wasm32-wasi": "0.4.8"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@anseronui/flexily-scriptc-experiment",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index-scriptc.ts"
+  },
+  "license": "MIT"
+}

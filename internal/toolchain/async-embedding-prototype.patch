@@ -1,0 +1,649 @@
+diff --git a/packages/compiler/src/backend/llvm/emitter.ts b/packages/compiler/src/backend/llvm/emitter.ts
+index 8c736711..c9d23a91 100644
+--- a/packages/compiler/src/backend/llvm/emitter.ts
++++ b/packages/compiler/src/backend/llvm/emitter.ts
+@@ -172,6 +172,7 @@ export class LlEmitter {
+   readonly ffiExtendNarrowIntegers: boolean;
+   readonly cycleColorOffset: number;
+   readonly wasi: boolean;
++  readonly stacklessAsync: boolean;
+   private readonly emitLibraryIdentity: boolean;
+   private readonly runtimeAbiMarker: boolean;
+   /** Interned string literals: UTF-8 text → { symbol, byte length } —
+@@ -359,6 +360,7 @@ export class LlEmitter {
+     this.sizeType = options.pointerBits === 32 ? "i32" : "i64";
+     this.ffiExtendNarrowIntegers = options.wasi === true || ffiExtendsNarrowIntegers(options.targetTriple);
+     this.wasi = options.wasi === true;
++    this.stacklessAsync = this.wasi || mod.lib?.asyncEmbedding === true;
+     this.emitLibraryIdentity = options.emitLibraryIdentity !== false;
+     this.runtimeAbiMarker = options.runtimeAbiMarker === true;
+     // ScrCycHdr.color stays 12 bytes behind a wasm32 object and 16 bytes
+@@ -1094,6 +1096,10 @@ export class LlEmitter {
+       }
+       this.declare(`declare void @scr_library_entry(i1 zeroext, ptr)`);
+       this.declare(`declare void @scr_library_reset()`);
++      if (this.mod.lib.asyncEmbedding) {
++        this.declare(`declare i32 @scr_embed_step(i32)`);
++        this.declare(`declare i32 @scr_embed_pending()`);
++      }
+       this.declare(`declare void @scr_library_check_exc()`);
+       this.declare(`declare void @scr_library_set_sink(ptr, ptr)`);
+       this.declare(`declare void @scr_library_callback_entry_guard(ptr)`);
+@@ -1413,7 +1419,7 @@ export class LlEmitter {
+       // symbols specified by the library IR instead.
+       for (const line of this.emitLibDefs(globals, globalReleaseLines, stamps)) out.push(line);
+       out.push(`attributes #0 = { sanitize_address }`);
+-      if (this.wasi) out.push(`attributes #1 = { sanitize_address presplitcoroutine }`);
++      if (this.stacklessAsync) out.push(`attributes #1 = { sanitize_address presplitcoroutine }`);
+       if (hasNoInlineRecordClone) out.push(`attributes #2 = { noinline sanitize_address }`);
+       out.push(``);
+       if (this.debug !== null) out.push(this.debug.render());
+@@ -1552,7 +1558,7 @@ export class LlEmitter {
+       // lane's -fsanitize=address link activates instrumentation over the
+       // emitted functions too (the runtime TUs get theirs from clang).
+       `attributes #0 = { sanitize_address }`,
+-      ...(this.wasi ? [`attributes #1 = { sanitize_address presplitcoroutine }`] : []),
++      ...(this.stacklessAsync ? [`attributes #1 = { sanitize_address presplitcoroutine }`] : []),
+       ...(hasNoInlineRecordClone ? [`attributes #2 = { noinline sanitize_address }`] : []),
+       ``,
+     );
+@@ -1582,6 +1588,19 @@ export class LlEmitter {
+     const emitSymConst = (sym: string): void => {
+       out.push(`${symConst(sym)} = internal constant [${Buffer.byteLength(sym, "utf8") + 1} x i8] c"${llStrBytes(sym)}"`);
+     };
++    if (lib.asyncEmbedding) {
++      for (const suffix of ["async_step", "async_pending"]) emitSymConst(lib.prefix + suffix);
++      out.push(
++        `define i32 @${lib.prefix}async_step(i32 %budget) ${FN_ATTRS} {`,
++        `  call void @scr_library_entry(i1 zeroext false, ptr ${symConst(lib.prefix + "async_step")})`,
++        `  %r = call i32 @scr_embed_step(i32 %budget)`,
++        `  call void @scr_library_check_exc()`,
++        `  ret i32 %r`, `}`, ``,
++        `define i32 @${lib.prefix}async_pending() ${FN_ATTRS} {`,
++        `  call void @scr_library_entry(i1 zeroext false, ptr ${symConst(lib.prefix + "async_pending")})`,
++        `  %r = call i32 @scr_embed_pending()`, `  ret i32 %r`, `}`, ``,
++      );
++    }
+     emitSymConst(lib.initSymbol);
+     emitSymConst(lib.sinkRegisterSymbol);
+     if (lib.callbackRegisterSymbol !== null && lib.callbackRegisterSymbol !== undefined) emitSymConst(lib.callbackRegisterSymbol);
+@@ -2006,7 +2025,7 @@ export class LlEmitter {
+     const retTy = this.llType(ret);
+     const bodyCall = `call ${retTy} @${mangleFunction(fn.name)}(${loads.join(", ")})`;
+     tr.push(retTy === "void" ? `  ${bodyCall}` : `  %r = ${bodyCall}`);
+-    if (lifted && !this.wasi) {
++    if (lifted && !this.stacklessAsync) {
+       tr.push(`  call void @scr_closure_release(ptr %a0)`);
+     }
+ 
+@@ -2044,7 +2063,7 @@ export class LlEmitter {
+    * fiber eagerly to its first suspension and returns the promise). */
+   private emitAsyncScaffolding(): string[] {
+     const out: string[] = [];
+-    if (this.wasi) {
++    if (this.stacklessAsync) {
+       this.declare(`declare void @llvm.coro.resume(ptr)`);
+       this.declare(`declare void @llvm.coro.destroy(ptr)`);
+       out.push(
+@@ -2069,7 +2088,7 @@ export class LlEmitter {
+       this.declare(`declare ptr @scr_fiber_promise(ptr)`);
+       this.declare(`declare ptr @scr_async_spawn(ptr, ptr)`);
+       this.needOom();
+-      if (this.wasi) {
++      if (this.stacklessAsync) {
+         // The coroutine body settles its own promise and owns the retained
+         // lifted environment until final suspension. Its initial call
+         // returns here at the first suspend (or final suspend).
+@@ -2224,14 +2243,14 @@ export class LlEmitter {
+       this.declare(`declare void @scr_gen_ret_to_out(ptr)`);
+       this.declare(`declare ptr @scr_gen_new(ptr, ptr, ptr)`);
+       this.needOom();
+-      if (lifted && !this.wasi) {
++      if (lifted && !this.stacklessAsync) {
+         this.declare(`declare void @scr_closure_release(ptr)`);
+       }
+       // Normal completion stores the (typed) return value; void completes
+       // with the NONE slot — JS's undefined done-value. A GENRET unwind
+       // consumes the sentinel and promotes the parked .return value; a
+       // real exception stays pending (the consumer-side resume moves it).
+-      if (this.wasi) {
++      if (this.stacklessAsync) {
+         tr.push(`  ret void`, `}`, ``);
+       } else {
+       tr.push(
+@@ -3275,7 +3294,7 @@ export class LlEmitter {
+     this.currentWasiCoro = null;
+     this.logArgSlots = 0;
+ 
+-    if (this.wasi && (fn.async === true || fn.generator !== undefined)) {
++    if (this.stacklessAsync && (fn.async === true || fn.generator !== undefined)) {
+       this.declare(`declare token @llvm.coro.id(i32, ptr, ptr, ptr)`);
+       this.declare(`declare ${this.sizeType} @llvm.coro.size.${this.sizeType}()`);
+       this.declare(`declare ptr @llvm.coro.begin(token, ptr)`);
+@@ -3375,7 +3394,7 @@ export class LlEmitter {
+     this.scopes.push(fnScope);
+     // Stackful native fibers retain these frames while suspended. The
+     // active exception context owns the chain, so concurrent fibers isolate it.
+-    if (this.stackTraces && !this.wasi && fn.sourceName !== undefined) {
++    if (this.stackTraces && !this.stacklessAsync && fn.sourceName !== undefined) {
+       this.declare(`declare void @scr_stack_enter(ptr, ptr)`);
+       this.declare(`declare void @scr_stack_leave(ptr)`);
+       B.entryAllocas.push(`%source_frame = alloca { ptr, ptr }`);
+diff --git a/packages/compiler/src/backend/llvm/expr-async.ts b/packages/compiler/src/backend/llvm/expr-async.ts
+index 27d47c92..2cbc88f5 100644
+--- a/packages/compiler/src/backend/llvm/expr-async.ts
++++ b/packages/compiler/src/backend/llvm/expr-async.ts
+@@ -14,7 +14,7 @@ export function emitIntrinsicExpr(host: LlvmEmitterContext, e: ExprOf<"intrinsic
+           // Internal ESM dependency wait: pending promises park the module
+           // fiber, while settled ones continue synchronously.
+           const p = host.emitExpr(e.args[0]!);
+-          if (host.wasi) {
++          if (host.stacklessAsync) {
+             const coro = host.currentWasiCoro;
+             if (coro === null) throw new InternalCompilerError("llvm emitter bug: module await outside wasm coroutine");
+             host.declare(`declare zeroext i1 @scr_wasi_module_await_prepare(ptr, ptr)`);
+@@ -286,7 +286,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" |
+           B.line(`call void @scr_async_gen_hop_done()`);
+         }
+         if (yt.kind === "f64" || yt.kind === "date") {
+-          if (host.wasi) {
++          if (host.stacklessAsync) {
+             const coro = host.currentWasiCoro!;
+             host.declare(`declare ptr @scr_gen_of_fiber(ptr)`);
+             host.declare(`declare void @scr_gen_out_f64(ptr, double)`);
+@@ -298,7 +298,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" |
+             B.line(`call void @scr_gen_yield_f64(double ${v.name})`);
+           }
+         } else if (yt.kind === "bool") {
+-          if (host.wasi) {
++          if (host.stacklessAsync) {
+             const coro = host.currentWasiCoro!;
+             host.declare(`declare ptr @scr_gen_of_fiber(ptr)`);
+             host.declare(`declare void @scr_gen_out_bool(ptr, i1 zeroext)`);
+@@ -311,7 +311,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" |
+           }
+         } else {
+           host.moveTemp(v); // the OUT slot takes ownership
+-          if (host.wasi) {
++          if (host.stacklessAsync) {
+             const coro = host.currentWasiCoro!;
+             host.declare(`declare ptr @scr_gen_of_fiber(ptr)`);
+             host.declare(`declare void @scr_gen_out_ref(ptr, ptr, ptr)`);
+@@ -323,7 +323,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" |
+             B.line(`call void @scr_gen_yield_ref(ptr ${v.name}, ptr ${vAdapters(host.shapeHost, yt).release})`);
+           }
+         }
+-        if (host.wasi) host.emitWasiSuspendPrepared();
++        if (host.stacklessAsync) host.emitWasiSuspendPrepared();
+         if (e.captureCompletion) {
+           const converter = (type: IrType): string => isRefCounted(type) ? `@${host.dyn.toDynHelper(type)}` : "null";
+           host.declare(`declare ptr @scr_gen_delegate_resume(ptr, ptr, ptr)`);
+@@ -515,7 +515,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" |
+         // refcounted results arrive +1 and join the frame pre-check so an
+         // unwind releases the dummy (NULL) harmlessly.
+         const pr = host.emitExpr(e.value);
+-        if (host.wasi) host.emitWasiSuspend(pr.name);
++        if (host.stacklessAsync) host.emitWasiSuspend(pr.name);
+         if (e.type.kind === "void") {
+           host.declare(`declare void @scr_await_void(ptr)`);
+           B.line(`call void @scr_await_void(ptr ${pr.name})`);
+@@ -568,12 +568,12 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" |
+           host.declare(`declare void @scr_await_void(ptr)`);
+           {
+             const promise = host.unionPeek(u.name);
+-            if (host.wasi) host.emitWasiSuspend(promise);
++            if (host.stacklessAsync) host.emitWasiSuspend(promise);
+             B.line(`call void @scr_await_void(ptr ${promise})`);
+           }
+           B.br(lj);
+           B.startBlock(lh);
+-          if (host.wasi) host.emitWasiSuspend(null);
++          if (host.stacklessAsync) host.emitWasiSuspend(null);
+           else B.line(`call void @scr_await_hop()`);
+           B.br(lj);
+           B.startBlock(lj);
+@@ -601,7 +601,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" |
+         B.condBr(isP, lp, lh);
+         B.startBlock(lp);
+         const peek = host.unionPeek(u.name);
+-        if (host.wasi) host.emitWasiSuspend(peek);
++        if (host.stacklessAsync) host.emitWasiSuspend(peek);
+         let awaited: LlValue;
+         if (inner.kind === "f64" || inner.kind === "date") {
+           host.declare(`declare double @scr_await_f64(ptr)`);
+@@ -627,7 +627,7 @@ export function emitAsyncExpr(host: LlvmEmitterContext, e: ExprOf<"yieldExpr" |
+         B.line(`store ptr ${host.unionNewOwned(innerTag, awaited)}, ptr ${slot}`);
+         B.br(lj);
+         B.startBlock(lh);
+-        if (host.wasi) host.emitWasiSuspend(null);
++        if (host.stacklessAsync) host.emitWasiSuspend(null);
+         else B.line(`call void @scr_await_hop()`);
+         const unitTags = def.arms.flatMap((a, i) => (isUnitType(a) ? [i] : []));
+         if (unitTags.length === 1) {
+diff --git a/packages/compiler/src/backend/native-toolchain.ts b/packages/compiler/src/backend/native-toolchain.ts
+index e624d1ab..541fcdf2 100644
+--- a/packages/compiler/src/backend/native-toolchain.ts
++++ b/packages/compiler/src/backend/native-toolchain.ts
+@@ -851,6 +851,7 @@ export interface LibArchiveOptions {
+    * every cache tier keys it automatically; omitted = the classic
+    * archive, byte-for-byte. */
+   threadInstances?: boolean;
++  asyncEmbedding?: boolean;
+   /** IR-detected link gates (the compileC precedent, refusal-narrowed). */
+   dynInvoke?: boolean;
+   regex?: boolean;
+@@ -972,6 +973,7 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void>
+   const regex = opts.regex ?? false;
+   const sources = [
+     ...LIB_RUNTIME_SOURCES,
++    ...(opts.asyncEmbedding ? ["scr_async.c"] : []),
+     // win32 targets compile the libc-shim TU into the archive (stpcpy,
+     // arc4random_buf — scr_number.c/scr_lib.c/scr_bytes_io.c call them and
+     // mingw's CRT has neither), exactly like compileC's unconditional win32
+@@ -1005,6 +1007,7 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void>
+     "-fno-strict-aliasing", // the emitted object model type-puns — see compileC's buildArgs
+     "-Wno-deprecated-declarations",
+     "-DSCR_LIB",
++    ...(opts.asyncEmbedding ? ["-DSCR_ASYNC_EMBEDDING", "-DSCR_STACKLESS_ASYNC"] : []),
+     ...(opts.threadInstances ? ["-DSCR_THREAD_INSTANCES"] : []),
+     ...(opts.textDecoderLegacy ? ["-DSCR_TEXT_DECODER_LEGACY"] : []),
+     "-I", rtDir,
+diff --git a/packages/compiler/src/index.ts b/packages/compiler/src/index.ts
+index 1dcc12ce..99a22721 100644
+--- a/packages/compiler/src/index.ts
++++ b/packages/compiler/src/index.ts
+@@ -1065,6 +1065,7 @@ async function compileLibraryNative(
+     optimization: profile.optimization,
+     ...(localizeSymbols !== undefined ? { localizeSymbols } : {}),
+     ...(profile.instancePerThread ? { threadInstances: true } : {}),
++    ...(profile.asyncEmbedding ? { asyncEmbedding: true } : {}),
+     regex: features.regex,
+     assert: features.assert,
+     inspect: features.inspect,
+@@ -1077,7 +1078,7 @@ async function compileLibraryNative(
+     textDecoderLegacy: features.textDecoderLegacy,
+     dynInvoke: features.dynInvoke,
+   };
+-  if (packTarget !== null) await compilePackedLibrary(archiveOptions, packTarget);
++  if (packTarget !== null && !profile.asyncEmbedding) await compilePackedLibrary(archiveOptions, packTarget);
+   else await compileExternalCLibrary(archiveOptions);
+ }
+ 
+diff --git a/packages/compiler/src/ir/ir.ts b/packages/compiler/src/ir/ir.ts
+index c6607921..5fca8802 100644
+--- a/packages/compiler/src/ir/ir.ts
++++ b/packages/compiler/src/ir/ir.ts
+@@ -1080,6 +1080,7 @@ export interface IrLibCallback {
+ }
+ 
+ export interface IrLibSection {
++  asyncEmbedding?: boolean;
+   /** The profile's identity string (artifact header comments only). */
+   profileName: string;
+   /** Symbol-space hygiene: every external definition below carries it. */
+@@ -7240,9 +7241,9 @@ const LIB_MODE_REFUSED_KINDS: ReadonlyMap<string, string> = new Map([
+  * coarse moduleUses* predicates are the safety net behind the fine-grained
+  * table (a surface reached only through a spelling the table misses still
+  * refuses, anchored at the entry). */
+-export function moduleLibAsyncSurface(mod: IrModule): { surface: string; loc: SrcLoc } | null {
++export function moduleLibAsyncSurface(mod: IrModule, embedding = false): { surface: string; loc: SrcLoc } | null {
+   for (const fn of mod.functions) {
+-    if (fn.async === true) return { surface: `an async function ('${fn.name.replace(/^%/, "")}')`, loc: fn.loc };
++    if (!embedding && fn.async === true) return { surface: `an async function ('${fn.name.replace(/^%/, "")}')`, loc: fn.loc };
+     if (fn.generator !== undefined) {
+       return { surface: `a generator function ('${fn.name.replace(/^%/, "")}')`, loc: fn.loc };
+     }
+@@ -7250,6 +7251,7 @@ export function moduleLibAsyncSurface(mod: IrModule): { surface: string; loc: Sr
+   const entryLoc: SrcLoc = { file: mod.sourceFile, start: 0, end: 0 };
+   let found: { surface: string; loc: SrcLoc } | null = null;
+   const checkKind = (kind: string, loc: SrcLoc): boolean => {
++    if (embedding && ["promise", "awaitExpr", "awaitUnionExpr"].includes(kind)) return true;
+     const surface = LIB_MODE_REFUSED_KINDS.get(kind);
+     if (surface === undefined) return true;
+     found = { surface, loc };
+diff --git a/packages/compiler/src/library/library-profile.ts b/packages/compiler/src/library/library-profile.ts
+index e6c25667..d6d2572c 100644
+--- a/packages/compiler/src/library/library-profile.ts
++++ b/packages/compiler/src/library/library-profile.ts
+@@ -364,6 +364,7 @@ export interface LibrarySidecarConfig {
+ 
+ export interface LibraryProfile {
+   profileFormat: 1;
++  asyncEmbedding?: boolean;
+   name: string;
+   /** The profile file that produced this configuration. Semantic
+    * designation errors anchor here, where the offending name is written. */
+@@ -501,7 +502,7 @@ export function loadLibraryProfile(
+     // the root would otherwise be silently inert — the exact footgun the
+     // fence machinery refuses everywhere else.
+     for (const k of Object.keys(p)) {
+-      if (["profile_format", "name", "entry", "emission", "optimization", "npm_static", "abi", "exports", "callbacks", "sidecar", "determinism"].includes(k)) continue;
++      if (["profile_format", "name", "entry", "emission", "optimization", "npm_static", "async_embedding", "abi", "exports", "callbacks", "sidecar", "determinism"].includes(k)) continue;
+       if (k === "fences" || k === "teachings" || k === "remediations") {
+         throw new ProfileError(
+           `'${k}' at the profile root does nothing — the ask-5 determinism surface lives under 'determinism.${k}'; move it there`,
+@@ -509,6 +510,14 @@ export function loadLibraryProfile(
+       }
+       throw new ProfileError(`unknown field '${k}' (root keys are strict: a typo here would silently change the build; remove it)`);
+     }
++    const asyncEmbedding = p["async_embedding"] !== undefined;
++    if (asyncEmbedding) {
++      const config = p["async_embedding"];
++      if (config === null || typeof config !== "object" || Array.isArray(config)) throw new ProfileError("async_embedding must be { version: 1 }");
++      rejectUnknownKeys(config, "async_embedding", ["version"]);
++      if ((config as Record<string, unknown>)["version"] !== 1) throw new ProfileError("unsupported async_embedding.version");
++      if (p["sidecar"] !== undefined) throw new ProfileError("async embedding requires its own manifest, not a synchronous contract sidecar");
++    }
+     const name = req<string>(p["name"], "name", "string");
+     const npmStaticRaw = p["npm_static"] === undefined ? [] : p["npm_static"];
+     if (!Array.isArray(npmStaticRaw) || npmStaticRaw.some((name) => typeof name !== "string" || !/^(?:@[a-z0-9_.-]+\/)?[a-z0-9_][a-z0-9_.-]*$/.test(name))) {
+@@ -779,6 +788,10 @@ export function loadLibraryProfile(
+     };
+     claim(initSymbol, "abi.init_symbol");
+     claim(sinkRegisterSymbol, "abi.sink_register_symbol");
++    if (asyncEmbedding) {
++      claim(prefix + "async_step", "async_embedding.step");
++      claim(prefix + "async_pending", "async_embedding.pending");
++    }
+     claim(collectSymbol, "abi.collect_symbol");
+     claim(resultResetSymbol, "abi.result_reset_symbol");
+     claim(callbackRegisterSymbol, "abi.callback_register_symbol");
+@@ -889,6 +902,7 @@ export function loadLibraryProfile(
+       ok: true,
+       profile: {
+         profileFormat: 1,
++        ...(asyncEmbedding ? { asyncEmbedding: true } : {}),
+         name,
+         profilePath,
+         entry,
+diff --git a/packages/compiler/src/library/prepare.ts b/packages/compiler/src/library/prepare.ts
+index cda51847..d6b04da3 100644
+--- a/packages/compiler/src/library/prepare.ts
++++ b/packages/compiler/src/library/prepare.ts
+@@ -171,6 +171,7 @@ function resolveLibrarySection(
+       collectSymbol: profile.collectSymbol,
+       resultResetSymbol: profile.resultResetSymbol,
+       threadInstances: profile.instancePerThread,
++      ...(profile.asyncEmbedding ? { asyncEmbedding: true } : {}),
+       // Host-callback channels: declaration order is the runtime slot
+       // assignment, and the unregistered-call trap text is assembled HERE,
+       // once, for consistent constant bytes (a DETECTED
+@@ -541,7 +542,7 @@ export function prepareLibrary(
+   // is emitted, so the narrowed library link set below is structural fact.
+   const resolved = resolveLibrarySection(profile, entryInfo, mod, entryPath);
+   if ("diagnostics" in resolved) return fail(resolved.diagnostics);
+-  const asyncSurface = moduleLibAsyncSurface(mod);
++  const asyncSurface = moduleLibAsyncSurface(mod, profile.asyncEmbedding);
+   if (asyncSurface !== null) {
+     return fail([libAsyncSurfaceDiag(asyncSurface.surface, asyncSurface.loc)]);
+   }
+@@ -630,6 +631,7 @@ export function libraryLocalizeSymbols(profile: LibraryProfile): string[] | unde
+   return profile.localizeRuntime
+     ? [
+         profile.initSymbol,
++        ...(profile.asyncEmbedding ? [profile.prefix + "async_step", profile.prefix + "async_pending"] : []),
+         profile.sinkRegisterSymbol,
+         ...(profile.collectSymbol !== null ? [profile.collectSymbol] : []),
+         ...(profile.resultResetSymbol !== null ? [profile.resultResetSymbol] : []),
+@@ -645,6 +647,7 @@ export function libraryLocalizeSymbols(profile: LibraryProfile): string[] | unde
+ export function libraryWasmExports(profile: LibraryProfile): string[] {
+   return [
+     profile.initSymbol, "scriptc_alloc", "scriptc_free",
++    ...(profile.asyncEmbedding ? [profile.prefix + "async_step", profile.prefix + "async_pending"] : []),
+     ...(profile.collectSymbol === null ? [] : [profile.collectSymbol]),
+     ...(profile.resultResetSymbol === null ? [] : [profile.resultResetSymbol]),
+     ...(profile.sidecar === null ? [] : [profile.sidecar.buildIdSymbol, profile.sidecar.abiVersionSymbol]),
+diff --git a/packages/runtime/src/scr_async.c b/packages/runtime/src/scr_async.c
+index ee0feebe..9d8c19ee 100644
+--- a/packages/runtime/src/scr_async.c
++++ b/packages/runtime/src/scr_async.c
+@@ -44,8 +44,11 @@
+  * served by a capped nanosleep — dispatch at the next turn's top, the
+  * cap bounding signal/stdin latency instead of a pollable wake fd. */
+ #include <windows.h>
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+ #include <poll.h>
++#ifndef __wasi__
++#include <unistd.h>
++#endif
+ #else
+ #include <poll.h>
+ #include <pthread.h>
+@@ -55,7 +58,7 @@
+ #include <unistd.h>
+ #endif
+ 
+-#ifdef __wasi__
++#if defined(__wasi__) || defined(SCR_STACKLESS_ASYNC)
+ /* WASI Preview 1 has no process-spawn capability. The child unit is not
+  * linked for this target, but the generic loop keeps its quiescence hooks;
+  * their empty implementation makes the absence explicit at link time
+@@ -96,7 +99,7 @@ void __sanitizer_finish_switch_fiber(void *fake_stack_save, const void **bottom_
+ #define SCR_FIBER_STACK (256 * 1024)
+ #endif
+ 
+-#if !defined(_WIN32) && !defined(__wasi__)
++#if !defined(_WIN32) && !(defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+ /* Keep stacks out of malloc's size classes. Reuse a bounded number during
+  * a burst of promise/generator work, then unmap the spares before the loop
+  * sleeps. This avoids both heap fragmentation and per-call mmap overhead.
+@@ -376,7 +379,7 @@ void scr_promise_trace_v(void *p, ScrTraceVisit visit, void *ctx) {
+  * so the slot only needs to name the destination; `from` is unused. */
+ #ifdef _WIN32
+ typedef void *ScrCtx;
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+ typedef unsigned char ScrCtx;
+ #else
+ typedef ucontext_t ScrCtx;
+@@ -461,7 +464,7 @@ long scr_abandoned_fiber_count(void) { return scr_fibers_abandoned; }
+ bool scr_on_fiber(void) { return scr_current != NULL; }
+ void *scr_fiber_self(void) { return scr_current; }
+ 
+-#ifdef __wasi__
++#if defined(__wasi__) || defined(SCR_STACKLESS_ASYNC)
+ extern void scr_wasi_coro_resume(void *handle);
+ extern void scr_wasi_coro_destroy(void *handle);
+ 
+@@ -996,7 +999,7 @@ static void scr_switch(ScrCtx *from, ScrCtx *to, ScrFiber *to_fiber) {
+    * fiber object — `from` has nothing to record. */
+   (void)from;
+   SwitchToFiber(*to);
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+   (void)from;
+   (void)to;
+   scr_trap("scriptc: internal error: native stack switch reached on WASI\n");
+@@ -1283,7 +1286,7 @@ static void scr_trampoline(void) {
+   /* unreachable */
+ }
+ 
+-#if !defined(_WIN32) && !defined(__wasi__)
++#if !defined(_WIN32) && !(defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+ /* Apple Silicon's makecontext clears all of uc_stack before installing the
+  * initial registers. Passing the whole mapping eagerly commits 256 KiB
+  * (8 MiB under ASan) per call, defeating the lazy allocation above. Its
+@@ -1318,11 +1321,11 @@ static void scr_fiber_context_init(ScrFiber *f) {
+ static void scr_fiber_destroy(ScrFiber *f) {
+ #ifdef _WIN32
+   DeleteFiber(f->ctx);
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+   if (f->coro != NULL) scr_wasi_coro_destroy(f->coro);
+ #endif
+   scr_als_ctx_release(f->als);
+-#if !defined(_WIN32) && !defined(__wasi__)
++#if !defined(_WIN32) && !(defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+   scr_fiber_stack_free(f->stack);
+ #else
+   free(f->stack);
+@@ -1350,7 +1353,7 @@ ScrPromise *scr_async_spawn(void (*entry)(ScrFiber *, void *), void *argpack) {
+   ScrCtx here = scr_win_self();
+   f->ctx = CreateFiberEx(4096, 0, 0, scr_trampoline, NULL);
+   if (f->ctx == NULL) scr_oom();
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+   ScrFiber *spawner = scr_current;
+   scr_current = f;
+   scr_exc_swap_cell(&f->exc);
+@@ -1371,7 +1374,7 @@ ScrPromise *scr_async_spawn(void (*entry)(ScrFiber *, void *), void *argpack) {
+ 
+   ucontext_t here;
+ #endif
+-#ifndef __wasi__
++#if !defined(__wasi__) && !defined(SCR_STACKLESS_ASYNC)
+   f->return_to = &here;
+   ScrFiber *spawner = scr_current;
+   scr_switch(&here, &f->ctx, f);
+@@ -1402,7 +1405,7 @@ ScrPromise *scr_async_spawn(void (*entry)(ScrFiber *, void *), void *argpack) {
+ ScrPromise *scr_async_spawn_after(ScrPromise *dependency,
+                                   void (*entry)(ScrFiber *, void *),
+                                   void *argpack) {
+-#ifndef __wasi__
++#if !defined(__wasi__) && !defined(SCR_STACKLESS_ASYNC)
+   (void)dependency;
+   return scr_async_spawn(entry, argpack);
+ #else
+@@ -1446,7 +1449,7 @@ static void scr_await_park(ScrPromise *p) {
+   /* Resumed by the loop: return_to must now point at the loop's context. */
+ }
+ 
+-#ifdef __wasi__
++#if defined(__wasi__) || defined(SCR_STACKLESS_ASYNC)
+ /* The emitted coroutine suspends immediately after these preparation
+  * calls. Settled promises still queue one ready turn; pending promises own
+  * the continuation through their waiter list. */
+@@ -1523,7 +1526,7 @@ static void scr_promise_rethrow(ScrPromise *p) {
+ 
+ /* Await result extraction. Rejection re-throws into the awaiter. */
+ static bool scr_await_settled(ScrPromise *p) {
+-#ifdef __wasi__
++#if defined(__wasi__) || defined(SCR_STACKLESS_ASYNC)
+   if (p->state == SCR_PROM_PENDING) {
+     fputs("scriptc: internal error: resumed before awaited promise settled\n", stderr);
+     abort();
+@@ -1557,7 +1560,7 @@ void scr_await_void(ScrPromise *p) { scr_await_settled(p); }
+  * dependency still parks this module fiber, and rejection propagates into
+  * it exactly like an ordinary await. */
+ void scr_module_await(ScrPromise *p) {
+-#ifndef __wasi__
++#if !defined(__wasi__) && !defined(SCR_STACKLESS_ASYNC)
+   while (p->state == SCR_PROM_PENDING) scr_await_park(p);
+ #endif
+   scr_prom_observe(p);
+@@ -1796,7 +1799,7 @@ ScrPromise *scr_fsp_rename(ScrStr *oldpath, ScrStr *newpath) {
+  * libuv's default pool size without creating one OS thread per request. A
+  * platform mutex publishes each result before the loop removes it from the
+  * completion queue. */
+-#if !defined(SCR_LIB) && !defined(__wasi__)
++#if !defined(SCR_LIB) && !(defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+ typedef struct ScrFsRenameOp {
+   bool generic;
+   bool ran;
+@@ -2018,7 +2021,7 @@ static void scr_work_submit_op(ScrFsRenameOp *op) {
+   }
+   scr_fs_rename_lock_leave();
+ }
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+ /* WASI Preview 1 has no threads, but rename itself is available. Queue the
+  * request and perform it on the next loop turn so callback timing remains
+  * asynchronous and the request remains a liveness handle. */
+@@ -2085,7 +2088,7 @@ void scr_fs_rename_async(ScrStr *oldpath, ScrStr *newpath,
+   (void)oldpath; (void)newpath; (void)fn;
+   scr_closure_release(cb);
+   scr_trap("scriptc: callback-style fs.rename is not supported by this target\n");
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+   ScrFsRenameOp *op = calloc(1, sizeof *op);
+   if (!op) scr_trap("scriptc: out of memory\n");
+   op->oldpath = scr_str_retain(oldpath);
+@@ -2112,7 +2115,7 @@ void scr_work_submit(void *payload, ScrWorkFn work, ScrWorkFn after,
+   (void)work; (void)after;
+   destroy(payload);
+   scr_trap("scriptc: native worker jobs are not supported by this target\n");
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+   ScrFsRenameOp *op = calloc(1, sizeof *op);
+   if (!op) scr_trap("scriptc: out of memory\n");
+   op->generic = true;
+@@ -2363,7 +2366,7 @@ static void scr_resume_fiber(ScrFiber *f) {
+   (void)scr_win_self();
+ #endif
+   f->return_to = &scr_loop_ctx;
+-#ifdef __wasi__
++#if defined(__wasi__) || defined(SCR_STACKLESS_ASYNC)
+   scr_current = f;
+   scr_exc_swap_cell(&f->exc);
+   scr_als_active = &f->als;
+@@ -2389,6 +2392,25 @@ static void scr_resume_fiber(ScrFiber *f) {
+   }
+ }
+ 
++#ifdef SCR_ASYNC_EMBEDDING
++int32_t scr_embed_pending(void) { return scr_ready_len != 0; }
++int32_t scr_embed_step(uint32_t budget) {
++  if (scr_current != NULL) scr_trap("scriptc: async step reentry\n");
++  if (budget == 0) return scr_embed_pending();
++  while (budget-- > 0 && scr_ready_len > 0) {
++    ScrFiber *f = scr_ready[scr_ready_head++];
++    scr_ready_len--;
++    scr_resume_fiber(f);
++    if (scr_exc_pending()) break;
++  }
++  if (scr_ready_len == 0) {
++    scr_ready_head = 0;
++    scr_cyc_collect_scheduled();
++  }
++  return scr_embed_pending();
++}
++#endif
++
+ /* Reap granularity while children are pending on the POLLING fallback:
+  * the loop polls waitpid(WNOHANG) at least this often instead of sleeping
+  * to the next timer deadline. The primary path has no cap — the sleep
+@@ -2732,7 +2754,7 @@ static bool scr_loop_run_pass(ScrPromise *top_level, bool first_checkpoint) {
+      * during that turn. No fd will wake us for this userspace work: return to
+      * dispatch without sleeping, still allowing due timers and immediates. */
+     if (scr_children_ready()) due = now;
+-#if !defined(_WIN32) && !defined(__wasi__)
++#if !defined(_WIN32) && !(defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+     if (due > now) scr_fiber_stacks_clear();
+ #endif
+     bool evw = scr_events_watching_fn != NULL && scr_events_watching_fn();
+@@ -2747,7 +2769,7 @@ static bool scr_loop_run_pass(ScrPromise *top_level, bool first_checkpoint) {
+       now = scr_now_ms();
+       if (scr_ready_len > 0) continue; /* io callbacks woke fibers */
+     } else if (evw || net || dgram || watch || ffi) {
+-#if defined(_WIN32) || defined(__wasi__)
++#if defined(_WIN32) || (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+       /* The win32 arm, and WASI hosts whose poll_oneoff adapters do not
+        * reliably wake for a closed inherited stdin pipe: the sleep is a capped nanosleep and
+        * the next turn's dispatch does the work — signal flags (set by the
+@@ -3362,7 +3384,7 @@ static ScrGen *scr_gen_new_common(void (*entry)(ScrFiber *, void *), void *argpa
+ #ifdef _WIN32
+   f->ctx = CreateFiberEx(4096, 0, 0, scr_trampoline, NULL);
+   if (f->ctx == NULL) scr_oom();
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+   f->ctx = 0;
+ #else
+   scr_fiber_context_init(f);
+@@ -3589,14 +3611,14 @@ static void scr_gen_switch_in(ScrGen *g) {
+   g->state = SCR_GEN_RUNNING;
+ #ifdef _WIN32
+   ScrCtx here = scr_win_self();
+-#elif defined(__wasi__)
++#elif (defined(__wasi__) || defined(SCR_STACKLESS_ASYNC))
+   ScrCtx here = 0;
+ #else
+   ucontext_t here;
+ #endif
+   f->return_to = &here;
+   ScrFiber *me = scr_current;
+-#ifdef __wasi__
++#if defined(__wasi__) || defined(SCR_STACKLESS_ASYNC)
+   scr_current = f;
+   scr_exc_swap_cell(&f->exc);
+   scr_als_active = &f->als;

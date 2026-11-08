@@ -1,0 +1,17 @@
+{
+  "profile_format": 1,
+  "name": "anseronui-ui-probe",
+  "entry": "library-entry.ts",
+  "emission": "llvm",
+  "optimization": "release",
+  "abi": {
+    "prefix": "anseronui_ui_",
+    "init_symbol": "anseronui_ui_init",
+    "sink_register_symbol": "anseronui_ui_set_panic_sink",
+    "collect_symbol": "anseronui_ui_collect",
+    "result_reset_symbol": "anseronui_ui_reset"
+  },
+  "exports": [
+    { "export": "dispatch", "symbol": "anseronui_ui_dispatch", "params": ["string"], "returns": "string" }
+  ]
+}

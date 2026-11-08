@@ -1,0 +1,4 @@
+body { margin: 0; font: 16px system-ui, sans-serif; color: #1d2330; background: #f7f9fc; }
+main { max-width: 620px; margin: 64px auto; padding: 24px; }
+#app { width: 100%; height: 160px; border: 1px solid #d4dce8; border-radius: 10px; background: white; }
+button { font: inherit; cursor: pointer; border: 1px solid #a5b4ca; border-radius: 6px; background: white; }

@@ -1,0 +1,597 @@
+diff --git a/packages/compiler/src/backend/llvm/emit-module.ts b/packages/compiler/src/backend/llvm/emit-module.ts
+index 7b7c6501..4bd8a4db 100644
+--- a/packages/compiler/src/backend/llvm/emit-module.ts
++++ b/packages/compiler/src/backend/llvm/emit-module.ts
+@@ -720,6 +720,11 @@ export function emitModuleParts(emitter: LlEmitter): string[] {
+     }
+     emitter.declare(`declare void @scr_library_entry(i1 zeroext, ptr)`);
+     emitter.declare(`declare void @scr_library_reset()`);
++    if (emitter.mod.lib.asyncEmbedding) {
++      emitter.declare(`declare i32 @scr_embed_step(i32)`);
++      emitter.declare(`declare i32 @scr_embed_pending()`);
++      emitter.declare(`declare i32 @scr_embed_close()`);
++    }
+     emitter.declare(`declare void @scr_library_check_exc()`);
+     emitter.declare(`declare void @scr_library_set_sink(ptr, ptr)`);
+     emitter.declare(`declare void @scr_library_callback_entry_guard(ptr)`);
+@@ -2189,6 +2194,25 @@ export function emitLibDefs(
+       `${symConst(sym)} = internal constant [${Buffer.byteLength(sym, "utf8") + 1} x i8] c"${llStrBytes(sym)}"`,
+     );
+   };
++  if (lib.asyncEmbedding) {
++    for (const suffix of ["async_step", "async_pending", "shutdown"])
++      emitSymConst(lib.prefix + suffix);
++    out.push(
++      `define i32 @${lib.prefix}async_step(i32 %budget) ${FN_ATTRS} {`,
++      `  call void @scr_library_entry(i1 zeroext false, ptr ${symConst(lib.prefix + "async_step")})`,
++      `  %r = call i32 @scr_embed_step(i32 %budget)`,
++      `  call void @scr_library_check_exc()`,
++      `  ret i32 %r`,
++      `}`,
++      ``,
++      `define i32 @${lib.prefix}async_pending() ${FN_ATTRS} {`,
++      `  call void @scr_library_entry(i1 zeroext false, ptr ${symConst(lib.prefix + "async_pending")})`,
++      `  %r = call i32 @scr_embed_pending()`,
++      `  ret i32 %r`,
++      `}`,
++      ``,
++    );
++  }
+   emitSymConst(lib.initSymbol);
+   emitSymConst(lib.sinkRegisterSymbol);
+   if (lib.callbackRegisterSymbol !== null && lib.callbackRegisterSymbol !== undefined)
+@@ -2254,6 +2278,25 @@ export function emitLibDefs(
+     const zero = ty === "double" ? f64Lit(0) : ty === "ptr" ? "null" : "false";
+     return `  store ${ty} ${zero}, ptr @${mangleGlobal(g.id)} ; ${g.name}`;
+   });
++  if (lib.asyncEmbedding) {
++    out.push(
++      `define i32 @${lib.prefix}shutdown() ${FN_ATTRS} {`,
++      `entry:`,
++      `  call void @scr_library_entry(i1 zeroext false, ptr ${symConst(lib.prefix + "shutdown")})`,
++      `  %closed = call i32 @scr_embed_close()`,
++      `  %ok = icmp ne i32 %closed, 0`,
++      `  br i1 %ok, label %release, label %busy`,
++      `release:`,
++      ...globalReleaseLines("cd"),
++      ...zeroStores,
++      `  call void @scr_library_reset()`,
++      `  ret i32 1`,
++      `busy:`,
++      `  ret i32 0`,
++      `}`,
++      ``,
++    );
++  }
+   out.push(
+     `define void @${lib.initSymbol}() ${FN_ATTRS} {`,
+     `entry:`,
+diff --git a/packages/compiler/src/backend/llvm/emitter.ts b/packages/compiler/src/backend/llvm/emitter.ts
+index e3a8307b..04734b8c 100644
+--- a/packages/compiler/src/backend/llvm/emitter.ts
++++ b/packages/compiler/src/backend/llvm/emitter.ts
+@@ -2353,7 +2353,10 @@ export class LlEmitter {
+     // A stackless call's eager prefix borrows its caller's stack; the
+     // runtime moves deep prefix nests to a fresh stack using the guard,
+     // which Windows lacks.
+-    this.stacklessAsyncAllowed = this.stacklessGenerators && mod.lib === undefined && !windows;
++    this.stacklessAsyncAllowed =
++      this.stacklessGenerators &&
++      (mod.lib === undefined || mod.lib.asyncEmbedding === true) &&
++      !windows;
+     this.unframedFunctions = this.stackTraces
+       ? captureFreeFunctions(mod, this.stackChecks, this.publishedTypes)
+       : new Set();
+diff --git a/packages/compiler/src/backend/native/contracts.ts b/packages/compiler/src/backend/native/contracts.ts
+index b7189235..9047bc33 100644
+--- a/packages/compiler/src/backend/native/contracts.ts
++++ b/packages/compiler/src/backend/native/contracts.ts
+@@ -401,6 +401,7 @@ export interface ValidatedNativeArtifact {
+ }
+ 
+ export interface LibArchiveOptions {
++  declAdopt?: boolean;
+   /** The program TU (.c or .ll — clang compiles either with -c). */
+   cPath: string;
+   /** Invocation-owned program source to compile under `cPath`'s public
+@@ -452,6 +453,7 @@ export interface LibArchiveOptions {
+    * every cache tier keys it automatically; omitted = the classic
+    * archive, unchanged. */
+   threadInstances?: boolean;
++  asyncEmbedding?: boolean;
+   /** IR-detected link gates (the compileC precedent, refusal-narrowed). */
+   dynInvoke?: boolean;
+   /** Buffer.prototype methods on checked-dynamic values: scr_bytes_dyn.c,
+diff --git a/packages/compiler/src/backend/native/library.ts b/packages/compiler/src/backend/native/library.ts
+index 44678d61..12ccb732 100644
+--- a/packages/compiler/src/backend/native/library.ts
++++ b/packages/compiler/src/backend/native/library.ts
+@@ -15,6 +15,7 @@ import {
+   pruneCache,
+   publishCachedFile,
+ } from "../build-cache.js";
++import { emitNativeArtifact } from "../native-codegen.js";
+ import { type LibArchiveOptions } from "./contracts.js";
+ import { clearCcCaches, ensureRuntimeObjects, stageRuntimeObjects } from "./runtime-objects.js";
+ import { runtimeSrcDir, LIB_RUNTIME_SOURCES, runtimeFingerprint } from "./runtime-inputs.js";
+@@ -92,6 +93,8 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void>
+   const regex = opts.regex ?? false;
+   const sources = [
+     ...LIB_RUNTIME_SOURCES,
++    ...(opts.declAdopt ? ["scr_decl_adopt.c"] : []),
++    ...(opts.asyncEmbedding ? ["scr_async.c", "scr_async_dyn.c"] : []),
+     // win32 targets compile the libc-shim TU into the archive (stpcpy,
+     // arc4random_buf — scr_number.c/scr_lib.c/scr_bytes_io.c call them and
+     // mingw's CRT has neither), exactly like compileC's unconditional win32
+@@ -131,6 +134,7 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void>
+     "-fno-strict-aliasing", // the emitted object model type-puns — see compileC's buildArgs
+     "-Wno-deprecated-declarations",
+     "-DSCR_LIB",
++    ...(opts.asyncEmbedding ? ["-DSCR_ASYNC_EMBEDDING"] : []),
+     ...(opts.threadInstances ? ["-DSCR_THREAD_INSTANCES"] : []),
+     ...(opts.textDecoderLegacy ? ["-DSCR_TEXT_DECODER_LEGACY"] : []),
+     // The program's unit reads the JavaScript object model build
+@@ -160,7 +164,7 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void>
+   // search variables cannot affect it, but any mutable compilation input or
+   // opaque compiler wrapper makes every persistent tier unsafe to reuse. An
+   // opaque archiver narrows only the completed-archive tier below.
+-  const cacheIdentity = opts.cacheIdentity;
++  const cacheIdentity = opts.asyncEmbedding ? undefined : opts.cacheIdentity;
+   let persistentCache: { root: string; identity: string } | null =
+     cacheIdentity === undefined || configuredCacheRoot === null || !persistentDriverCache
+       ? null
+@@ -358,6 +362,16 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void>
+         compilerVisibleSource?: string,
+       ): Promise<string> => {
+         const obj = join(buildDir, objName);
++        if (opts.asyncEmbedding && src.endsWith(".ll") && !sanitize) {
++          await emitNativeArtifact({
++            outputPath: obj,
++            llvm: await readFile(src, "utf8"),
++            sourcePath: compilerVisibleSource ?? src,
++            outputKind: "obj",
++            optimization: optimization === "dev" ? "0" : "2",
++          });
++          return obj;
++        }
+         const args = [
+           ...driver.argv.slice(1),
+           ...cflags,
+diff --git a/packages/compiler/src/index.ts b/packages/compiler/src/index.ts
+index 7be357aa..b7e29308 100644
+--- a/packages/compiler/src/index.ts
++++ b/packages/compiler/src/index.ts
+@@ -1,3 +1,4 @@
++import { execFileAsync } from "./backend/native/process.js";
+ import { createRequire } from "node:module";
+ import { setShapeOverlayMemoDir, shapeOverlayEnabled } from "./frontend/shape-inference/index.js";
+ import { jsInferenceEnabled } from "./frontend/js-inference.js";
+@@ -2480,6 +2481,7 @@ async function compileTracked(
+ function libraryNativeFeatures(mod: IrModule, backend: "llvm"): EarlyLibraryNativeFeatures {
+   const features = moduleRuntimeFeatures(mod);
+   return {
++    declAdopt: features.declAdopt,
+     backend,
+     regex: features.regex,
+     assert: features.assert,
+@@ -2509,6 +2511,34 @@ async function compileLibraryNative(
+   features: EarlyLibraryNativeFeatures,
+ ): Promise<void> {
+   const wasmTarget = nativeCodegenTarget();
++  if (wasmTarget?.platform === "wasi" && profile.asyncEmbedding) {
++    const buildDir = await mkdtemp(join(tmpdir(), "scriptc-async-wasm-"));
++    try {
++      const archive = join(buildDir, "core.a");
++      await compileExternalCLibrary({
++        cPath: llvmPath,
++        outPath: archive,
++        optimization: profile.optimization,
++        asyncEmbedding: true,
++        ...features,
++      });
++      await execFileAsync("zig", [
++        "cc",
++        "-target",
++        "wasm32-wasi",
++        "-mexec-model=reactor",
++        "-O2",
++        "-Wl,-z,stack-size=1048576",
++        ...libraryWasmExports(profile).map((name) => `-Wl,--export=${name}`),
++        archive,
++        "-o",
++        archivePath,
++      ]);
++    } finally {
++      await rm(buildDir, { recursive: true, force: true });
++    }
++    return;
++  }
+   if (wasmTarget?.platform === "wasi") {
+     await compilePackedLibrary(
+       {
+@@ -2579,6 +2609,7 @@ async function compileLibraryNative(
+     optimization: profile.optimization,
+     ...(localizeSymbols !== undefined ? { localizeSymbols } : {}),
+     ...(profile.instancePerThread ? { threadInstances: true } : {}),
++    ...(profile.asyncEmbedding ? { asyncEmbedding: true } : {}),
+     regex: features.regex,
+     assert: features.assert,
+     inspect: features.inspect,
+@@ -2594,9 +2625,11 @@ async function compileLibraryNative(
+     dynInvoke: features.dynInvoke,
+     ...(features.dynBuffer === true ? { dynBuffer: true } : {}),
+     ...(features.dynTier === true ? { dynTier: true } : {}),
++    ...(features.declAdopt === true ? { declAdopt: true } : {}),
+     ...(features.mutableBuffers === true ? { mutableBuffers: true } : {}),
+   };
+-  if (packTarget !== null) await compilePackedLibrary(archiveOptions, packTarget);
++  if (packTarget !== null && !profile.asyncEmbedding)
++    await compilePackedLibrary(archiveOptions, packTarget);
+   else await compileExternalCLibrary(archiveOptions);
+ }
+ 
+diff --git a/packages/compiler/src/ir/ir.ts b/packages/compiler/src/ir/ir.ts
+index 4395d086..cdc5d52e 100644
+--- a/packages/compiler/src/ir/ir.ts
++++ b/packages/compiler/src/ir/ir.ts
+@@ -1510,6 +1510,7 @@ export interface IrLibCallback {
+ }
+ 
+ export interface IrLibSection {
++  asyncEmbedding?: boolean;
+   /** The profile's identity string (artifact header comments only). */
+   profileName: string;
+   /** Symbol-space hygiene: every external definition below carries it. */
+diff --git a/packages/compiler/src/library/ir-policy.ts b/packages/compiler/src/library/ir-policy.ts
+index 0fb7ba01..da3130cb 100644
+--- a/packages/compiler/src/library/ir-policy.ts
++++ b/packages/compiler/src/library/ir-policy.ts
+@@ -132,9 +132,12 @@ const LIB_MODE_REFUSED_KINDS: ReadonlyMap<string, string> = new Map([
+  * coarse moduleUses* predicates are the safety net behind the fine-grained
+  * table (a surface reached only through a spelling the table misses still
+  * refuses, anchored at the entry). */
+-export function moduleLibAsyncSurface(mod: IrModule): { surface: string; loc: SrcLoc } | null {
++export function moduleLibAsyncSurface(
++  mod: IrModule,
++  embedding = false,
++): { surface: string; loc: SrcLoc } | null {
+   for (const fn of mod.functions) {
+-    if (fn.async === true)
++    if (!embedding && fn.async === true)
+       return { surface: `an async function ('${fn.name.replace(/^%/, "")}')`, loc: fn.loc };
+     if (fn.generator !== undefined) {
+       return { surface: `a generator function ('${fn.name.replace(/^%/, "")}')`, loc: fn.loc };
+@@ -143,6 +146,7 @@ export function moduleLibAsyncSurface(mod: IrModule): { surface: string; loc: Sr
+   const entryLoc: SrcLoc = { file: mod.sourceFile, start: 0, end: 0 };
+   let found: { surface: string; loc: SrcLoc } | null = null;
+   const checkKind = (kind: string, loc: SrcLoc): boolean => {
++    if (embedding && ["promise", "awaitExpr", "awaitUnionExpr"].includes(kind)) return true;
+     const surface = LIB_MODE_REFUSED_KINDS.get(kind);
+     if (surface === undefined) return true;
+     found = { surface, loc };
+@@ -183,7 +187,7 @@ export function moduleLibAsyncSurface(mod: IrModule): { surface: string; loc: Sr
+     [features.fetch, "fetch"],
+     [features.eventTarget, "the EventTarget surface"],
+     [features.nodeTest, "the node:test surface"],
+-    [features.dynAsync, "the checked-dynamic async surface"],
++    [features.dynAsync && !embedding, "the checked-dynamic async surface"],
+     [features.dc, "the diagnostics_channel surface"],
+     [features.perfLoop, "the perf_hooks event-loop metrics"],
+     [features.nodeIsland, "calls into Node.js (@scriptc/node)"],
+diff --git a/packages/compiler/src/library/library-cache.test.ts b/packages/compiler/src/library/library-cache.test.ts
+index 70ae31e1..29584872 100644
+--- a/packages/compiler/src/library/library-cache.test.ts
++++ b/packages/compiler/src/library/library-cache.test.ts
+@@ -91,6 +91,7 @@ test("early library cache restores generated artifacts and metadata", async () =
+     bigintBytes: false,
+     mutableBuffers: false,
+     dynInvoke: false,
++    declAdopt: false,
+   };
+   await publishEarlyLibraryCache(f.root, f.options, {
+     llvmPath: f.llvmPath,
+@@ -147,6 +148,7 @@ test("early library cache publishes after creating a fresh output directory", as
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+   });
+@@ -180,6 +182,7 @@ test("early library cache hits refresh every payload's LRU time", async () => {
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+   });
+@@ -228,6 +231,7 @@ test("early library cache misses on source edits and newly-resolved candidates",
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+   });
+@@ -260,6 +264,7 @@ test("early library cache misses on source edits and newly-resolved candidates",
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: editedTracker.snapshot(),
+   });
+@@ -312,6 +317,7 @@ test("semantic library cache restores and rebases IR after a comment-only edit",
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+     semantic: { mod: semanticMod, sources: new Map([[f.source, sourceBefore]]) },
+@@ -378,6 +384,7 @@ test("semantic library cache refuses token and directive edits", async () => {
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+     semantic: { mod: semanticMod, sources: new Map([[f.source, sourceBefore]]) },
+@@ -429,6 +436,7 @@ test("semantic LLVM cache accepts comment edits that shift source lines", async
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+     semantic: { mod: semanticMod, sources: new Map([[f.source, sourceBefore]]) },
+@@ -470,6 +478,7 @@ test("semantic LLVM cache accepts line separator normalization", async () => {
+         bigintBytes: false,
+         mutableBuffers: false,
+         dynInvoke: false,
++        declAdopt: false,
+       },
+       frontend: tracker.snapshot(),
+       semantic: {
+@@ -534,6 +543,7 @@ test("semantic LLVM cache rebases comment edits in multi-source graphs", async (
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+     semantic: {
+@@ -576,6 +586,7 @@ test("early library cache is separated by the host Node version", async () => {
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+   });
+@@ -610,6 +621,7 @@ test("early library cache rejects corrupted artifacts and metadata", async () =>
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+   });
+@@ -647,6 +659,7 @@ test("disabled early library cache performs no reads or writes", async () => {
+       bigintBytes: false,
+       mutableBuffers: false,
+       dynInvoke: false,
++      declAdopt: false,
+     },
+     frontend: tracker.snapshot(),
+   };
+diff --git a/packages/compiler/src/library/library-cache.ts b/packages/compiler/src/library/library-cache.ts
+index dd8049ab..b24b9186 100644
+--- a/packages/compiler/src/library/library-cache.ts
++++ b/packages/compiler/src/library/library-cache.ts
+@@ -63,6 +63,7 @@ interface EarlyLibraryCacheStamp {
+ }
+ 
+ export interface EarlyLibraryNativeFeatures {
++  declAdopt: boolean;
+   backend: "llvm";
+   dynInvoke: boolean;
+   /** Buffer.prototype methods on checked-dynamic values (scr_bytes_dyn.c). */
+@@ -130,6 +131,7 @@ export interface SemanticLibraryCacheHit {
+ }
+ 
+ const BOOLEAN_NATIVE_KEYS = [
++  "declAdopt",
+   "dynInvoke",
+   "regex",
+   "assert",
+diff --git a/packages/compiler/src/library/library-profile.ts b/packages/compiler/src/library/library-profile.ts
+index 019dbb7e..875b906b 100644
+--- a/packages/compiler/src/library/library-profile.ts
++++ b/packages/compiler/src/library/library-profile.ts
+@@ -397,6 +397,7 @@ export interface LibrarySidecarConfig {
+ 
+ export interface LibraryProfile {
+   profileFormat: 1 | 2;
++  asyncEmbedding?: boolean;
+   name: string;
+   /** The profile file that produced this configuration. Semantic
+    * designation errors anchor here, where the offending name is written. */
+@@ -559,6 +560,7 @@ export function loadLibraryProfile(
+           "emission",
+           "optimization",
+           "npm_static",
++          "async_embedding",
+           "abi",
+           "exports",
+           "callbacks",
+@@ -576,6 +578,17 @@ export function loadLibraryProfile(
+         `unknown field '${k}' (root keys are strict: an ignored typo here would change the build; remove it)`,
+       );
+     }
++    const asyncEmbedding = p["async_embedding"] !== undefined;
++    if (asyncEmbedding) {
++      const config = p["async_embedding"];
++      if (config === null || typeof config !== "object" || Array.isArray(config))
++        throw new ProfileError("async_embedding must be { version: 1 }");
++      rejectUnknownKeys(config, "async_embedding", ["version"]);
++      if ((config as Record<string, unknown>)["version"] !== 1)
++        throw new ProfileError("unsupported async_embedding.version");
++      if (p["sidecar"] !== undefined)
++        throw new ProfileError("async embedding does not use the synchronous contract sidecar");
++    }
+     const name = req<string>(p["name"], "name", "string");
+     const npmStaticRaw = p["npm_static"] === undefined ? [] : p["npm_static"];
+     if (
+@@ -921,6 +934,11 @@ export function loadLibraryProfile(
+     };
+     claim(initSymbol, "abi.init_symbol");
+     claim(sinkRegisterSymbol, "abi.sink_register_symbol");
++    if (asyncEmbedding) {
++      claim(prefix + "async_step", "async_embedding.step");
++      claim(prefix + "async_pending", "async_embedding.pending");
++      claim(prefix + "shutdown", "async_embedding.shutdown");
++    }
+     claim(collectSymbol, "abi.collect_symbol");
+     claim(resultResetSymbol, "abi.result_reset_symbol");
+     claim(callbackRegisterSymbol, "abi.callback_register_symbol");
+@@ -1041,6 +1059,7 @@ export function loadLibraryProfile(
+       ok: true,
+       profile: {
+         profileFormat: format as 1 | 2,
++        ...(asyncEmbedding ? { asyncEmbedding: true } : {}),
+         name,
+         profilePath,
+         entry,
+diff --git a/packages/compiler/src/library/prepare.ts b/packages/compiler/src/library/prepare.ts
+index 680bb0a8..0b0a7186 100644
+--- a/packages/compiler/src/library/prepare.ts
++++ b/packages/compiler/src/library/prepare.ts
+@@ -257,6 +257,7 @@ function resolveLibrarySection(
+     collectSymbol: profile.collectSymbol,
+     resultResetSymbol: profile.resultResetSymbol,
+     threadInstances: profile.instancePerThread,
++    ...(profile.asyncEmbedding ? { asyncEmbedding: true } : {}),
+     // Host-callback channels: declaration order is the runtime slot
+     // assignment, and the unregistered-call trap text is assembled HERE,
+     // once, for consistent constant bytes (a DETECTED
+@@ -689,7 +690,7 @@ export function prepareLibrary(
+     entryPath,
+   );
+   if ("diagnostics" in resolved) return fail(resolved.diagnostics);
+-  const asyncSurface = moduleLibAsyncSurface(mod);
++  const asyncSurface = moduleLibAsyncSurface(mod, profile.asyncEmbedding);
+   if (asyncSurface !== null) {
+     return fail([libAsyncSurfaceDiag(asyncSurface.surface, asyncSurface.loc)]);
+   }
+@@ -798,6 +799,13 @@ export function libraryLocalizeSymbols(profile: LibraryProfile): string[] | unde
+   return profile.localizeRuntime
+     ? [
+         profile.initSymbol,
++        ...(profile.asyncEmbedding
++          ? [
++              profile.prefix + "async_step",
++              profile.prefix + "async_pending",
++              profile.prefix + "shutdown",
++            ]
++          : []),
+         profile.sinkRegisterSymbol,
+         ...(profile.collectSymbol !== null ? [profile.collectSymbol] : []),
+         ...(profile.resultResetSymbol !== null ? [profile.resultResetSymbol] : []),
+@@ -813,6 +821,13 @@ export function libraryLocalizeSymbols(profile: LibraryProfile): string[] | unde
+ export function libraryWasmExports(profile: LibraryProfile): string[] {
+   return [
+     profile.initSymbol,
++    ...(profile.asyncEmbedding
++      ? [
++          profile.prefix + "async_step",
++          profile.prefix + "async_pending",
++          profile.prefix + "shutdown",
++        ]
++      : []),
+     "scriptc_alloc",
+     "scriptc_free",
+     ...(profile.collectSymbol === null ? [] : [profile.collectSymbol]),
+diff --git a/packages/runtime/src/scr_async.c b/packages/runtime/src/scr_async.c
+index bb7cf890..61bce688 100644
+--- a/packages/runtime/src/scr_async.c
++++ b/packages/runtime/src/scr_async.c
+@@ -750,7 +750,7 @@ struct ScrFiber {
+  * active slot, the snapshot RC pair, enter/restore, and the
+  * switch/spawn/destroy wiring. */
+ static SCR_TL ScrAlsCtx *scr_als_main_slot = NULL;
+-#ifdef SCR_WORKERS
++#if defined(SCR_WORKERS) || defined(SCR_THREAD_INSTANCES)
+ SCR_TL ScrAlsCtx **scr_als_active;
+ ScrAlsCtx **scr_als_slot(void) {
+   return scr_als_active ? scr_als_active : &scr_als_main_slot;
+@@ -4307,7 +4307,7 @@ typedef struct ScrCryptoBytesOp {
+ } ScrCryptoBytesOp;
+ 
+ static SCR_TL ScrCryptoBytesOp *scr_crypto_bytes_head = NULL;
+-#ifdef SCR_WORKERS
++#if defined(SCR_WORKERS) || defined(SCR_THREAD_INSTANCES)
+ static SCR_TL ScrCryptoBytesOp **scr_crypto_bytes_tail;
+ #else
+ static SCR_TL ScrCryptoBytesOp **scr_crypto_bytes_tail = &scr_crypto_bytes_head;
+@@ -5693,6 +5693,33 @@ static bool scr_loop_run_checkpoint(void) {
+   return true;
+ }
+ 
++#ifdef SCR_ASYNC_EMBEDDING
++int32_t scr_embed_close(void) {
++  if (scr_current || scr_ready_len || scr_fibers_live) return 0;
++  scr_discard_unhandled_rejections();
++  free(scr_ready); scr_ready = NULL; scr_ready_cap = 0; scr_ready_head = 0;
++  free(scr_maybe_unhandled); scr_maybe_unhandled = NULL; scr_unhandled_cap = 0;
++  scr_als_main_clear();
++  return 1;
++}
++int32_t scr_embed_pending(void) { return scr_ready_len != 0; }
++int32_t scr_embed_step(uint32_t budget) {
++  if (scr_current != NULL) scr_trap("scriptc: async step reentry\n");
++  while (budget > 0 && scr_ready_len > 0) {
++    budget--;
++    ScrFiber *f = scr_ready[scr_ready_head++];
++    scr_ready_len--;
++    SCR_RESUME_JOB(f);
++    if (scr_exc_pending()) break;
++  }
++  if (scr_ready_len == 0) {
++    scr_ready_head = 0;
++    scr_cyc_collect_scheduled();
++  }
++  return scr_embed_pending();
++}
++#endif
++
+ static bool scr_loop_run_pass(ScrPromise *top_level, bool first_checkpoint) {
+   /* The FIRST checkpoint after the synchronous main body runs promise
+    * jobs BEFORE the first tick drain: Node's main-module evaluation is
+diff --git a/packages/runtime/src/scr_async.h b/packages/runtime/src/scr_async.h
+index e2b62078..c74a18d5 100644
+--- a/packages/runtime/src/scr_async.h
++++ b/packages/runtime/src/scr_async.h
+@@ -199,7 +199,7 @@ typedef struct ScrAlsCtx {
+ } ScrAlsCtx;
+ /* Runtime-internal (the fiber machinery's always-linked core). */
+ extern SCR_TL ScrAlsCtx **scr_als_active;
+-#ifdef SCR_WORKERS
++#if defined(SCR_WORKERS) || defined(SCR_THREAD_INSTANCES)
+ ScrAlsCtx **scr_als_slot(void);
+ #define SCR_ALS_SLOT() scr_als_slot()
+ #else
+diff --git a/packages/runtime/src/scr_core.h b/packages/runtime/src/scr_core.h
+index 254cc884..de05b296 100644
+--- a/packages/runtime/src/scr_core.h
++++ b/packages/runtime/src/scr_core.h
+@@ -304,7 +304,7 @@ ScrStr *scr_library_cstr_in(const char *p, const char *trap_msg); /* +1 */
+ const char *scr_library_cstr_out(ScrStr *s);
+ const char *scr_library_cstr_arg(const ScrStr *s);
+ 
+-#define scr_atexit(fn) scr_library_register_reset(fn)
++#define scr_atexit(fn) (scr_library_register_reset(fn), 0)
+ #elif defined(SCR_WORKERS)
+ /* Executable workers drain their own cleanup stack before their TLS dies.
+  * Registering their callbacks with libc would execute them on the process

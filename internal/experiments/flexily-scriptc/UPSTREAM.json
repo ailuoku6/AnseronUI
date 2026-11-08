@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/beorn/flexily",
+  "commit": "4850f1fb475f8147458059b45fb4f148d14a6ab4",
+  "version": "0.8.5",
+  "date": "2026-11-07",
+  "modified_upstream_files": [
+    "src/layout-flex-lines.ts",
+    "src/layout-helpers.ts",
+    "src/layout-zero.ts",
+    "src/length.ts",
+    "src/node-zero.ts",
+    "src/types.ts",
+    "src/utils.ts"
+  ],
+  "new_entry": "src/index-scriptc.ts",
+  "compiler_commit": "294bb3608da12ae6af7f54f67b47c222c93cb2aa",
+  "compiler_version": "0.2.1",
+  "scope": "Experimental low-level Node layout source port; not a port of createFlexily or the text plugins."
+}
