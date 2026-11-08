@@ -191,7 +191,14 @@ export class DOMRenderer {
         video.addEventListener("loadeddata", () => record.enabled.has("firstFrameDidDisplay") && this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "firstFrameDidDisplay" }));
         video.addEventListener("timeupdate", () => record.enabled.has("playTimeDidChanged") && this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "playTimeDidChanged", x: Math.round(video.currentTime * 1000), duration: Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : 0 }));
       }
-      if (command.kind === "Button") element.setAttribute("type", "button");
+      if (command.kind === "Button") {
+        element.setAttribute("type", "button");
+        Object.assign(element.style, {
+          appearance: "none", boxSizing: "border-box", border: "0", borderRadius: "0",
+          background: "transparent", padding: "6px 12px", color: "#007aff",
+          font: "16px system-ui, -apple-system, BlinkMacSystemFont, sans-serif", cursor: "pointer",
+        });
+      }
       const record: NodeRecord = { element, animation: new NodeAnimation(values => paintElement(element, values)), native, kind: command.kind, enabled: new Set(), composing: false, inputRevision: 0, pendingInputRevision: 0, pendingValue: null };
       this.records.set(command.nodeId, record);
       element.dataset.tsnNode = String(command.nodeId);
@@ -341,8 +348,8 @@ export class DOMRenderer {
     const visual = { ...visualDefaults, ...colorValues(String(props.backgroundColor ?? "transparent")) };
     for (const key of ["opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius"]) if (typeof props[key] === "number") visual[key] = props[key] as number;
     record.animation.stage(visual);
-    element.style.color = String(props.color ?? "");
-    element.style.fontSize = props.fontSize === undefined ? "" : props.fontSize + "px";
+    element.style.color = String(props.color ?? (record.kind === "Button" ? (props.disabled === true ? "#8e8e93" : "#007aff") : ""));
+    element.style.fontSize = props.fontSize === undefined ? (record.kind === "Button" ? "16px" : "") : props.fontSize + "px";
     element.style.fontWeight = String(props.fontWeight ?? "");
     element.style.fontStyle = String(props.fontStyle ?? "");
     element.style.textAlign = String(props.textAlign ?? "");

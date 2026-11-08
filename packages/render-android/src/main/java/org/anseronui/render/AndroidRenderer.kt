@@ -221,13 +221,20 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
 
     fun viewFor(nodeId: Long): View? = nodes[nodeId]?.view
 
+    private fun systemButton() = Button(root.context).apply {
+        setAllCaps(false)
+        minWidth = 0
+        minHeight = 0
+        setPadding((12 * density).roundToInt(), (6 * density).roundToInt(), (12 * density).roundToInt(), (6 * density).roundToInt())
+    }
+
     /** Call on the UI thread; real controls measure their own text and padding. */
     fun measure(kind: String, text: String, fontSize: Float, maxWidth: Float, props: JSONObject? = null): TextSize {
         require(Looper.myLooper() == Looper.getMainLooper()) { "Measurement must run on the UI thread" }
         require(fontSize.isFinite() && fontSize >= 0 && maxWidth.isFinite() && maxWidth >= 0)
         val view: TextView = when (kind) {
             "Text", "RichText" -> TextView(root.context)
-            "Button" -> Button(root.context)
+            "Button" -> systemButton()
             "TextInput" -> EditText(root.context)
             else -> error("Unknown text kind")
         }
@@ -282,7 +289,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 "View" -> { view = FrameLayout(root.context); content = view }
                 "Text" -> { view = TextView(root.context); content = null }
                 "RichText" -> { view = TextView(root.context); content = null }
-                "Button" -> { view = Button(root.context); content = null }
+                "Button" -> { view = systemButton(); content = null }
                 "TextInput" -> { view = EditText(root.context); content = null }
                 "ScrollView" -> {
                     val scroll = TouchScrollView().apply { isFillViewport = true }
@@ -444,7 +451,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         background.setStroke((props.optDouble("borderWidth", 0.0) * density).roundToInt(), parseColor(props.optString("borderColor", ""), Color.TRANSPARENT))
         if (view is TextView) {
             view.textSize = props.optDouble("fontSize", 16.0).toFloat()
-            view.setTextColor(parseColor(props.optString("color", ""), Color.BLACK))
+            view.setTextColor(parseColor(props.optString("color", ""), if (record.kind == "Button") Color.rgb(0, 122, 255) else Color.BLACK))
             view.typeface = android.graphics.Typeface.create(view.typeface, if (props.optString("fontWeight") == "bold") android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
             if (props.optString("fontStyle") == "italic") view.setTypeface(view.typeface, android.graphics.Typeface.ITALIC)
             view.gravity = when (props.optString("textAlign")) { "center" -> android.view.Gravity.CENTER_HORIZONTAL; "right" -> android.view.Gravity.RIGHT; else -> android.view.Gravity.LEFT }
@@ -490,9 +497,12 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                     view.movementMethod = LinkMovementMethod.getInstance()
                 }
                 "Button" -> {
+                    view.setAllCaps(false)
                     view.text = props.optString("title", "")
-                    val normal = parseColor(props.optString("color", ""), Color.BLACK)
-                    val disabled = Color.argb((Color.alpha(normal) * 0.45f).roundToInt(), Color.red(normal), Color.green(normal), Color.blue(normal))
+                    val normal = parseColor(props.optString("color", ""), Color.rgb(0, 122, 255))
+                    val disabled = if (props.has("color")) {
+                        Color.argb((Color.alpha(normal) * 0.4f).roundToInt(), Color.red(normal), Color.green(normal), Color.blue(normal))
+                    } else Color.rgb(142, 142, 147)
                     view.setTextColor(ColorStateList(
                         arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
                         intArrayOf(disabled, normal)
