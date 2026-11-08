@@ -24,7 +24,7 @@ Android SDK 路径可通过 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 设置，NDK 路
 **`anseronui` 目前尚未发布到 npm。** 发布后，可以在任意工作目录使用以下命令：
 
 ```sh
-npx anseronui@0.1.0 create awesomeAnseron --application-id com.example.awesomeanseron
+npx anseronui create awesomeAnseron --application-id com.example.awesomeanseron
 cd awesomeAnseron
 npm install
 npm run setup
