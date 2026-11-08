@@ -21,6 +21,8 @@ class AnseronUIRenderView @JvmOverloads constructor(
     private val extensions: AndroidPlatformExtensions = AndroidPlatformExtensions()
 ) : FrameLayout(context, attrs, defStyleAttr) {
     var onReady: () -> Unit = {}
+    /** Lets the owning app extend the page background into system bars and insets. */
+    var onPageBackgroundColor: (Int) -> Unit = {}
     var onDiagnostic: (String, String) -> Unit = { _, _ -> }
     var onFailure: (Throwable) -> Unit = {}
     var page: String? = null
@@ -135,6 +137,9 @@ class AnseronUIRenderView @JvmOverloads constructor(
                 }
             })
         host = nextHost
+        nextHost.renderer.onPageBackgroundColor = { color ->
+            if (!isDestroyed && generation == currentGeneration) onPageBackgroundColor(color)
+        }
         lastSize = size
         nextHost.start(page, size.first, size.second)
     }

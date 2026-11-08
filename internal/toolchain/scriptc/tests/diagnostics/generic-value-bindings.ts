@@ -1,0 +1,85 @@
+// Generic function VALUE fences, named: every shape here keeps the generic
+// signature alive where static monomorphization cannot follow.
+
+// A reassigned binding cannot resolve statically — a later write could hold
+// a structurally identical function with a different body.
+let flip = <T>(x: T): T => x;
+flip = <T>(x: T): T => x;
+console.log(flip(1));
+
+// An ALIAS binding registers its target (calls through it monomorphize),
+// and a USE with no pinning context erases to the target's dynamic
+// closure — no diagnostic, the value is the function JavaScript has.
+const id = <T>(x: T): T => x;
+const stored = id;
+console.log(typeof stored);
+
+// An alias of a REASSIGNED binding never registers: the target's own
+// fence reports, and the alias's uses inherit that blocker.
+const flipAlias = flip;
+console.log(flipAlias(5));
+
+// Declared inside a function and reading a binding declared AFTER it: a
+// call could run before the binding's initializer (a temporal dead zone).
+// (Bindings declared before it are supported — copied as trailing
+// parameters, or shared through a closure environment when reassigned.)
+function outer(base: number): number {
+  const inner = <T>(x: T): [T, number] => [x, scale];
+  const scale = base + 1;
+  return inner(3)[1];
+}
+console.log(outer(4));
+
+// Declared inside a GENERIC function: the enclosing frame re-lowers per
+// instantiation, so the shared instance cannot carry its type argument.
+function outerGeneric<U>(seed: U): string {
+  const inner = <T>(x: T): string => `${String(x)}${String(seed)}`;
+  return inner(3);
+}
+console.log(outerGeneric<number>(1));
+
+// Used as a value inside a function: each call of the enclosing function
+// makes a new function object (`make() !== make()`), and the compiled
+// instances are shared module functions.
+function make(): (x: number) => number {
+  const same = <T>(x: T): T => x;
+  return same<number>;
+}
+console.log(make() === make());
+
+// An ambient binding of generic function type now compiles to Node's exact
+// ReferenceError at the access (the declare-erasure stance — no diagnostic
+// here; the optional chain cannot guard the root's own throw).
+declare const ambient: undefined | (<T>(f: (a: T) => T) => T);
+console.log(ambient?.((n: number) => n) === undefined);
+
+// A call whose RESULT is itself a generic function: the returned signature
+// keeps its type parameters and erases to the closure the call produced.
+const curried = <T>(x: T) => <U>(y: U): string => `${x}|${y}`;
+console.log(curried(1)("a"));
+
+// Ambient `declare class` generic methods are signature-only. Through an
+// AMBIENT-ROOTED receiver the call now compiles to Node's ReferenceError
+// at the root (the declare-const chain stance — no diagnostic here); a
+// receiver that exists at runtime keeps the fence.
+declare class Amb {
+  m<T>(x: T): T;
+}
+declare const amb: Amb;
+console.log(amb.m(4));
+function throughParam(a: Amb): void {
+  console.log(a.m(4));
+}
+throughParam(amb);
+
+// A `var` binding inside a function, declared in a branch and called from
+// a closure: when the branch does not run, Node finds the binding undefined.
+// The compiled instances have no per-call flag for that, so the call fences.
+function branchVar(flag: boolean): number {
+  if (flag) {
+    var picked = <T>(x: T): T => x;
+  }
+  const invoke = (): number => picked(1);
+  return invoke();
+}
+console.log(branchVar(true));

@@ -17,7 +17,7 @@
 
 ## 当前边界
 
-该仓库现在是一套可运行的跨端框架基础，不只是 renderer 或 SDK 草案，也不是 Kuikly 全量能力的等价实现。async embedding patch 绑定 scriptc v0.4.8，compiler 依赖需联网准备；升级该版本前须移植和重跑跨平台验证。任意仍挂起的 async fiber 无法被强制取消，Core shutdown 会返回未完成状态并保留实例。设备签名、应用商店分发、更多设备/IME/accessibility、持续集成与内存预算仍待单独验收。热更新不在首版范围。
+该仓库现在是一套可运行的跨端框架基础，不只是 renderer 或 SDK 草案。async embedding patch 绑定 scriptc v0.4.8，compiler 依赖需联网准备；升级该版本前须移植和重跑跨平台验证。任意仍挂起的 async fiber 无法被强制取消，Core shutdown 会返回未完成状态并保留实例。设备签名、应用商店分发、更多设备/IME/accessibility、持续集成与内存预算仍待单独验收。热更新不在首版范围。
 
 ## 可重复构建与验证
 

@@ -1,9 +1,8 @@
 {
   "name": "anseronui",
-  "private": true,
   "type": "module",
   "bin": {
-    "anseronui": "scripts/anseronui.mjs"
+    "anseronui": "dist/sdk/scripts/anseronui.mjs"
   },
   "workspaces": [
     "packages/*"
@@ -21,7 +20,7 @@
     "typecheck:framework": "tsc --noEmit -p tsconfig.framework.json",
     "test:framework": "vitest run --config scripts/framework.vitest.config.ts",
     "test:build": "node --test scripts/core-inputs.test.mjs scripts/lower-timers.test.mjs",
-    "test:tooling": "node --test scripts/anseronui.test.mjs",
+    "test:tooling": "node --test scripts/anseronui.test.mjs scripts/native-plugins.test.mjs",
     "lower:counter": "node --import tsx scripts/lower-tsx.mjs examples/counter/page.tsx .verification/framework/counter.ts",
     "dev:counter": "vite --config examples/counter/vite.config.ts",
     "build:counter:web": "vite build --config examples/counter/vite.config.ts",
@@ -43,21 +42,50 @@
     "test:core:wasm": "node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs async-form && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs components && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs extensions && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs timers",
     "build:framework": "node scripts/build-core.mjs --framework-only",
     "build:business": "node scripts/build-core.mjs --business-only",
-    "test:browser:split": "node scripts/test-web-extensions.mjs split"
+    "test:browser:split": "node scripts/test-web-extensions.mjs split",
+    "prepack": "node scripts/pack-sdk.mjs",
+    "test:package": "node --test scripts/npm-package.test.mjs",
+    "prepublishOnly": "npm run typecheck:framework && npm run test:tooling && npm run test:build && npm run test:package"
   },
   "devDependencies": {
     "@types/debug": "4.1.13",
-    "@types/node": "24.10.0",
     "debug": "4.4.3",
     "loggily": "0.13.0",
-    "scriptc": "0.4.8",
-    "tsx": "4.22.4",
-    "typescript": "5.9.3",
     "vitest": "5.0.4",
     "yoga-wasm-web": "0.3.3"
   },
   "optionalDependencies": {
     "@scriptc/runtime-darwin-arm64": "0.4.8",
     "@scriptc/runtime-wasm32-wasi": "0.4.8"
+  },
+  "version": "0.0.2",
+  "description": "Create and build AnseronUI apps for iOS, Android and Web from shared TSX pages",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ailuoku6/AnseronUI.git"
+  },
+  "files": [
+    "dist/sdk",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "exports": {
+    ".": "./dist/sdk/packages/ui/src/index.ts",
+    "./ui": "./dist/sdk/packages/ui/src/index.ts",
+    "./core": "./dist/sdk/packages/core/src/index.ts",
+    "./protocol": "./dist/sdk/packages/protocol/src/index.ts",
+    "./layout": "./dist/sdk/packages/layout/src/index.ts",
+    "./render-web": "./dist/sdk/packages/render-web/src/index.ts",
+    "./ui/jsx-runtime": "./dist/sdk/packages/ui/src/jsx-runtime.ts",
+    "./ui/jsx-dev-runtime": "./dist/sdk/packages/ui/src/jsx-runtime.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@types/node": "24.10.0",
+    "pnpm": "11.21.0",
+    "scriptc": "0.4.8",
+    "tsx": "4.22.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.6"
   }
 }

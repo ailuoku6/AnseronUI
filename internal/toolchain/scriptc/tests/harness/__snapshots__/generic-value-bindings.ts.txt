@@ -1,0 +1,86 @@
+generic-value-bindings.ts:6:5 - error SC1090: generic function values in reassigned bindings (calls of 'flip' resolve statically against this initializer, so the binding must provably hold it — a const, or a let/var nothing in its declaring file writes) are not supported yet
+
+  5 | // a structurally identical function with a different body.
+  6 | let flip = <T>(x: T): T => x;
+    |     ^~~~
+  7 | flip = <T>(x: T): T => x;
+
+generic-value-bindings.ts:7:1 - error SC2004: uses of 'flip' inherit the blocker on its declaration
+
+  6 | let flip = <T>(x: T): T => x;
+  7 | flip = <T>(x: T): T => x;
+    | ^~~~
+  8 | console.log(flip(1));
+
+  hint: the declaration of 'flip' did not compile — fix the diagnostic reported there and these sites clear with it
+
+generic-value-bindings.ts:8:13 - error SC2004: uses of 'flip' inherit the blocker on its declaration
+
+  7 | flip = <T>(x: T): T => x;
+  8 | console.log(flip(1));
+    |             ^~~~
+  9 | 
+
+  hint: the declaration of 'flip' did not compile — fix the diagnostic reported there and these sites clear with it
+
+generic-value-bindings.ts:19:19 - error SC2004: uses of 'flip' inherit the blocker on its declaration
+
+  18 | // fence reports, and the alias's uses inherit that blocker.
+  19 | const flipAlias = flip;
+     |                   ^~~~
+  20 | console.log(flipAlias(5));
+
+  hint: the declaration of 'flip' did not compile — fix the diagnostic reported there and these sites clear with it
+
+generic-value-bindings.ts:27:17 - error SC1090: generic arrow/function-expression bindings that use the frames of their enclosing functions (the compiled instantiations of 'inner' are module functions and cannot capture its locals, parameters, type parameters or 'this' — pass them as arguments, or declare the binding at module scope) are not supported yet
+
+  26 | function outer(base: number): number {
+  27 |   const inner = <T>(x: T): [T, number] => [x, scale];
+     |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  28 |   const scale = base + 1;
+
+generic-value-bindings.ts:29:10 - error SC2004: uses of 'inner' inherit the blocker on its declaration
+
+  28 |   const scale = base + 1;
+  29 |   return inner(3)[1];
+     |          ^~~~~
+  30 | }
+
+  hint: the declaration of 'inner' did not compile — fix the diagnostic reported there and these sites clear with it
+
+generic-value-bindings.ts:36:17 - error SC1090: generic arrow/function-expression bindings that use the frames of their enclosing functions (the compiled instantiations of 'inner' are module functions and cannot capture its locals, parameters, type parameters or 'this' — pass them as arguments, or declare the binding at module scope) are not supported yet (instantiating 'outerGeneric' with <number>)
+
+  35 | function outerGeneric<U>(seed: U): string {
+  36 |   const inner = <T>(x: T): string => `${String(x)}${String(seed)}`;
+     |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  37 |   return inner(3);
+
+generic-value-bindings.ts:37:10 - error SC2004: uses of 'inner' inherit the blocker on its declaration (instantiating 'outerGeneric' with <number>)
+
+  36 |   const inner = <T>(x: T): string => `${String(x)}${String(seed)}`;
+  37 |   return inner(3);
+     |          ^~~~~
+  38 | }
+
+  hint: the declaration of 'inner' did not compile — fix the diagnostic reported there and these sites clear with it
+
+generic-value-bindings.ts:46:10 - error SC1090: generic arrow/function-expression bindings declared inside functions as values (each call of the enclosing function makes a new 'same' function object, while its compiled instances are shared module functions — call 'same' directly, or declare it at module scope) are not supported yet
+
+  45 |   const same = <T>(x: T): T => x;
+  46 |   return same<number>;
+     |          ^~~~~~~~~~~~
+  47 | }
+
+generic-value-bindings.ts:71:15 - error SC1090: calls of the generic method 'm' through this receiver (no compiled declaration with a body resolves statically here — ambient 'declare class' and interface-only methods are signature-only, and only class, static, and object-literal generic methods with bodies monomorphize) is not supported yet
+
+  70 | function throughParam(a: Amb): void {
+  71 |   console.log(a.m(4));
+     |               ^~~~~~
+  72 | }
+
+generic-value-bindings.ts:82:32 - error SC1090: generic arrow/function-expression bindings declared inside functions that code can call before their declaration runs (the binding 'picked' is a 'var' in a branch or block, or is called from a place that can run first — declare it with const before its uses) are not supported yet
+
+  81 |   }
+  82 |   const invoke = (): number => picked(1);
+     |                                ^~~~~~
+  83 |   return invoke();

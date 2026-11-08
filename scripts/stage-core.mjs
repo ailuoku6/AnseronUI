@@ -19,12 +19,21 @@ const stage = resolve(stageTarget ? '.verification/source-' + stageTarget + '/' 
 await rm(stage, {recursive:true, force:true});
 await mkdir(stage, {recursive:true});
 const aliases = new Map([
+ ['anseronui','packages/ui/src/index.ts'],
+ ...['core','layout','protocol','ui'].map(name => [`anseronui/${name}`, `packages/${name}/src/index.ts`]),
+ ['anseronui/ui/jsx-runtime','packages/ui/src/jsx-runtime.ts'],
+ ['anseronui/ui/jsx-dev-runtime','packages/ui/src/jsx-runtime.ts'],
  ['@anseronui/core','packages/core/src/index.ts'], ['@anseronui/layout','packages/layout/src/index.ts'],
  ['@anseronui/protocol','packages/protocol/src/index.ts'], ['@anseronui/ui','packages/ui/src/index.ts'],
  ['@anseronui/ui/jsx-runtime','packages/ui/src/jsx-runtime.ts']
 ]);
 function stagedPath(path) {
  const absolute = resolve(root, path);
+ const plugin = (config.npmPlugins ?? []).find(plugin => {
+  const base = dirname(resolve(root, plugin.entry));
+  return absolute === base || absolute.startsWith(base + '/');
+ });
+ if (plugin) return join('__npm_plugins__', createHash('sha1').update(plugin.name).digest('hex').slice(0, 12), relative(dirname(resolve(root, plugin.entry)), absolute));
  const projectPath = relative(root, absolute);
  if (!projectPath.startsWith('..')) return projectPath;
  const candidates = (config.sourceDirs ?? []).map(dir => resolve(root, dir))
@@ -34,6 +43,7 @@ function stagedPath(path) {
  const identity = createHash('sha1').update(base).digest('hex').slice(0, 12);
  return join('__external__', identity, relative(base, absolute));
 }
+for (const plugin of config.npmPlugins ?? []) aliases.set(plugin.name, stagedPath(plugin.entry));
 async function copy(path, outputPath = stagedPath(path)) {
  const absolute = resolve(root, path);
  for (const item of await readdir(absolute,{withFileTypes:true})) {

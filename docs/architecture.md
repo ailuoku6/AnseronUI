@@ -190,7 +190,7 @@ Android generic host 在系统返回事件中依次调用 `handleBackPress()`、
 | `dist/`、`**/build/` | Web、包级构建和 Gradle 产物，匹配任意层级 |
 | `**/.gradle/`、`.build/`、`DerivedData/` | Gradle、SwiftPM 和 Xcode 本地缓存 |
 | `*.log` | 开发与构建日志；测试基线需要单独用明确的 fixture 文件管理 |
-| `/internal/toolchain/scriptc/` | `prepare:compiler` 可按固定提交重新创建的编译器 checkout；补丁和构建脚本仍需提交 |
+| `/internal/toolchain/scriptc/` | 主仓库管理的 scriptc 上游源码副本，包含 AnseronUI async embedding 适配 |
 | `/packages/render-android/src/main/jniLibs/*/libanseronui.so` | 构建脚本复制到 Renderer 源码目录的 JNI/Core 动态库 |
 | `core.wasm`、`framework.wasm`、`core.manifest.json` | 构建脚本生成并复制到各端资源目录的 Core 与清单 |
 | `/examples/native/web/public/assets/showcase.png`、`…/showcase.mp4` | Web 示例的媒体副本；源资产 `examples/components/assets/` 保留 |
@@ -208,11 +208,11 @@ Android generic host 在系统返回事件中依次调用 `handleBackPress()`、
 
 - `package-lock.json`、`package.json`、`anseronui.config.json` 和构建脚本；
 - TSX 页面、原生宿主源码、测试、Gradle wrapper 和可重建工程的生成脚本；
-- `internal/toolchain/async-embedding.patch`、固定编译器提交和来源记录；
+- `internal/toolchain/scriptc/` 编译器源码、`async-embedding.patch`、固定提交和 `scriptc.vendor.json` 来源清单；
 - 小型图片、视频、文本 fixture 等测试输入；
 - Flexily 的适配源码、测试、`LICENSE` 与 `UPSTREAM-scriptc-adaptation.json`。
 
-Flexily 是带本地适配的源码副本，不应误添加成没有 `.gitmodules` 的 gitlink。上游 `.git` 是本机差分验证所需的 Git 对象，不是要提交到父仓库的源码文件。普通源码发行包没有这份元数据时，按[布局文档](../packages/layout/README.md#源码发行包的上游验证前置条件)补齐参照提交；不要 checkout/reset 覆盖适配源码。
+Flexily 和 scriptc 都是主仓库直接管理的普通源码目录，不含嵌套 Git 元数据。Flexily 的上游提交对象仅由布局验证脚本在忽略的 `.verification/` 目录中获取，用于差分对照；不要 checkout/reset 覆盖适配源码。
 
 ### 发布边界
 
@@ -242,4 +242,4 @@ npm run build:android
 
 ## 架构边界
 
-当前实现强调可运行的跨端基础和清晰的宿主协议，暂不承诺：热更新、完整 Kuikly 兼容、React 兼容、深链/路由参数、页面缓存、完整无障碍实现、通用插件市场、应用签名发布自动化、任意 async fiber 强制取消和所有设备/IME 行为一致。
+当前实现强调可运行的跨端基础和清晰的宿主协议，暂不承诺：热更新、React 兼容、深链/路由参数、页面缓存、完整无障碍实现、通用插件市场、应用签名发布自动化、任意 async fiber 强制取消和所有设备/IME 行为一致。

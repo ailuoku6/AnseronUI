@@ -24,7 +24,7 @@ function ReadDevice() {
 
 `useServices()` 绑定当前函数组件生命周期。组件卸载时，未完成请求被取消并拒绝；宿主丢弃取消后的迟到结果以及重复完成。原生处理器可以返回取消函数，用来停止网络、定位等底层任务。没有返回取消函数时，底层任务本身不会被强制停止。
 
-所有通用模块调用都返回 Promise。Core 在独立执行线程上运行，宿主不支持 Kuikly 风格的同步返回，也没有通用的持续事件订阅 API。持续订阅需要另行设计订阅/取消协议；一次模块调用只能完成一次。`http`、`timer`、`__view`、`router` 是框架保留模块名，不要注册同名模块。
+所有通用模块调用都返回 Promise。Core 在独立执行线程上运行，宿主不支持同步返回模块调用结果，也没有通用的持续事件订阅 API。持续订阅需要另行设计订阅/取消协议；一次模块调用只能完成一次。`http`、`timer`、`__view`、`router` 是框架保留模块名，不要注册同名模块。
 
 模块名、方法名最大 128 字符；模块名匹配 `[A-Za-z_][A-Za-z0-9_.-]*`。参数和返回值通过 JSON 传输，只传字符串、有限数值、布尔值、null、数组和普通对象；不要传函数、原生对象、循环引用或 BigInt。未传参数时使用 null。协议字符串上限为 65,536 字符，iOS/Android 的扩展返回和事件编码另外限制为 65,536 UTF-8 字节；业务应将单次载荷控制在 64 KiB 以内。
 
@@ -150,3 +150,9 @@ function Editor(props: { ref?: RefTarget<EditorHandle> }) {
 ## 验证入口
 
 `npm run test:framework` 覆盖协议、ref 提交时序、模块成功/失败、取消及组件公开句柄。`npm run test:core:native` 和 `npm run test:core:wasm` 包含扩展页的真实 AOT 协议验证。macOS 可执行 `node scripts/test-web-extensions.mjs`，用 WebKit 验证 Web 参考宿主和 DOM 扩展。iOS 的 `testNativeExtensions` 与 Android 的同名 instrumentation 测试验证真实平台控件、属性、回调及 ref。
+
+## 通过 npm 分发与自动注册
+
+通过 `anseronui create` 生成的独立 App 支持 npm 原生插件：在包的 `package.json` 声明 `anseronui.schemaVersion: 1`、共享 TS 入口及各平台工厂。setup/build 扫描生产依赖并生成 `.anseronui/plugins/`，将工厂返回的模块和组件注入宿主。注册表仍遵守本文的异步调用、取消、JSON 载荷和组件生命周期约束。
+
+插件清单、权限配置、发布命令和当前自动接入范围见[README：发布带原生能力的 npm 包](../README.md#发布带原生能力的-npm-包)，完整三端实现见 [`examples/native-plugin`](../examples/native-plugin)。已有原生工程仍可直接手动注入本文所示的扩展注册表。

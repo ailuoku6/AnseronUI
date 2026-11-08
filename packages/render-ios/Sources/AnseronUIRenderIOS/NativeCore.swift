@@ -3,11 +3,12 @@ import AnseronUICoreC
 
 /// AOT Core transport. Construct and call it only on the host's owner thread.
 public final class NativeCore: IOSCoreTransport {
-    public let bundleBuildId = "anseronui-demo"
+    public let bundleBuildId: String
     public let runtimeEpoch: UInt32 = 1
     private var context: OpaquePointer?
 
-    public init() throws {
+    public init(bundleBuildId: String = "anseronui-demo") throws {
+        self.bundleBuildId = bundleBuildId
         context = anseronui_open()
         guard let context else { throw NativeCoreError.message("Unable to create native Core") }
         let message = String(cString: anseronui_error(context))

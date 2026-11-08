@@ -1,0 +1,15 @@
+dynamic-import-static.ts:5:24 - error SC1090: dynamic import() of computed specifiers (the module graph resolves at build time — the specifier must be a string literal) are not supported yet
+
+  4 | async function run(specifier: string): Promise<void> {
+  5 |   const module = await import(specifier);
+    |                        ^~~~~~~~~~~~~~~~~
+  6 |   console.log(module);
+
+dynamic-import-static.ts:6:15 - error SC2004: uses of 'module' inherit the blocker on its declaration
+
+  5 |   const module = await import(specifier);
+  6 |   console.log(module);
+    |               ^~~~~~
+  7 | }
+
+  hint: the declaration of 'module' did not compile — fix the diagnostic reported there and these sites clear with it

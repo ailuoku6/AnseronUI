@@ -6,7 +6,7 @@
 
 迁移记录：2026-11-07 按用户要求迁至 AnseronUI 工作区，本文仍保留 v3 的设计结论与原调研日期。本文未单独注明归属的源码/测试/公共文档路径（如 `packages/`、`tests/`、`docs/`、`internal/compatibility/`）均相对于调研时独立的 scriptc 源码仓库；本方案、需求记录及后续框架工作的根目录为 AnseronUI。
 
-调研基线：scriptc `294bb360`；本地 KuiklyUI 源码仓库，提交 `3dfc24e8`。结论来自这两个工作区的源码与已有测试定义，本次没有重跑其全平台测试。
+调研基线：scriptc `294bb360`。编译器相关结论来自该工作区的源码与已有测试定义，本次没有重跑其全平台测试。
 
 布局实施基线：AnseronUI 的 `packages/flexily/` 与 `packages/layout/` 使用项目锁定的 scriptc/helper/runtime 0.4.8。下文第 6 节的本地包路径相对于 AnseronUI；其他未重新验证的 compiler/runtime 结论仍保留原调研边界。
 
@@ -14,7 +14,7 @@
 
 构建一套共享 TypeScript UI 与业务逻辑、通过 scriptc AOT 编译、由各端原生控件或 DOM 渲染的框架。首批交付 Android arm64、iOS arm64 真机与模拟器、Web Wasm 三端；macOS、Windows、Linux 后续按独立渲染器接入。
 
-借鉴 KuiklyUI 的 Core/Render 分层、声明式与响应式组合、独立布局树、View/Shadow/Module 扩展协议，以及逻辑执行与 UI 提交分离的设计。采用 scriptc 现有静态库和 Wasm reactor 路线，并针对同步库 ABI、禁止回调重入和运行时实例边界重新设计桥接协议。
+框架采用 Core/Render 分层、声明式与响应式组合、独立布局树、View/Shadow/Module 扩展协议，以及逻辑执行与 UI 提交分离的设计。采用 scriptc 现有静态库和 Wasm reactor 路线，并针对同步库 ABI、禁止回调重入和运行时实例边界重新设计桥接协议。
 
 - 应用层：函数组件、TSX、类型化 props/children、Hooks、页面与 Promise 平台服务；独立 SDK，不依赖 React。
 - 共享 Core：组件实例与 Hook frame、状态更新队列、类型化描述树/协调、布局树、Effect 生命周期、事件路由和命令生成。
@@ -28,24 +28,22 @@
 
 RuntimeAdapter 抽象执行环境及其 create/dispatch/step/dispose 生命周期，具体后端按目标平台选定。预留不透明制品输入、运行时身份/代际和能力协商边界，便于以后接入更新能力；首版不设计下载、代码替换、状态迁移或回滚流程。自绘、DEX 后端、完整 React/CSS、鸿蒙和小程序仍不在首版范围。
 
-## 2. 从 KuiklyUI 借鉴什么
+## 2. 架构职责划分
 
-| 已查看的 KuiklyUI 实现 | 设计价值 | AnseronUI 对应设计 |
-| --- | --- | --- |
-| `core/.../pager/Pager.kt` | 页面拥有树、生命周期、任务与布局更新 | Surface/Page scope，显式销毁其观察者、请求与节点 |
-| `core/.../reactive/ReactiveObserver.kt` | 读取收集依赖，写入触发绑定，观察者有 owner | 组件状态与 owner scope，组件实例拥有 Hook 状态与 Effect，卸载统一清理资源 |
-| `core/.../layout/FlexNode.kt`、`LayoutImpl.kt` | 跨端共享布局与脏节点处理 | 共享有限 Flex 布局，独立 LayoutNode 与测量缓存 |
-| `core/.../manager/BridgeManager.kt` | create/remove/insert/setProp/setFrame 等操作协议 | 类型化命令协议与按事务批量提交 |
-| Android `context/IKuiklyRenderContextHandler.kt` | 执行环境和渲染层解耦 | RuntimeAdapter 接口承载 native 或 Wasm |
-| Android `export/IKuiklyRenderViewExport.kt` | 原生组件注册、属性、方法与复用 | ComponentAdapter 与明确的 reset/dispose 规则 |
-| Android `export/IKuiklyRenderShadowExport.kt` | 测量与真实 UI View 分离 | MeasureAdapter，支持线程限制和异步测量结果 |
-| Android `export/IKuiklyRenderModuleExport.kt` | UI 之外的平台能力扩展 | ModuleAdapter 与 schema 生成的 request/result |
-| Android Context/UI scheduler | 逻辑任务与主线程视图操作分离，合并 UI 任务 | 固定运行时线程 + UI 主线程，顺序化批次与回执 |
-| `core-render-web` | 平台渲染器可独立演进 | DOM renderer 复用同一协议和 Core |
+| 架构职责 | AnseronUI 对应设计 |
+| --- | --- |
+| 页面拥有树、生命周期、任务与布局更新 | Surface/Page scope，显式销毁其观察者、请求与节点 |
+| 状态与资源归属 | 组件实例拥有 Hook 状态与 Effect，卸载统一清理资源 |
+| 跨端共享布局与脏节点处理 | 共享 Flexily 布局，独立布局树与测量缓存 |
+| 节点创建、移除、插入、属性与布局更新 | 类型化命令协议与按事务批量提交 |
+| 执行环境和渲染层解耦 | RuntimeAdapter 接口承载 native 或 Wasm |
+| 原生组件注册、属性、方法与复用 | ComponentAdapter 与明确的 reset/dispose 规则 |
+| 测量与真实 UI View 分离 | MeasureAdapter，支持线程限制和异步测量结果 |
+| UI 之外的平台能力扩展 | ModuleAdapter 与 schema 生成的 request/result |
+| 逻辑任务与主线程视图操作分离 | 固定运行时线程 + UI 主线程，顺序化批次与回执 |
+| 平台渲染器独立演进 | DOM renderer 复用同一协议和 Core |
 
-KuiklyUI 的多执行模式、Kotlin 委托属性、Compose 编译变换和六端生态属于它自己的技术条件。不能由此推导 scriptc 已经拥有对应能力。它的 Android JVM 执行路径也不构成增加 scriptc DEX 后端的必要条件。
-
-布局、命令、状态等模块应按本文定义重新实现。若后续决定移植源码，需要保留来源和适用许可；本地 KuiklyUI LICENSE 对添加或启用动态加载/live update 的衍生修改有单独约束，未来若采用相关源码，需先满足该许可中的书面授权条件。
+布局、命令、状态等模块按本文定义实现。后续若移植外部源码，需要保留来源并遵守适用许可。
 
 ## 3. scriptc 当前基础与真实缺口
 
@@ -210,7 +208,7 @@ scriptc 当前源码可解析/保留 TSX AST（`frontend/ts7/source-parser.ts` �
 
 ### 6.1 文本与固有尺寸
 
-文本测量必须由各平台文本引擎执行，不能用字符数估算宽度。借鉴 Kuikly Shadow 的测量职责，重新定义异步批量测量协议，避免 Core 线程同步等待 UI 线程。
+文本测量必须由各平台文本引擎执行，不能用字符数估算宽度。通过独立测量适配层与异步批量测量协议，避免 Core 线程同步等待 UI 线程。
 
 1. Core 根据当前约束查询测量缓存；缓存缺失时返回 `MeasureRequest`，暂不提交依赖该测量结果的视图事务。
 2. 宿主在允许的线程测量：UIKit 文本实现、Android StaticLayout/等价实现、Web 测量元素；返回尺寸、baseline、实际约束与内容版本。
@@ -427,7 +425,7 @@ framework/
 
 ### 14.3 性能与发布门槛
 
-先测空页面、计数器、输入表单、有界长列表和持续动画，分离冷启动、产物加载、Core、布局、桥复制、主线程 apply、实际首帧与稳态内存。设固定设备、release build、预热/冷启动口径和重复次数；执行后端选型后再测各 RuntimeAdapter 的启动和 Promise 链吞吐。对比 native baseline 与同等功能 Kuikly 示例时公开运行条件，不能引用其 README 的体积或性能数字当作本框架收益。
+先测空页面、计数器、输入表单、有界长列表和持续动画，分离冷启动、产物加载、Core、布局、桥复制、主线程 apply、实际首帧与稳态内存。设固定设备、release build、预热/冷启动口径和重复次数；执行后端选型后再测各 RuntimeAdapter 的启动和 Promise 链吞吐。对比原生基线与同等功能示例时公开运行条件，不能引用其他项目的体积或性能数字当作本框架收益。
 
 60Hz 的 16.7ms 与 120Hz 的 8.3ms 是端到端帧预算参考，不是本方案已达到的指标。P0 测得数据后再给各阶段分配预算并决定 JSON→二进制、Wasm Worker、虚拟列表和 flattening 的顺序。达标要求至少包括交互无持续积压、内存开关页面后趋于稳定、没有失效事件影响新页面，以及协议一致性全部通过。
 
@@ -456,19 +454,6 @@ P0 首先回答：TSX/泛型 Hook 生成代码是否通过静态编译、实例/
 4. 按 P1 扩 TSX 函数组件、Hooks/Context、Promise 平台服务、输入与列表；热更新如仍有需求，再另行形成方案与实施阶段。
 
 ## 17. 调研来源索引
-
-KuiklyUI 根目录：KuiklyUI 源码仓库。下列缩写 `core/...` 指 `core/src/commonMain/kotlin/com/tencent/kuikly/core/`，Android 路径指 `core-render-android/src/main/java/com/tencent/kuikly/core/render/android/`。
-
-- `README-zh_CN.md`：KMP 共享 Core 与各端 Render 的职责、项目结构与开发范式。
-- `core/.../pager/Pager.kt`：页面作用域、生命周期、任务、布局循环与模块注册。
-- `core/.../reactive/ReactiveObserver.kt`、`ObservableProperty.kt`：依赖收集与 owner 绑定。
-- `core/.../layout/FlexNode.kt`、`FlexLayout.kt`、`LayoutImpl.kt`：共享布局、测量和脏节点。
-- `core/.../manager/BridgeManager.kt`、`TaskManager.kt`：操作协议与 next-turn 调度。
-- Android `context/IKuiklyRenderContextHandler.kt`、`core/KuiklyRenderCore.kt`：执行环境、方法枚举与桥接分派。
-- Android `layer/KuiklyRenderLayerHandler.kt`、`export/IKuiklyRenderViewExport.kt`、`IKuiklyRenderShadowExport.kt`：原生节点、复用、属性和测量。
-- Android `scheduler/KuiklyRenderCoreContextScheduler.kt`、`KuiklyRenderCoreUIScheduler.kt`：逻辑线程、UI 队列合并及同步边界。
-- `core-render-ios/Protocol`、`core-render-ios/Core`、`core-render-web`：其他平台的接口和 renderer 分层。
-- `LICENSE`：借鉴与潜在源码移植的许可边界。
 
 scriptc 的主要依据已列在第 3 节；错误路径进一步以 `packages/runtime/src/scr_library.c`、Wasm 所有权以 `docs/content/docs/wasm.mdx` 为准。后续源码变化时应重新核对这些事实，尤其不要把 thread instance、collect、panic sink 推断为完整的 runtime handle、destroy 或 recover API。
 

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.verification/
+web/public/*.wasm
+web/public/core.manifest.json
+platforms/ios/core.manifest.json
+platforms/android/app/src/main/assets/core.manifest.json
+**/.gradle/
+**/build/
+**/local.properties
+**/xcuserdata/
+*.xcuserstate
+.DS_Store
+.anseronui/

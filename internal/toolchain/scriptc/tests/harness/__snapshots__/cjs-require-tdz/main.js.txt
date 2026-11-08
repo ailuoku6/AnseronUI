@@ -1,0 +1,6 @@
+cjs-require-tdz/main.js:9:5 - error SC1013: var require() binding 'lib' below code that can reach it (Node reads undefined before the require runs, which is not modeled — declare it with const or let, or move the require above the code that can run first) is not supported yet
+
+   8 | console.log('boot', helper());
+   9 | var lib = require('./lib.js');
+     |     ^~~~~~~~~~~~~~~~~~~~~~~~~
+  10 | 

@@ -104,12 +104,11 @@ class WasmModule {
 
 /** Composition of a reusable Framework Core and an independently compiled business bundle. */
 export class WasmRuntime implements BrowserRuntimeAdapter {
-  readonly bundleBuildId = 'anseronui-demo';
   readonly runtimeEpoch = 1;
   private disposed = false;
-  private constructor(private readonly business: WasmModule, private readonly framework: WasmModule) {}
+  private constructor(private readonly business: WasmModule, private readonly framework: WasmModule, readonly bundleBuildId: string) {}
 
-  static async load(source: Source, frameworkSource?: Source): Promise<WasmRuntime> {
+  static async load(source: Source, frameworkSource?: Source, bundleBuildId = 'anseronui-demo'): Promise<WasmRuntime> {
     if (frameworkSource === undefined) {
       if (source instanceof Uint8Array) throw new Error('Framework bytes or URL required for split bundle');
       const url = new URL(String(source), typeof location === 'undefined' ? 'http://localhost/' : location.href);
@@ -126,7 +125,7 @@ export class WasmRuntime implements BrowserRuntimeAdapter {
       throw new Error('CORE_ABI_MISMATCH');
     }
     business.call('create');
-    return new WasmRuntime(business, framework);
+    return new WasmRuntime(business, framework, bundleBuildId);
   }
   post(input: Envelope<InputPayload>): void {
     if (this.disposed) throw new Error('CORE_DISPOSED');

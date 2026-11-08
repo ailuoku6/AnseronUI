@@ -50,6 +50,7 @@ data class TextSize(val width: Float, val height: Float, val baseline: Float)
 data class TouchPoint(val x: Double, val y: Double, val pageX: Double, val pageY: Double, val pointerId: Long)
 
 private class NodeRecord(val view: View, val content: ViewGroup?, val kind: String) {
+    var pageBackgroundColor = Color.TRANSPARENT
     val animation = NodeAnimation(view)
     val events = mutableSetOf<String>()
     var inputRevision = 0L
@@ -63,6 +64,8 @@ private class NodeRecord(val view: View, val content: ViewGroup?, val kind: Stri
 
 /** Main-thread renderer for the shared protocol's Commit payload. */
 class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlatformExtensions = AndroidPlatformExtensions(), var onEvent: ((RendererEvent) -> Unit)? = null) {
+    /** The first surface child's target background, after a successful commit. */
+    var onPageBackgroundColor: ((Int) -> Unit)? = null
     private val nodes = mutableMapOf<Long, NodeRecord>()
     private var revision = 0L
     private val density get() = root.resources.displayMetrics.density
@@ -176,6 +179,8 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             nodes.values.forEach { it.animation.commit() }
             revision = next
             updateScrollExtents()
+            val page = surface.getChildAt(0)
+            onPageBackgroundColor?.invoke(nodes.values.firstOrNull { it.view === page }?.pageBackgroundColor ?: Color.TRANSPARENT)
         } catch (error: Exception) {
             clear()
             throw error
@@ -426,6 +431,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         val view = record.view
         record.animation.options = if (props.has("animation")) AnimationOptions(JSONObject(props.getString("animation"))) else null
         val color = parseColor(props.optString("backgroundColor", ""), Color.TRANSPARENT)
+        record.pageBackgroundColor = color
         val visual = NodeAnimation.defaults.toMutableMap()
         for (key in listOf("opacity","translateX","translateY","scaleX","scaleY","rotate","borderRadius")) if (props.has(key)) visual[key] = props.getDouble(key)
         visual.putAll(mapOf("r" to Color.red(color).toDouble(), "g" to Color.green(color).toDouble(), "b" to Color.blue(color).toDouble(), "a" to Color.alpha(color)/255.0))

@@ -1,0 +1,13 @@
+sets.ts:32:28 - error SC1090: JSON.stringify of 'Set<string>' values (only number, string, boolean, records, arrays, unions of those, and 'unknown' stringify) are not supported yet
+
+  31 | const s = new Set<string>();
+  32 | console.log(JSON.stringify(s));
+     |                            ^
+  33 | 
+
+sets.ts:35:15 - error SC1090: Set methods as values (call 'add' directly) are not supported yet
+
+  34 | // Set methods have no bound-value form — call them directly.
+  35 | const adder = s.add;
+     |               ^~~~~
+  36 | // Reached: collection defers its diagnostics until a reference makes

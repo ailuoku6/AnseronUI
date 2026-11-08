@@ -1,0 +1,24 @@
+intersection-values.ts:9:10 - error SC2008: values of type 'RuntimeDecorated' cannot be compiled: this intersection resolves to no runtime shape
+
+   8 | type RuntimeDecorated = number & { value: number };
+   9 | function decorate(): RuntimeDecorated {
+     |          ^~~~~~~~
+  10 |   return 1 as RuntimeDecorated;
+
+  hint: restate the intersection as a single interface or type literal with the combined members; mixin-produced intersections compile where the mixin chain pins one instantiation
+
+intersection-values.ts:12:13 - error SC2004: uses of 'decorate' inherit the blocker on its declaration
+
+  11 | }
+  12 | console.log(decorate());
+     |             ^~~~~~~~
+  13 | // Literal markers have no runtime slot after primitive-brand erasure. A use
+
+  hint: the declaration of 'decorate' did not compile — fix the diagnostic reported there and these sites clear with it
+
+intersection-values.ts:17:13 - error SC1090: reading '__brand' from a value of type 'VisibleBrand' is not supported yet
+
+  16 | const visible = "value" as VisibleBrand;
+  17 | console.log(visible.__brand);
+     |             ^~~~~~~~~~~~~~~
+  18 | // The primitive representation never manufactures this field.

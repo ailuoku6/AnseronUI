@@ -1,0 +1,13 @@
+maps.ts:29:28 - error SC1090: JSON.stringify of 'Map<string, number>' values (only number, string, boolean, records, arrays, unions of those, and 'unknown' stringify) are not supported yet
+
+  28 | const m = new Map<string, number>();
+  29 | console.log(JSON.stringify(m));
+     |                            ^
+  30 | 
+
+maps.ts:32:16 - error SC1090: Map methods as values (call 'get' directly) are not supported yet
+
+  31 | // Map methods have no bound-value form — call them directly.
+  32 | const getter = m.get;
+     |                ^~~~~
+  33 | // Reached: collection defers its diagnostics until a reference makes

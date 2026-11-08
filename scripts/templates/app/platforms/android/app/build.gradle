@@ -1,0 +1,30 @@
+plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+android {
+    namespace '__APPLICATION_ID__'
+    compileSdk 35
+    defaultConfig {
+        applicationId '__APPLICATION_ID__'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    sourceSets.main.assets.srcDirs += rootProject.file('../../assets')
+}
+dependencies { implementation project(':render') }
+
+// Generated from installed npm plugins by AnseronUI setup/build.
+def pluginDir = rootProject.file('../../.anseronui/plugins')
+def nativePlugins = new groovy.json.JsonSlurper().parse(new File(pluginDir, 'android.json'))
+android.sourceSets.main.java.srcDirs += nativePlugins.sources
+android.sourceSets.main.java.srcDirs += pluginDir
+nativePlugins.dependencies.each { coordinate -> dependencies.add('implementation', coordinate) }
+// An overlay manifest adds permissions without modifying the app's own manifest.
+def permissionsManifest = new File(pluginDir, 'AndroidManifest.xml')
+permissionsManifest.text = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' +
+    nativePlugins.permissions.collect { '<uses-permission android:name="' + it + '" />' }.join('') + '</manifest>'
+android.sourceSets.debug.manifest.srcFile permissionsManifest
+android.sourceSets.release.manifest.srcFile permissionsManifest

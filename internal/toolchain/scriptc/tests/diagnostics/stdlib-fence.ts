@@ -1,0 +1,90 @@
+// The lib-fence battery: everything here TYPECHECKS against the real
+// standard library (es2023) — the old minimal-ambient world rejected most
+// of it with "Cannot find name" — and every statement must terminate in a
+// clean lowering diagnostic (SC2020 for surface with no lowering, a
+// specific fence otherwise). Never an ICE, never a silent mis-lowering.
+
+// Globals as values and calls. (Symbol(desc) itself LOWERS now — the
+// symbol battery lives in the corpus; what stays fenced is the well-known
+// surface below.)
+const iter = Symbol.iterator;
+const g = globalThis;
+const nan = NaN; // lowers now — a non-finite numeric literal like Infinity
+const s5 = String(5);
+const n5 = Number.NaN; // lowers now, with the other Number constants
+const isArr = Array.isArray([1]); // lowers now: a computed argument folds after it is evaluated
+const merged = Object.assign({}, { a: 1 }); // the empty-target literal-source shape lowers now (it IS the source literal)
+const aliasedAssign = Object.assign(merged, { b: 2 }); // aliased targets stay fenced (real mutation of a live object)
+const refl = Reflect.has({ a: 1 }, "a");
+const parsedMs = Date.parse;
+const fmt = new Intl.NumberFormat();
+
+// Constructors.
+const d = new Date(...([2024, 0] as const)); // spread field arguments stay fenced
+const wr = new WeakRef({});
+const px = new Proxy({ a: 1 }, {});
+const buf = new ArrayBuffer(8);
+const st = new Set(new Set([1, 2])); // string and array seeds lower; Set-valued seeds stay fenced
+// (new Error / TypeError / RangeError / SyntaxError / AggregateError now
+// LOWER — the error battery lives in the corpus; what stays fenced is the
+// unlowered members of lowered error objects.)
+const stack = new Error("boom").stack;
+// Unlowered members on lowered containers.
+const sinhMethod = Math.sinh; // fixed-arity Math function values now lower
+// (n-ary Math.min/max, with spreads among the arguments, LOWER now — the
+// variadic battery lives in the corpus.)
+const entries = [1, 2].entries(); // array iterators lower now
+const arrAt = [1, 2].at(0);
+const norm = "abc".normalize();
+const limited = "a,b,c".split(Math.random() ? "," : /,/, 2); // union separators stay fenced; limits lower
+const fixed = (1.5).toFixed(); // digit-free toFixed lowers now (the static ties-up integer)
+const localized = (1234.5).toLocaleString("de-DE");
+// Unlowered call FORMS of lowered members. (push is fully variadic now —
+// no fenced form remains to pin.)
+const nums = [1, 2, 3];
+const found = nums.indexOf(2, 1); // the fromIndex overload lowers
+const joined = nums.join(); // the omitted separator lowers
+const pos = "abc".includes("b", 1); // the position form lowers now (indexOf's clamp)
+const rev = JSON.parse("1", (_k, v) => v);
+// (stringify with a null replacer + LITERAL space now lowers — the pretty
+// battery lives in the corpus; function replacers and non-literal spaces
+// stay fenced.)
+const toStringify = { a: 1 };
+const replaced = JSON.stringify(toStringify, (_k, v) => v);
+const width = 2;
+const spaced = JSON.stringify(toStringify, null, width);
+// The promise surface beyond await.
+async function work(): Promise<number> {
+  return 1;
+}
+const thened = work().then((v) => v + 1, () => 0);
+const caught = work().catch(() => 0);
+const resolved = Promise.resolve(1);
+
+// Object.is lowers over one comparable kind; the unlowered forms fence
+// by name — a validate-first dynamic operand and partially-overlapping
+// unions needing narrowing.
+const dynIs = Object.is(JSON.parse("1") as unknown, 1);
+function pick(a: string | number, b: number | boolean): boolean {
+  return Object.is(a, b); // partially-overlapping primitive unions are supported
+}
+const picked = pick(1, 2);
+
+// A union of a class, its subclass and a structural member stores the base
+// class, so comparisons of its values keep identity.
+class FenceBase {
+  id = 1;
+}
+class FenceSub extends FenceBase {
+  extra = 2;
+}
+type FenceValue = FenceBase | FenceSub | { label: string };
+function relatedStrict(a: FenceValue, b: FenceValue): boolean {
+  return a === b;
+}
+function relatedSameValue(a: FenceValue, b: FenceSub): boolean {
+  return Object.is(a, b);
+}
+relatedStrict(new FenceSub(), { label: "x" });
+relatedSameValue(new FenceSub(), new FenceSub());
+// End of the diagnostic fixture.

@@ -121,6 +121,7 @@ public enum RenderError: Error {
 }
 
 private final class NodeRecord {
+    var pageBackgroundColor = UIColor.clear
     let view: UIView
     let content: UIView
     let kind: String
@@ -210,6 +211,8 @@ private final class TouchSession {
 @MainActor public final class IOSRenderer: NSObject, UIScrollViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate {
     public let root: UIView
     public var onEvent: ((RendererEvent) -> Void)?
+    /// The first surface child's target background, after a successful commit.
+    public var onPageBackgroundColor: ((UIColor) -> Void)?
     private var nodes: [UInt32: NodeRecord] = [:]
     private var revision: UInt32 = 0
     private let extensions: IOSPlatformExtensions
@@ -240,6 +243,9 @@ private final class TouchSession {
             for record in nodes.values { record.animation.commit() }
             revision = commit.revision
             updateScrollExtents()
+            let page = root.subviews.first
+            let color = nodes.values.first { $0.view === page }?.pageBackgroundColor ?? .clear
+            onPageBackgroundColor?(color)
         } catch {
             clear()
             throw error
@@ -457,6 +463,7 @@ private final class TouchSession {
         // Missing backgrounds are transparent, including when a prior color is removed.
         // An opaque UILabel with a nil background can draw a black backing surface.
         let backgroundColor = parseColor(props.backgroundColor) ?? .clear
+        record.pageBackgroundColor = backgroundColor
         if let json = props.animation {
             guard let config = try decodeNativeJSON(json) as? [String: Any] else { throw NativeExtensionError.invalidArguments }
             record.animation.options = try TSAnimationOptions(config)

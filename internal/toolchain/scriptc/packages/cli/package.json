@@ -1,0 +1,40 @@
+{
+  "name": "scriptc",
+  "version": "0.4.8",
+  "description": "Compile ordinary TypeScript and JavaScript to small, fast native executables and WebAssembly modules that run without Node.js",
+  "license": "Apache-2.0",
+  "homepage": "https://scriptc.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vercel-labs/scriptc.git",
+    "directory": "packages/cli"
+  },
+  "type": "module",
+  "bin": {
+    "scriptc": "bin/scriptc.exe"
+  },
+  "files": [
+    "bin",
+    "scripts"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "prepack": "node scripts/prepare-native.mjs",
+    "postinstall": "node scripts/install-native.mjs"
+  },
+  "devDependencies": {
+    "@scriptc/compiler": "workspace:*"
+  },
+  "optionalDependencies": {
+    "@scriptc/cli-darwin-arm64": "workspace:*",
+    "@scriptc/cli-darwin-x64": "workspace:*",
+    "@scriptc/cli-linux-arm64-gnu": "workspace:*",
+    "@scriptc/cli-linux-arm64-musl": "workspace:*",
+    "@scriptc/cli-linux-x64-gnu": "workspace:*",
+    "@scriptc/cli-linux-x64-musl": "workspace:*",
+    "@scriptc/cli-win32-x64-msvc": "workspace:*"
+  }
+}

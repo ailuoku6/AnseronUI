@@ -9,8 +9,8 @@ dist/
 DerivedData/
 *.log
 
-# prepare:compiler 创建的固定版本编译器 checkout
-/internal/toolchain/scriptc/
+# 本仓库内的 scriptc 源码参与版本管理；LLVM helper 链接是本地产物
+/internal/toolchain/scriptc/packages/llvm-*/bin
 
 # 构建脚本复制到源码目录的 Core 产物和示例资源
 /packages/render-android/src/main/jniLibs/*/libanseronui.so

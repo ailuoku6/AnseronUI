@@ -1,0 +1,1844 @@
+/* Diagnostics live in ONE registry, and every code is claimed by its row in
+ * codes.ts (DIAGNOSTIC_CODES). Message strings are never inlined
+ * at rejection sites — every "not supported yet" the compiler can produce is
+ * enumerable here, which is the seed of the future coverage report
+ * ("N constructs prevented static compilation, grouped by code").
+ *
+ * Code bands:
+ *   SC0xxx  preflight gates: TypeScript errors passed through (SC0001),
+ *            project-config incompatibilities (SC0002), malformed imported
+ *            JSON modules (SC0003), upstream tsgo checker panics surfaced
+ *            as source-anchored diagnostics (SC0004), and the ECMAScript
+ *            early errors the checker does not model: a duplicated or
+ *            `var`-colliding lexical declaration in a block or switch
+ *            statement list (SC0005/SC0006), a declaration where the
+ *            grammar admits only a Statement (SC0007), an ImportCall
+ *            argument list the grammar does not allow (SC0008), a private
+ *            name with no declaring enclosing class (SC0009), an
+ *            assignment target that is not a variable or a property access
+ *            (SC0010), `await` used as an identifier where the grammar
+ *            makes it an operator (SC0011), `arguments` in a class field
+ *            initializer or static block (SC0012), a script-top-level
+ *            `using` declaration (SC0013), assignment to `eval` or
+ *            `arguments` in strict code (SC0014), and a catch parameter
+ *            the catch block redeclares (SC0015)
+ *   SC1xxx  supported-TypeScript-not-yet: valid TS outside the current subset
+ *   SC2xxx  scriptc type rules (types we cannot compile yet)
+ *   SC3xxx  backend/target coverage: the program is valid, but the selected
+ *            alternate backend or execution target does not include it
+ *            (SC3001 — LLVM IR tier refusal; SC3002 — target/capability
+ *            refusal; SC3003 — helper installation/version failure; SC3004
+ *            — helper code-generation failure)
+ *   SC4xxx  library-mode/profile refusals (the library-emission mode): profile
+ *            malformed (SC4001), export unresolved (SC4002), unmappable
+ *            signature (SC4003), async/generator export (SC4004), the
+ *            async_free graph requirement (SC4005), generic export
+ *            signatures (SC4007; SC4006 is retired),
+ *            contract-sidecar projection (SC4009), multi-site type
+ *            declarations feeding a tabled type (SC4010), conditional/
+ *            mapped types producing a tabled type (SC4011), the
+ *            inbound-bytes host-contract runtime trap (SC4012 — a
+ *            structured trap-teaching code, not a refusal), the
+ *            runtime detected-trap family SC4013–SC4019 (RUNTIME codes
+ *            like SC4012, classified by the library trap funnel —
+ *            LIB_RUNTIME_TRAP_CODES below), and npm packages a library
+ *            graph imports that fail the npm-static eligibility bar
+ *            (SC4020 — static-or-refuse; eligible packages compile
+ *            statically instead), the ask-5 determinism fence
+ *            denial (SC4008 — a profile-fenced manifest surface reached
+ *            by the compiled library module graph), and the ask-4
+ *            integer-boundary refusals — one code per failed obligation,
+ *            the catch-all-split convention (distinct user stories get
+ *            distinct codes): representability (SC4021 — the literal's
+ *            source spelling does not round-trip f64), wholeness
+ *            (SC4022 — may-be-NaN or may-be-fractional at a declared
+ *            i64/u64 slot), and range (SC4023 — the proven interval does
+ *            not fit ±(2^53 − 1), or is negative at a u64 slot), the
+ *            host-callback surface (SC4024 — a signature-only ambient
+ *            function reference the profile's callbacks section cannot
+ *            serve), the unregistered-callback runtime trap (SC4025 — a
+ *            structured trap-teaching code in the funnel-classified family,
+ *            not a refusal), and callback-time library re-entry (SC4026 —
+ *            the distinct detected trap for an attempted ABI entry while a
+ *            host callback handler is active)
+ *   SC5xxx  native FFI: malformed manifests (SC5001), a configured
+ *            binding that is not an ambient function declaration
+ *            (SC5002), and a TypeScript signature that does not match its
+ *            declared native ABI classes (SC5003), and native toolchain
+ *            failures while applying a valid profile (SC5004)
+ *   SC6xxx  divergences: the program compiles, but the native binary can
+ *            behave differently from Node at this site — WARNINGS, never
+ *            build failures (coverage --fail-on=divergences opts in):
+ *            width copies written or compared through (SC6001), object key
+ *            order that differs from insertion order where the program
+ *            observes it (SC6002), localeCompare over text the built-in
+ *            collation does not cover (SC6003), a call feeding an instance
+ *            to a cast to an unrelated class (SC6004); SC6005 (Date strings
+ *            outside the native parser's grammar) is retired — the runtime
+ *            parses date strings with V8's grammar. SC61xx are performance
+ *            notes, also warnings (coverage --fail-on=dynamic opts in):
+ *            likely-hot functions that use untyped values (SC6101,
+ *            diagnostics/dynamic-tier.ts), package files whose projected
+ *            declaration types were dropped (SC6102), and shape inference's
+ *            overlay report: what it typed and how many inferred facts the
+ *            build checks (SC6103, frontend/shape-inference), and InlineArray
+ *            fields that keep ordinary arrays (SC6105, contracts/check.ts)
+ *   SC7xxx  contract types (@scriptc/types): a NoThrow, Int32, Immutable,
+ *            Acyclic or ProgramLifetime contract that does not hold or
+ *            cannot be checked (SC7001–SC7009, contracts/check.ts)
+ *   SC8xxx  Node islands: packages and modules outside the native subset
+ *            that run (or, in report-only mode, would run) in a Node
+ *            island — unknown project configuration (SC8004), a package
+ *            required to be native (SC8003) or every island refused
+ *            (SC8002) while outside the native subset, and the R2
+ *            object-model constructs in user JavaScript (SC8101–SC8105,
+ *            behind --strict-user-js); programs that call into Node.js
+ *            where the build finds no usable libnode pack (SC8005), or
+ *            cannot collect the modules a call loads (SC8006); and type
+ *            patches from `scriptc.typePatches` that did not apply as
+ *            written (SC8030–SC8033, warnings)
+ *   SC9xxx  internal compiler errors (still source-anchored)
+ */
+import type { SrcLoc } from "../ir/ir.js";
+import type { DiagnosticCode } from "./codes.js";
+
+/* Internal prioritization buckets. NEVER rendered to users — user-facing
+ * output says only what is and isn't supported (plus hints); scheduling is
+ * maintainer business. Used to order blockers in the coverage report. */
+export type Milestone = "M1" | "M2" | "M3" | "M4" | "M5" | "later";
+
+export interface ScrDiagnostic {
+  code: DiagnosticCode;
+  message: string;
+  loc: SrcLoc;
+  milestone?: Milestone;
+  hint?: string;
+  /** Embedder-authored guidance riding a refusal (the ask-5 teaching
+   * surface): rendered as its own visibly-attributed trailing line, so the
+   * tool's message and hint stay the tool's and the profile's text is
+   * recognizably the profile's. Only library-mode refusals carry one —
+   * the text always arrives prefixed `from the '<profile name>' profile:`. */
+  note?: string;
+  /** SC0001 only: the TypeScript error comes from scriptc's own type world
+   * (its fixed library set, the bundled Node fallback types, or globals it
+   * does not declare) rather than from the project's own configuration —
+   * the error may not reproduce under the project's tsc. Machine-readable
+   * output reports these under the "environment" category. */
+  typeWorld?: boolean;
+  /** Why the construct is outside the native subset, as a Node island
+   * reason id (node-islands/rules.ts), at the refusal sites whose code
+   * alone does not say it (a computed require(), a native addon, `with`).
+   * Report-only: never part of the rendered message. */
+  reason?: string;
+  /** Runtime fences only: the fenced site is in a module's top-level code
+   * (outside every function body), so it runs, and throws, when the module
+   * evaluates. Island selection treats such a fence like one that needs the
+   * runtime (scope-B NI-4). */
+  moduleInit?: true;
+  /** A runtime fence in a module's top-level code, outside every function
+   * and class member body: it throws when the module initializes, which is
+   * program startup for a module the entry imports. */
+  startup?: true;
+  /** Localized failure, report-only (stage L0): set where a type with no
+   * static lowering poisoned a slot (Lowerer.badType and the dyn class
+   * field policy). Never part of the rendered message. */
+  typeFailure?: TypeFailure;
+  /** Localized failure, report-only: the declaration this diagnostic
+   * rejected, as a failure-group key. Set when a reference flushes a
+   * deferred declaration's diagnostics, and on the diagnostics of a
+   * declaration statement whose bindings were blocked. */
+  rejects?: string;
+  /** Localized failure, report-only: the failure groups (rejected
+   * declarations, blocked statements) that the statement committing this
+   * diagnostic used. A cascade clears when every one of them would
+   * degrade instead of failing. */
+  cause?: readonly string[];
+}
+
+/** Where a type failure sits (localized-failure design §3.6): a
+ * declaration slot, a member of a declared type, or an expression's own
+ * type. */
+export type TypeFailureSlot =
+  | "field"
+  | "param"
+  | "return"
+  | "local"
+  | "global"
+  | "loop"
+  | "member"
+  | "expression";
+
+/** Which badType branch (or policy fence) refused the type. */
+export type TypeFailureFamily =
+  | "node-types"
+  | "fetch-ambient"
+  | "enum-object"
+  | "stdlib-index"
+  | "index-signature"
+  | "package"
+  | "generic-signature"
+  | "overloads"
+  | "intersection"
+  | "component"
+  | "stdlib-nominal"
+  | "record-member"
+  | "unsupported"
+  | "dyn-field-policy";
+
+/** A type failure's structured payload: what the commit points of the
+ * localized-failure design inspect (PoisonError.failure carries the same
+ * object). `degradable` is the §3.7 classification: a checked-dynamic slot
+ * would keep the program's meaning. */
+export interface TypeFailure {
+  slot: TypeFailureSlot;
+  /** The slot's name (`_customTools`, `listAll`, `x`), or the expression
+   * text for expression slots. */
+  name: string;
+  declaredType: string;
+  family: TypeFailureFamily;
+  degradable: boolean;
+}
+
+/** SC3002–SC3004 — native-helper target, installation, and execution
+ * failures. These are ordinary build diagnostics: a missing optional package
+ * or malformed LLVM input must never surface as an internal compiler error. */
+export function nativeCodegenDiag(
+  code: "SC3002" | "SC3003" | "SC3004",
+  message: string,
+  file: string,
+  hint?: string,
+): ScrDiagnostic {
+  const shown =
+    hint ??
+    (code === "SC3003"
+      ? "reinstall scriptc with optional dependencies enabled for this host"
+      : undefined);
+  return {
+    code,
+    message,
+    loc: { file, start: 0, end: 0 },
+    ...(shown !== undefined ? { hint: shown } : {}),
+  };
+}
+
+/** SC8005 — the program calls into Node.js (@scriptc/node), and the build
+ * found no usable libnode pack to record into the binary. */
+export function nodeIslandNodeDiag(message: string, file: string): ScrDiagnostic {
+  return {
+    code: "SC8005",
+    message,
+    loc: { file, start: 0, end: 0 },
+    hint: "point SCRIPTC_LIBNODE or --libnode at a libnode pack (packages/libnode-common/build-pack.mjs assembles one) for Node.js >=24.13.1",
+  };
+}
+
+/** SC8006 — a Node island call whose modules the build cannot collect into
+ * the executable: a computed specifier, or a module of the program that
+ * loads others through computed specifiers. */
+export function nodeIslandModuleDiag(message: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC8006",
+    message,
+    loc,
+    hint: "name the module with a string literal (a relative path or a package name); the build ships the modules it can see with the executable",
+  };
+}
+
+/** SC8006 — a program module that runs in a Node island names a data file
+ * by a path where there is none while a file of that name is in its
+ * directory: the build ships data files by their exact path only. */
+export function nodeIslandDataFileDiag(message: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC8006",
+    message,
+    loc,
+    hint: "name the data file by its path relative to the module that reads it; the build ships a Node island module's data files by their exact path",
+  };
+}
+
+/* ── SC6xxx: divergences from Node (warnings) ─────────────────────────── */
+
+/** SC6001 — a value passed to (or declared as) a narrower record type is
+ * copied field by field, and the program then writes through or compares
+ * the copy: under Node it is the same object, so the write would be
+ * visible to the original and `===` would be true. */
+export function widthCopyDivergenceDiag(
+  sourceType: string,
+  targetType: string,
+  use: "write" | "compare",
+  useText: string,
+  site: "call" | "declaration" | "cast" | "element",
+  loc: SrcLoc,
+): ScrDiagnostic {
+  const how =
+    site === "call"
+      ? `passing a '${sourceType}' where '${targetType}' is expected`
+      : site === "cast"
+        ? `asserting a '${sourceType}' as '${targetType}'`
+        : site === "element"
+          ? `storing a '${sourceType}' as an element of '${targetType}[]'`
+          : `storing a '${sourceType}' in a '${targetType}' binding`;
+  const effect =
+    use === "write"
+      ? `the write to '${useText}' updates only the copy, while under Node it updates the original object`
+      : `'${useText}' compares the copy, which is never the original object, while under Node it is the same object`;
+  return {
+    code: "SC6001",
+    message: `${how} copies the object (converting to a record type with other properties compiles as a field copy): ${effect}`,
+    loc,
+    hint: `declare the parameter or binding with the value's full type ('${sourceType}'), or make the shape a class — class instances keep their identity when passed as a base class`,
+  };
+}
+
+/** SC6002 — an object literal whose written key order differs from the
+ * order its declared type compiles to, for a type the program observes
+ * (JSON.stringify, Object.keys/values/entries, for-in, console output). */
+export function keyOrderDivergenceDiag(
+  typeText: string,
+  nodeOrder: string,
+  nativeOrder: string,
+  detail: "reordered" | "added-later",
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC6002",
+    message:
+      detail === "reordered"
+        ? `this object's keys enumerate as '${nativeOrder}' natively (the declaration order of '${typeText}') but as '${nodeOrder}' under Node (insertion order), and the program observes the order (JSON.stringify, Object.keys, for-in or console output)`
+        : `a property this object leaves out is assigned later: under Node its keys then enumerate as '${nodeOrder}' (insertion order), natively as '${nativeOrder}' (the declaration order of '${typeText}'), and the program observes the order`,
+    loc,
+    hint:
+      detail === "reordered"
+        ? `write the properties in the declaration order of '${typeText}' (or reorder the declaration to match how objects are built)`
+        : `initialize the property in the literal (for example with undefined), or declare it after the properties the literal sets`,
+  };
+}
+
+/** SC6003 — one-argument localeCompare over text outside the root-locale
+ * collation table the runtime carries: those characters compare by code
+ * point natively, where Node applies full ICU collation. */
+export function localeCompareDivergenceDiag(text: string, loc: SrcLoc): ScrDiagnostic {
+  const shown = text.length > 24 ? `${text.slice(0, 21)}...` : text;
+  return {
+    code: "SC6003",
+    message: `localeCompare over '${shown}' compares characters outside the built-in collation (Latin letters, digits, punctuation and symbols) by code point natively, while Node applies ICU's full collation`,
+    loc,
+    hint: "results agree with Node for Latin-script text; for other scripts compare explicitly (for example by code point with < and >) so both runtimes agree",
+  };
+}
+
+/** SC6004 — a call passes an instance of one class where the callee casts
+ * that parameter to an unrelated class: Node reads the members
+ * structurally, while scriptc checks class casts at runtime and throws a
+ * TypeError when the cast executes. */
+export function unrelatedClassCastDivergenceDiag(
+  source: string,
+  target: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC6004",
+    message: `this '${source}' reaches a cast to the unrelated class '${target}' in the callee: natively the checked cast throws a TypeError when it executes, while Node reads the members structurally`,
+    loc,
+    hint: `narrow with 'instanceof ${target}' before casting, or cast to a base class or interface both classes share`,
+  };
+}
+
+/* ── SC8xxx: Node island policy ───────────────────────────────────────── */
+
+/** SC8004 — an unknown key or value in `scriptc.packages` or
+ * `scriptc.nodeIslands`. */
+export function projectConfigDiag(
+  path: string,
+  detail: string,
+  hint: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8004",
+    message: `package.json '${path}' ${detail}`,
+    loc,
+    hint,
+  };
+}
+
+/** SC8011 — a native class extends a class owned by a Node island. Native
+ * subclasses of island classes are scope-B milestone NI-5b. */
+export function nativeSubclassOfIslandDiag(loc: SrcLoc, detail?: string): ScrDiagnostic {
+  return {
+    code: "SC8011",
+    message:
+      detail === undefined
+        ? "a native class cannot extend a class owned by a Node island yet (native subclasses of island classes)"
+        : `a native class extending a class owned by a Node island cannot have ${detail} yet`,
+    loc,
+    hint: "keep the subclass in Node: move it into the island module, or mark its module as a Node island; a registry shim of the package also lifts this",
+  };
+}
+
+/** SC8006 — the entry module patches a builtin module's CommonJS object.
+ * The entry always stays native (a whole-file island is a different
+ * feature), so the patch cannot run: it belongs in a module of its own,
+ * which then runs in a Node island. */
+export function nodeIslandEntryPatchDiag(
+  file: string,
+  member: string,
+  module: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8006",
+    message: `the entry module patches '${member}' on the CommonJS ${module} object; move the patch into a module of its own, which then runs in a Node island`,
+    loc,
+    hint: `the entry module ${file} stays native; only a separate module runs in Node`,
+  };
+}
+
+/** SC8006 — a user TypeScript module patches a builtin module's CommonJS
+ * object but uses syntax Node cannot run with type stripping only. */
+export function nodeIslandStripDiag(file: string, construct: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC8006",
+    message: `'${file}' patches a builtin module's CommonJS object, but Node cannot strip its types: ${construct}`,
+    loc,
+    hint: "Node runs TypeScript by erasing types: avoid enums, namespaces, constructor parameter properties, decorators, JSX, import =/export =, extensionless relative imports and value imports of types; a separate .js module can hold this patch",
+  };
+}
+
+/** SC8006 — the entry module reads a builtin module member that an island
+ * module patches. The entry always stays native, so it cannot join the
+ * island set: Node would show this read the patch, the native build cannot.
+ * ES module bindings of builtins never see the patch (in Node either), so
+ * the named import is the exact spelling. */
+export function nodeIslandEntryReadDiag(
+  file: string,
+  member: string,
+  module: string,
+  patchFile: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  const dot = member.indexOf(".");
+  const property = dot < 0 ? member : member.slice(dot + 1);
+  return {
+    code: "SC8006",
+    message: `the entry module reads '${member}' through the CommonJS ${module} object, which island module ${patchFile} patches; the entry stays native, so it cannot join the island set and would not see the patch`,
+    loc,
+    hint: `use \`import { ${property} } from "node:${module}"\` (ES module bindings never see the patch, in Node either), or move this read into a module of its own, which then runs in a Node island (the entry module ${file} stays native)`,
+  };
+}
+
+/** SC8006 — a user TypeScript module reads a member that an island module
+ * patches, but uses syntax Node cannot run with type stripping only, so the
+ * module cannot join the island set. */
+export function nodeIslandReaderStripDiag(
+  file: string,
+  member: string,
+  patchFile: string,
+  construct: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8006",
+    message: `'${file}' reads '${member}', which island module ${patchFile} patches, but Node cannot strip its types: ${construct}`,
+    loc,
+    hint: "Node runs TypeScript by erasing types: avoid enums, namespaces, constructor parameter properties, decorators, JSX, import =/export =, extensionless relative imports and value imports of types; a separate .js module can hold this read",
+  };
+}
+
+/** SC8020 — native code reads a name that only an island module's sloppy
+ * implicit-global write creates: the global lives on Node's global object,
+ * which the native build does not have. */
+export function nodeIslandImplicitGlobalReadDiag(
+  name: string,
+  writerFile: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8020",
+    message: `'${name}' is created as an implicit global by ${writerFile}, which runs in a Node island; the native build has no global object, so this read cannot see it. Declare '${name}' in this module, or move the code that reads it into ${writerFile}.`,
+    loc,
+    hint: "a declared binding holds the same value in both tiers",
+  };
+}
+
+/** SC8020 — a stateful module the program compiles is duplicated across
+ * the Node island boundary (an explicit "duplicate", or a form NI-6 cannot
+ * share yet): each side has its own state. */
+export function sharedModuleDuplicatedDiag(
+  module: string,
+  why: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8020",
+    message: `module '${module}' is duplicated across the Node island boundary although it is stateful: ${why}; the program and its islands each see their own copy`,
+    loc,
+    hint: 'remove "share": "duplicate" from its scriptc.packages entry to share one instance',
+  };
+}
+
+/** SC8006 — the build refuses the program: it replaces a process output
+ * stream's write method while a Node island exists, and the island's
+ * `process.stdout` is its own object, so the replacement and the island's
+ * writes cannot see each other. The planner stops on this, so it is an
+ * error, not the SC8020 warning. H2 shares the native stream object with
+ * the islands and removes this refusal. */
+export function stdioPatchAcrossIslandsDiag(
+  stream: "stdout" | "stderr" | null,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  const what =
+    stream === null ? "process.stdout.write or process.stderr.write" : `process.${stream}.write`;
+  return {
+    code: "SC8006",
+    message: `${what} is replaced while a Node island exists: the island's process output stream is its own object, so it would not see this patch and its writes would bypass it`,
+    loc,
+    hint: "remove the replacement, or keep this write in a module that stays native (--node-islands=off for the package)",
+  };
+}
+
+/** SC8022 — island code extends a class of a module the program compiles.
+ * A native instance cannot take an island subclass's overrides, so the
+ * module is not owned by the program: a package runs in Node for both
+ * sides (the build retries with it as a Node island); a program module is
+ * refused. */
+export function sharedClassExtendedDiag(
+  pkg: string | null,
+  file: string,
+  base: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8022",
+    message:
+      pkg !== null
+        ? `package '${pkg}' is shared with a Node island that extends its class '${base}': it runs in Node for both sides`
+        : `module '${file}' cannot be shared with a Node island that extends its class '${base}' (island subclasses of native classes)`,
+    loc,
+    hint: "move the subclass into the program, or mark the module as a Node island",
+  };
+}
+
+/** SC8002 — Node islands are off (or limited to marked islands) and an
+ * npm package is outside the native subset. */
+export function nodeIslandsOffDiag(pkg: string, why: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC8002",
+    message: `npm package '${pkg}' is outside the native subset (${why}) and Node islands are off`,
+    loc,
+    hint: `allow Node islands (--node-islands=auto), mark it with --node-island=${pkg}, or replace the dependency`,
+  };
+}
+
+/** SC8002 — a user module is marked to run in a Node island while
+ * Node islands are off. */
+export function nodeIslandsOffModuleDiag(
+  file: string,
+  source: "config" | "cli",
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8002",
+    message: `user module '${file}' is marked to run in Node (${source === "cli" ? "--node-island" : "scriptc.nodeIslands.modules"}) and Node islands are off`,
+    loc,
+    hint: "allow Node islands (--node-islands=auto or explicit), or remove the marking",
+  };
+}
+
+/** SC8001 — a package runs in a Node island (a note, once per island in
+ * the build output). */
+export function nodeIslandNoteDiag(
+  pkg: string,
+  version: string | null,
+  klass: string,
+  reason: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8001",
+    message: `package '${version === null ? pkg : `${pkg}@${version}`}' runs in a Node island: ${klass}: ${reason}`,
+    loc,
+    hint: "it runs in Node.js loaded into the program on first use; --node-islands=off makes this an error",
+  };
+}
+
+/** SC8001 — a program module runs in a Node island (a note, once per island
+ * module in the build output; DESIGN.md note 1 §3.2). */
+export function nodeIslandModuleNoteDiag(
+  file: string,
+  klass: string,
+  reason: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8001",
+    message: `module '${file}' runs in a Node island: ${klass}: ${reason}`,
+    loc,
+    hint: "sloppy-mode code Node runs; --node-islands=off compiles this module natively instead",
+  };
+}
+
+/** SC8010 — a value crosses an island boundary in a way NI-4 cannot keep
+ * exact yet (callbacks, native objects, remote promises). */
+export function nodeIslandBoundaryDiag(what: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC8010",
+    message: `${what} cannot cross into or out of a Node island yet`,
+    loc,
+    hint: "pass primitives, strings, island objects or fresh object and array literals of those; callbacks, native objects and promises cross from NI-5 on",
+  };
+}
+
+/** SC8023 — the build that ran fenced packages as Node islands failed, so
+ * the program was built natively with those runtime fences (each throws
+ * when reached). A warning on the native build, with the island build's
+ * first error. */
+export function nodeIslandRetryFailedDiag(
+  packages: readonly string[],
+  first: ScrDiagnostic,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC8023",
+    message: `running ${packages.map((p) => `'${p}'`).join(", ")} in Node islands failed to compile (${first.code} at ${first.loc.file}:${first.loc.start}: ${first.message}); built natively instead, where their runtime fences throw when reached`,
+    loc,
+    hint: "fix the island build's error, or mark the packages with --node-island=<pkg> to see every error",
+  };
+}
+
+/** SC8030–SC8033 — a type patch (`scriptc.typePatches`) that did not
+ * apply as written: no range covers the installed copy (SC8030), its
+ * selector matches nothing (SC8031), the declaration already has the type
+ * (SC8032), or the selector is ambiguous or not patchable (SC8033).
+ * Warnings: the build goes on with the declarations it has. */
+export function typePatchDiag(
+  code: "SC8030" | "SC8031" | "SC8032" | "SC8033",
+  message: string,
+  hint: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return { code, message, loc, hint };
+}
+
+/** True for the type patch warnings (SC8030–SC8033). */
+export function isTypePatchCode(code: string): boolean {
+  return /^SC803[0-3]$/.test(code);
+}
+
+/** SC8003 — a package marked "native" is outside the native subset. */
+export function nativePackageDiag(pkg: string, why: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC8003",
+    message: `npm package '${pkg}' is marked native but is outside the native subset: ${why}`,
+    loc,
+    hint: `remove the "native" marking to let it run in a Node island, or replace the construct the reason names`,
+  };
+}
+
+/** SC8101–SC8105 — an R2 object-model construct in the program's own
+ * JavaScript (R2.1 constructor functions … R2.5 builtin patching). */
+export function userJsObjectModelDiag(
+  code: "SC8101" | "SC8102" | "SC8103" | "SC8104" | "SC8105",
+  construct: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code,
+    message: `${construct} needs a mutable JavaScript object model, which native code does not have`,
+    loc,
+    hint: "rewrite it as a class or typed object, or mark this module as a Node island in scriptc.nodeIslands.modules",
+  };
+}
+
+/* ── SC5xxx: native FFI ───────────────────────────────────────────────── */
+
+/** SC5001 — the outbound native-FFI manifest is malformed or unreadable. */
+export function ffiProfileDiag(detail: string, profilePath: string): ScrDiagnostic {
+  return {
+    code: "SC5001",
+    message: `FFI manifest invalid: ${detail}`,
+    loc: { file: profilePath, start: 0, end: 0 },
+  };
+}
+
+/** SC5002 — a manifest binding must resolve to a signature-only ambient
+ * function. A function with a body is ordinary scriptc code and must not
+ * turn into a native call because its name happened to match. */
+export function ffiBindingDiag(name: string, detail: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC5002",
+    message: `FFI binding '${name}' cannot be resolved: ${detail}`,
+    loc,
+    hint:
+      `declare it as a signature-only ambient function, for example ` +
+      `'declare function ${name}(...): ...'; scriptc only replaces direct calls of that exact binding`,
+  };
+}
+
+/** SC5003 — the ambient TypeScript signature and manifest ABI disagree. */
+export function ffiSignatureDiag(name: string, detail: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC5003",
+    message: `FFI binding '${name}' has an incompatible signature: ${detail}`,
+    loc,
+    hint:
+      "FFI parameter classes: f64/u8/u32/i32 (TypeScript number), bool, string, and bytes " +
+      "(Uint8Array/Buffer); format 2 also accepts call-scoped callback descriptors with explicit context slots; " +
+      "format 3 callback parameters additionally accept cstring/string (TypeScript string) and bytes (Uint8Array); " +
+      "format 4 adds retained callback descriptors and explicit release references; " +
+      "return classes: f64/u8/u32/i32, bool, and void",
+  };
+}
+
+/** SC5004 — the compiler driver could not build/link a valid outbound FFI
+ * profile. This is source-facing because missing symbols, incompatible
+ * archives, and unavailable system libraries are profile inputs rather than
+ * compiler crashes. */
+export function ffiNativeBuildDiag(detail: string, profilePath: string): ScrDiagnostic {
+  return {
+    code: "SC5004",
+    message: `FFI native build failed: ${detail}`,
+    loc: { file: profilePath, start: 0, end: 0 },
+    hint:
+      "check that every native symbol and system library exists, archive/object ordering is correct, " +
+      "and each input matches the selected target",
+  };
+}
+
+interface UnsupportedEntry {
+  feature: string;
+  milestone: Milestone;
+  hint?: string;
+}
+
+export const UNSUPPORTED: Record<string, UnsupportedEntry> = {
+  SC1010: {
+    feature: "package imports",
+    milestone: "M4",
+    hint:
+      "relative imports (./file, ../dir/file), package.json-mediated project " +
+      "imports (#alias via the imports field, self-name references via " +
+      "exports), statically compiled npm packages, " +
+      "and the built-in fs, fs/promises, path, os, url, crypto, zlib, " +
+      "child_process, net, http, tls, https, http2, dgram, dns, dns/promises, util, " +
+      "util/types, string_decoder, querystring, readline, events, stream, " +
+      "stream/promises, stream/consumers, stream/web, buffer, assert, assert/strict, worker_threads, " +
+      "cluster, tty, async_hooks, timers, timers/promises, " +
+      "diagnostics_channel, perf_hooks, module, v8, and console modules (bare or " +
+      "node:-prefixed) and node:test (node:-prefixed only, like in Node) " +
+      "are supported",
+  },
+  // SC1011 (exports) shipped via export modifiers — retired, do not reuse.
+  // Default exports/imports SHIPPED (expression, function/class declaration
+  // — named and anonymous — `export { x as default }`, default re-exports,
+  // and the CJS default interop). SC1012's remaining uses are the residual
+  // edges, each named at its site: default imports of builtin modules
+  // without a default surface, default-exporting a MUTABLE binding (Node
+  // snapshots; not modeled), named imports from JSON modules, and the
+  // require()-of-JSON forms.
+  SC1012: {
+    feature: "default exports/imports",
+    milestone: "later",
+    hint: 'use named exports: export function f() {} / import { f } from "./m"',
+  },
+  // Namespace imports of USER modules shipped (`import * as ns from
+  // "./m"` and `export * as ns from "./m"`: ns.member resolves statically
+  // to the exporter's own registrations). SC1013's remaining uses name
+  // their edges: the ns OBJECT as a first-class value, namespace imports
+  // of JSON/CommonJS modules, runtime import = require(...) forms, and
+  // require() in an ES module.
+  SC1013: { feature: "namespace imports (* as ns)", milestone: "later" },
+  SC1014: {
+    feature: "re-exports and export lists",
+    milestone: "later",
+    hint: "export declarations directly: export function f() {}",
+  },
+  SC1015: { feature: "dynamic import()", milestone: "M4" },
+  // ES-module cycles are ADMITTED and evaluate in Node's order: module
+  // bodies run depth-first, function declarations are callable from the
+  // start, and let/const bindings that can be read before their
+  // declaration carry an initialization check (Node's TDZ ReferenceError).
+  // SC1016 remains for the shapes without an exact representation —
+  // CommonJS members, top-level await, default-export expressions,
+  // namespace imports or re-exports of cycle members, and var or class
+  // bindings reachable before their declaration ran. The message names
+  // the offending construct.
+  SC1016: {
+    feature: "circular imports",
+    milestone: "later",
+    hint: "ES-module cycles of let/const/function bindings compile as-is; rewrite the named construct (a named import instead of a namespace, a const instead of a default-export expression or var, a class declared before the code that can reach it) or break the named edge",
+  },
+  // Class DECLARATIONS shipped; SC1020's remaining use is class expressions.
+  SC1020: { feature: "class expressions", milestone: "later" },
+  // SC1021 (arrow functions/closures) and SC1022 (nested function
+  // declarations) shipped — codes retired, do not reuse.
+  // SC1023 (object literals) shipped as records — code retired, do not
+  // reuse. (Spread, computed keys, getters/setters and `this` in
+  // object-literal methods remain rejected via SC1090.)
+  // SC1024 (arrays) shipped — code retired, do not reuse.
+  // `var` declarations shipped (function-scope hoisting, redeclaration
+  // merge, the shared-binding loop capture semantics). SC1030's remaining
+  // uses are the var edges with no honest lowering — each names its shape
+  // and remedy inline (a reference above the declaration whose early reads
+  // would be an unrepresentable `undefined`; `var` loop bindings in
+  // `for await`).
+  SC1030: {
+    feature: "var declarations",
+    milestone: "later",
+  },
+  SC1031: { feature: "destructuring", milestone: "M2" },
+  // SC1032 (multiple declarations in one statement) shipped — code retired,
+  // do not reuse. (Multi-declaration for-loop initializers remain rejected
+  // via SC1090.)
+  // SC1033 (let without an initializer) shipped — code retired, do not
+  // reuse.
+  SC1040: {
+    feature: "loose equality (== and !=)",
+    milestone: "M4",
+    hint: "primitive and primitive-union coercions plus the x == null / x != null idiom compile statically; object-to-primitive comparisons can execute valueOf/toString — convert the object explicitly first",
+  },
+  // SC1041 (bitwise operators, ToInt32 semantics) shipped — code retired,
+  // do not reuse.
+  SC1042: {
+    feature: "logical operators on mixed operand types",
+    milestone: "later",
+    hint: "give both operands the same type (number, string, or boolean)",
+  },
+  SC1043: { feature: "comparing non-number, non-string values", milestone: "M1" },
+  SC1045: {
+    feature: "increment/decrement in expression position",
+    milestone: "later",
+    hint: "use ++/-- as a standalone statement, or write x = x + 1",
+  },
+  SC1050: { feature: "labeled break/continue", milestone: "later" },
+  // SC1051 (do-while loops) shipped — code retired, do not reuse.
+  SC1052: { feature: "for-in loops", milestone: "M4" }, // for-of over arrays shipped in M1
+  // SC1060 (switch statements) shipped — code retired, do not reuse.
+  // SC1061 (exceptions: throw/try/catch/finally) shipped — code retired, do
+  // not reuse. (Identifier catch bindings shipped too, and a catch clause
+  // that destructures ships through the checked-dynamic tree; what remains
+  // rejected is a destructuring pattern in a promise handler's parameter —
+  // SC1062 — un-narrowed binding uses — SC1063 — and jumps crossing a
+  // finally — SC1090.)
+  SC1062: {
+    feature: "destructuring catch clause bindings",
+    milestone: "later",
+    hint: "bind an identifier (catch (e)) and narrow it — 'e instanceof Error' exposes .name/.message, typeof tests expose primitives",
+  },
+  SC1063: {
+    feature: "this use of a catch binding",
+    milestone: "later",
+    hint: "a catch binding is typed by what was thrown — narrow before reading: 'if (e instanceof Error)' (then .name/.message), 'typeof e === \"string\"/\"number\"/\"boolean\"', or rethrow with 'throw e'; String(e) and `${e}` also compile ('Error: msg' for Error payloads — Node's String(), which has no stack), so 'e instanceof Error ? e.message : String(e)' works as-is",
+  },
+  SC1070: { feature: "async/await", milestone: "M3" },
+  SC1071: { feature: "generators", milestone: "later" },
+  // `this` in class methods (+ lexical capture by arrows) shipped; what
+  // remains is `this` outside any method (top level, plain functions).
+  SC1080: { feature: "'this' outside a class method", milestone: "later" },
+  SC1090: { feature: "this syntax", milestone: "later" }, // generic fallback; message names the construct
+  SC1091: {
+    feature: "writing an undeclared name in a JavaScript source",
+    milestone: "later",
+    hint: "declare the name to keep the module native: a sloppy-mode write creates a property on Node's global object, which a native binary has none of (with --node-islands=auto, the default, a required module with this write runs in a Node island instead), and a strict-mode write throws",
+  },
+  SC1100: {
+    feature: "operations on 'unknown' values",
+    milestone: "later",
+    hint: "validate with 'as <type>' first — the cast checks the dynamic value at runtime and throws on mismatch",
+  },
+  SC1101: {
+    feature: "converting typed values to 'unknown'",
+    milestone: "later",
+    hint: "numbers, strings, booleans, JSON-safe records/arrays/unions (a deep copy), functions, program class instances, and supported native handles convert into 'unknown' slots; functions, exact-class round trips, and handles preserve identity, while this value's type has no dynamic representation yet",
+  },
+  // Regex fences. SC1120 is the shared code for regex features outside the
+  // supported slice (the rejection site names the construct).
+  SC1120: {
+    feature: "this regex feature",
+    milestone: "later",
+    hint: "supported: literal regexes with the g/i/m/s/u/v/y flags — .test(), .exec()/.match()/.matchAll(), named capture groups (.groups, $<name> templates, \\k<name>), .source/.flags, and string replace/replaceAll/split with string replacement templates",
+  },
+  // SC1121 (stateful g/y regex tests) shipped — code retired, do not reuse.
+};
+
+/** The construct-fence codes MINTED BY FACTORY FUNCTIONS below (never keys
+ * of UNSUPPORTED): the other half of the enumerable code registry, indexed
+ * so the surface manifest (coverage/surface-manifest.ts) can catalog every
+ * refusal code a program's constructs can meet. `status` says what the
+ * refusal means for the construct. Process-level codes are deliberately absent:
+ * preflight gates (SC0001–SC0004), comptime evaluation failures (SC1110),
+ * backend/target refusals (SC3001/SC3002), and internal errors
+ * (SC9001/SC9002) report compilation problems, not language/stdlib
+ * surface. */
+export const FENCE_CODES: Record<string, { name: string; status: "unsupported" }> = {
+  // SC2001 is the residual type fence: the named type-shape families each
+  // carry their own code (SC2005 generic signatures, SC2006 index
+  // signatures, SC2007 overloads, SC2008 intersections, SC2009 component
+  // fences; standard-library types with no lowering report SC2020). What
+  // remains here is the remainder the name enumerates.
+  SC2001: {
+    name: "values of types outside the compilable set (constructor objects and library-derived or unresolved generic shapes)",
+    status: "unsupported",
+  },
+  SC2002: {
+    name: "record shape flows outside the width-copy rules (shapes must match exactly or width-coerce)",
+    status: "unsupported",
+  },
+  SC2003: {
+    name: "union-to-union conversions outside the re-tagging rule",
+    status: "unsupported",
+  },
+  SC2004: {
+    name: "uses of a binding whose declaration did not compile (cascade marker)",
+    status: "unsupported",
+  },
+  SC2005: {
+    name: "values whose type keeps a generic call signature (a compiled function is one concrete signature)",
+    status: "unsupported",
+  },
+  SC2006: {
+    name: "index-signature object types outside the supported shape",
+    status: "unsupported",
+  },
+  SC2007: {
+    name: "values of overloaded function type (a compiled function value is one signature)",
+    status: "unsupported",
+  },
+  SC2008: { name: "intersection types with no resolved lowering", status: "unsupported" },
+  SC2009: {
+    name: "supported container and function shapes over a component type outside its slot",
+    status: "unsupported",
+  },
+  SC2010: {
+    name: "runtime JavaScript execution",
+    status: "unsupported",
+  },
+  SC2011: { name: "'any'-typed values and the operations on them", status: "unsupported" },
+  SC2012: {
+    name: "standard-library forms without native lowering",
+    status: "unsupported",
+  },
+  SC2013: {
+    name: "npm package imports and values without native lowering",
+    status: "unsupported",
+  },
+  SC2014: {
+    name: "writes through a value held from process.env (a snapshot, not the live table)",
+    status: "unsupported",
+  },
+  SC2020: {
+    name: "standard-library or @types/node surface with no lowering",
+    status: "unsupported",
+  },
+  // SC2030 (npm embedding failure) is retired; do not reuse.
+};
+
+export function unsupportedDiag(
+  code: keyof typeof UNSUPPORTED & DiagnosticCode,
+  loc: SrcLoc,
+  featureOverride?: string,
+  hintOverride?: string,
+): ScrDiagnostic {
+  const entry = UNSUPPORTED[code]!;
+  const feature = featureOverride ?? entry.feature;
+  const diag: ScrDiagnostic = {
+    code,
+    message: `${feature} ${plural(feature) ? "are" : "is"} not supported yet`,
+    loc,
+    milestone: entry.milestone,
+  };
+  const hint = hintOverride ?? entry.hint;
+  if (hint !== undefined) diag.hint = hint;
+  return diag;
+}
+
+function plural(feature: string): boolean {
+  const head = feature.split(" (")[0]!.trim();
+  return head.endsWith("s") && !/(?:ness|this|ss)$/.test(head);
+}
+
+export function tscPassthroughDiag(message: string, loc: SrcLoc): ScrDiagnostic {
+  return { code: "SC0001", message, loc };
+}
+
+/** Node's package scope forces CommonJS, but the source contains a marker
+ * that is legal only when the file is parsed as ESM (static import/export,
+ * import.meta, top-level await, or a lexical CommonJS-wrapper redeclaration).
+ * TypeScript's bundler-mode checker does not model this Node loader rule. */
+export function commonJsModuleSyntaxDiag(loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC1013",
+    message:
+      "Node classifies this file as CommonJS, where this ES-module syntax marker is a SyntaxError",
+    loc,
+    milestone: "later",
+    hint: 'use a .mjs/.mts extension or set the nearest package.json\'s "type" to "module"',
+  };
+}
+
+/** Node stops package-scope lookup at the nearest package.json even when it
+ * is malformed, then refuses the module with ERR_INVALID_PACKAGE_CONFIG.
+ * The compiler must fail before lowering instead of inheriting a parent
+ * package's type and producing a runnable binary. */
+export function invalidPackageConfigDiag(packageJsonPath: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC1013",
+    message: `Node cannot load this module because '${packageJsonPath}' is an invalid package configuration (ERR_INVALID_PACKAGE_CONFIG)`,
+    loc,
+    milestone: "later",
+    hint: "fix the nearest package.json so it contains valid JSON",
+  };
+}
+
+/** The project's tsconfig disables strictNullChecks, which scriptc cannot
+ * adopt: null and undefined are DISTINCT STATIC TYPES in the value model
+ * (union arms with their own runtime representation) — with the knob off,
+ * every type implicitly includes them and nothing about the model holds. The
+ * config gate reports SC0002 instead of re-enabling the knob without a
+ * diagnostic. */
+/** True for the sync channel's surfaced Go panics: typescript-go wraps a
+ * server-side panic into a thrown Error whose message starts "panic:" and
+ * keeps the server intact (the prefetch fence's original finding). The
+ * 2026-07-19 sweep's three upstream panics — the TupleType interface
+ * conversion, the import.defer Debug failure, the 1e999 JSON marshal — all
+ * arrive in this shape. */
+export function isCheckerPanic(e: unknown): e is Error {
+  return e instanceof Error && e.message.startsWith("panic:");
+}
+
+/** A Go panic inside the typescript-go checker reached through a query
+ * about this source position. Upstream bugs from scriptc's point of view —
+ * but scriptc still owes a source-anchored diagnostic, never a crashed
+ * CLI. */
+export function checkerPanicDiag(detail: string, loc: SrcLoc): ScrDiagnostic {
+  // Go's encoding/json/v2 Hyrum-proofs its error strings: each process
+  // coin-flips between "cannot" and "unable to" as the modal verb
+  // (errorModalVerb over randomized map iteration), so the same panic
+  // renders two ways across tsgo spawns. scriptc's output is deterministic;
+  // pin one spelling before relaying.
+  const stable = detail.replace(/\bunable to (marshal|unmarshal|handle)\b/g, "cannot $1");
+  return {
+    code: "SC0004",
+    message: `the TypeScript checker crashed answering a query here (an upstream typescript-go bug): ${stable}`,
+    loc,
+  };
+}
+
+/** An imported .json module whose text strict JSON.parse rejects (a leading
+ * `//` comment line — the importAttributes11 shape). tsgo tolerates it, so
+ * the SC0001 passthrough never fires; Node itself refuses to import such a
+ * module at runtime, and the honest answer is a source-anchored gate at the
+ * import, never an uncaught parse throw. */
+export function invalidJsonModuleDiag(
+  fileName: string,
+  detail: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC0003",
+    message: `imported JSON module '${fileName}' is not valid JSON (${detail})`,
+    loc,
+  };
+}
+
+export function strictNullChecksFloorDiag(configFile: string): ScrDiagnostic {
+  return {
+    code: "SC0002",
+    message:
+      "this project's tsconfig disables strictNullChecks, which scriptc requires " +
+      "(null and undefined are modeled as distinct static types; without the knob " +
+      "every type implicitly includes them)",
+    loc: { file: configFile, start: 0, end: 0 },
+    hint: 'set "strictNullChecks": true (or "strict": true) in the project tsconfig',
+  };
+}
+
+export function unsupportedTypeDiag(typeText: string, loc: SrcLoc): ScrDiagnostic {
+  // `any` has a distinct diagnostic so coverage can identify operations
+  // that need a represented type or an explicit checked cast.
+  if (typeText === "any") {
+    return {
+      code: "SC2011",
+      message: `values of type 'any' have no native representation at this site`,
+      loc,
+      milestone: "M4",
+      hint: "use a supported typed value, or 'unknown' with a checked cast ('x as T')",
+    };
+  }
+  // The RESIDUAL type fence: the named families (generic signatures —
+  // SC2005, index signatures — SC2006, overloads — SC2007, intersections —
+  // SC2008, component fences — SC2009, standard-library types — SC2020)
+  // all speak before badType reaches for this, so what lands here is the
+  // remainder the registry entry enumerates: constructor objects and
+  // library-derived or unresolved generic shapes.
+  return {
+    code: "SC2001",
+    message:
+      `values of type '${typeText}' cannot be compiled yet ` +
+      `(supported: number, string, boolean, arrays, Maps, Sets, RegExp, Dates, functions, classes, records, unions of those, and 'unknown')`,
+    loc,
+    milestone: "M2",
+  };
+}
+
+/** A value whose type keeps a GENERIC call signature (`let g: <T>(x: T) =>
+ * T`, a stored generic function, a call result the checker left
+ * higher-order generic): every compiled function is one concrete
+ * signature, so a slot that keeps type parameters has no instance to hold
+ * — the generic-value monomorphization rule, named instead of the generic
+ * supported-types recitation. */
+export function genericSignatureTypeDiag(typeText: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2005",
+    message: `values of type '${typeText}' cannot be compiled: the signature keeps its type parameters, and a compiled function is always one concrete signature (generic functions monomorphize per pinned signature — declarations, methods, and never-reassigned bindings holding a generic arrow/function expression, an alias of a registered generic function, or a function initializer under a generic-signature annotation)`,
+    loc,
+    milestone: "M2",
+    hint: "annotate the destination with a concrete signature (e.g. '(x: number) => number'), instantiate explicitly ('f<number>'), or call the generic function directly",
+  };
+}
+
+/** An index-signature object type that STILL does not map: STRING and
+ * NUMBER index signatures compile (declared fields + an overflow map for
+ * undeclared keys, number keys canonicalized to their JS string spelling)
+ * over the whole overflow-store value domain — data values, functions
+ * (the command-registry pattern), Maps/Sets, nested index-signature
+ * records, and 'unknown' — so reaching this means a symbol-keyed
+ * signature, dual signatures with UNEQUAL value types, or a value type
+ * with no representation at all (Dates, typed arrays beyond the domain,
+ * lib API objects). The message points at the working alternatives. */
+export function indexSignatureTypeDiag(typeText: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2006",
+    message: `values of type '${typeText}' cannot be compiled: this index signature is outside the supported shape (string or number keys; values limited to numbers, strings, booleans, records, classes, arrays, unions, functions, Maps, Sets, RegExps, Dates, Promises, or 'unknown')`,
+    loc,
+    milestone: "M2",
+    hint: "string- and number-keyed index signatures over the supported value types compile directly; symbol keys and dual signatures with unequal value types have no lowering",
+  };
+}
+
+/** A value whose type declares TWO OR MORE call signatures (an overloaded
+ * function type: `{ (x: "a"): string; (x: "b"): number }`, the on()-style
+ * listener registries, overloaded stdlib functions stored as values): a
+ * compiled function value is exactly one signature, so a multi-signature
+ * slot has no instance to hold. CALLS of overloaded declarations resolve
+ * per call site and compile — it is the VALUE position that fences. */
+export function overloadedSignatureTypeDiag(typeText: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2007",
+    message: `values of type '${typeText}' cannot be compiled: the type declares multiple call signatures (overloads), and a compiled function value is always one concrete signature`,
+    loc,
+    milestone: "M2",
+    hint: "annotate the slot with the ONE signature the program actually calls (e.g. '(x: number) => string'), or wrap the overloaded function in a single-signature arrow",
+  };
+}
+
+/** An intersection type that resolved to no lowering. The intersections
+ * that DO compile never reach this: object-member intersections resolve
+ * through the record path (`A & B` interns the combined shape), branded
+ * primitives erase their literal marker shapes, function-with-properties
+ * hybrids map to `%call` records, and mixin-instantiation intersections
+ * resolve by chain structure to their pinned instantiation. What lands here
+ * is the remainder — an intersection part outside those rules, or a mixin
+ * intersection no chain pins. */
+export function intersectionTypeDiag(typeText: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2008",
+    message: `values of type '${typeText}' cannot be compiled: this intersection resolves to no runtime shape`,
+    loc,
+    milestone: "M2",
+    hint: "restate the intersection as a single interface or type literal with the combined members; mixin-produced intersections compile where the mixin chain pins one instantiation",
+  };
+}
+
+/** A SUPPORTED shape over a component type outside its slot: the Map/Set
+ * key-value domains, array and tuple elements, union arms, function
+ * parameters/returns, and record members. The container is not the blocker
+ * — `detail` (computed by describeComponentBlocker/
+ * describeRecordMemberBlocker in frontend/type-mapper.ts, which mirror mapType's
+ * own rules) names the component and the slot it cannot fill. */
+export function componentTypeDiag(typeText: string, detail: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2009",
+    message: `values of type '${typeText}' cannot be compiled: ${detail}`,
+    loc,
+    milestone: "M2",
+    hint: "the outer shape is supported — the named component is the blocker; restate it inside the compilable set (number, string, boolean, arrays, Maps, Sets, RegExp, functions, classes, records, unions of those, and 'unknown')",
+  };
+}
+
+/** A REACHED use of standard-library surface with no lowering — the scope
+ * fence of the real-lib type world. The checker sees the full es2025
+ * standard library, so `Symbol`, `new Date()`, `p.then(...)`, `Math.min`
+ * with three arguments all TYPECHECK; each use site of surface (or a call
+ * form of it) that nothing lowers reports here instead of the old minimal-
+ * ambient "Cannot find name" — and never ICEs. `surface` names what was
+ * used ('Symbol', 'Math.sumPrecise', 'new Date', 'string.normalize'). */
+export function noLoweringDiag(
+  surface: string,
+  loc: SrcLoc,
+  hint?: string,
+  viaNodeTypes = false,
+): ScrDiagnostic {
+  // Same code, two provenances: with the project's @types/node adopted,
+  // the checker also sees everything IT declares (Buffer, process.stdout,
+  // fetch, the undici web globals, ...) — a reached use of node-typed
+  // surface nothing lowers is the same fence, blamed at @types/node so the
+  // report reads honestly ("typed by @types/node" — not "standard
+  // library").
+  return {
+    code: "SC2020",
+    message: viaNodeTypes
+      ? `'${surface}' is typed by @types/node but has no scriptc lowering yet`
+      : `'${surface}' is part of the standard library types but has no scriptc lowering yet`,
+    loc,
+    milestone: "later",
+    hint:
+      hint ??
+      (viaNodeTypes
+        ? "the type checker sees everything @types/node declares, but only the supported surface compiles (https://scriptc.dev/limitations)"
+        : "the type checker sees the full standard library, but only the supported surface compiles (https://scriptc.dev/limitations)"),
+  };
+}
+
+/** A use of a Node 24 global the native runtime does not implement
+ * (host-globals.ts): constructing or calling its constructor value, or
+ * reading one of its members. A bare read compiles and answers the
+ * constructor (host-global-values.ts). Node has the class and its surface,
+ * so answering undefined or refusing to build the module would both
+ * diverge; the reason id lets a Node island run the module instead. */
+export function hostGlobalDiag(name: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2020",
+    message: `'${name}' is a Node global that native code does not provide`,
+    loc,
+    milestone: "later",
+    hint: "the class exists at run time in Node 24, and native code cannot construct it or provide its members; run the module in a Node island (--node-islands=auto) or avoid the use",
+    reason: "host-global",
+  };
+}
+
+/** A stdlib-global snapshot reached a site that needs its VALUE (an
+ * argument, a return, a stored field). The declaration emitted no storage
+ * — alias plumbing only serves member and call reads — and the global's
+ * own value has no lowering, so the read cannot resolve. Reported at the
+ * declaration, where the real cause sits; the use site carries the SC2004
+ * cascade. */
+export function stdlibSnapshotValueUseDiag(
+  name: string,
+  alias: string,
+  typeText: string | undefined,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  // Name the requested type when it has a readable spelling; a structural
+  // dump of the global's own object type says less than the global itself.
+  const unholdable =
+    typeText === undefined
+      ? "the global it names is not a value scriptc can hold"
+      : `a '${typeText}' is not a value scriptc can hold`;
+  return {
+    code: "SC2020",
+    message: `the stdlib-global snapshot '${name}' ('${alias}') cannot be used as a value: the declaration lowers to alias plumbing (no storage, no code), and ${unholdable}`,
+    loc,
+    milestone: "later",
+    hint: `read the members through the global directly ('${alias}.member') instead of passing '${name}' around as a value`,
+  };
+}
+
+/** A REACHED use of a part of the WebAssembly API scriptc does not
+ * implement yet (SC2020): the streaming functions, Tag and Exception, the
+ * classes as values. compile, instantiate, validate, the Module, Instance,
+ * Memory, Table and Global constructors, Module.imports/exports/
+ * customSections and the error classes lower (builtins/webassembly.ts).
+ * `surface` names what was used ('WebAssembly.compileStreaming',
+ * 'WebAssembly.Memory'). */
+export function webAssemblyDiag(surface: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2020",
+    message: `'${surface}' is not supported yet: scriptc implements WebAssembly.compile, instantiate, validate, the Module, Instance, Memory, Table and Global constructors, Module.imports, exports and customSections, and the error classes over modules translated at build time, but not this part of the API`,
+    loc,
+    milestone: "later",
+    hint: "the streaming functions, Tag and Exception, and the classes used as values other than with new and instanceof are planned; 'scriptc coverage' lists the modules this program loads (https://scriptc.dev/limitations)",
+  };
+}
+
+/** A resolved native addon needs Node's embedding ABI. The migration uses the
+ * underlying native operation through an ordinary C ABI declaration. */
+export function nativeAddonDiag(specifier: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2020",
+    message: `native addon '${specifier}' requires Node's addon runtime, which is unavailable in scriptc`,
+    loc,
+    milestone: "later",
+    hint: "expose the native operation as a plain C ABI function in an object or static archive, then bind a signature-only TypeScript declaration with --ffi; Node-API callbacks themselves require Node (https://scriptc.dev/ffi#replacing-a-node-api-addon)",
+    reason: "native-addon",
+  };
+}
+
+/** A createRequire require or require.resolve call whose specifier is
+ * computed at run time, where the runtime resolves it like Node
+ * (scr_require.c). Coverage lists the call as deferred: a require whose
+ * specifier resolves to a module ends the program with this code, because
+ * the module graph is fixed at build time. */
+export function computedRequireDiag(surface: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2020",
+    message: `${surface} with a computed specifier resolves at run time; a require of a specifier that resolves to a module, such as a native addon, ends the program`,
+    loc,
+    milestone: "later",
+    hint: 'require("<static string literal>") compiles the module into the program; native addons need a replacement through native FFI (https://scriptc.dev/ffi#replacing-a-node-api-addon)',
+  };
+}
+
+/** A write through a value HELD from `process.env` (`const env =
+ * process.env; env.X = "1"`, `delete env[k]`): the held value is a snapshot
+ * record of the environment, not the live table, so the write would land on
+ * the copy and be lost while Node's write reaches setenv(3) through the same
+ * object. Refuse at the write instead of letting it disappear. */
+export function heldEnvWriteDiag(loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2014",
+    message:
+      "a write through a value held from process.env is not supported: the held value is a snapshot copy of the environment, so the write would be lost while Node writes the real environment",
+    loc,
+    milestone: "later",
+    hint: "read and write the live variable directly (process.env.NAME or process.env[key]), or write into a fresh copy: const env = { ...process.env, NAME: value }",
+  };
+}
+
+/** A BINDING that holds `process.env` under a type which is not the env
+ * record (`const env: Record<string, string> = process.env as any`, a
+ * fixed-field annotation, `const { env } = process` with one): the hold is
+ * a snapshot record taken at the initializer, so its member reads would
+ * observe the environment as it was then, while Node's hold IS the
+ * environment object and reads the live table. Refuse where the hold is
+ * created rather than letting its reads drift silently. */
+export function heldEnvHoldDiag(loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2014",
+    message:
+      "a value held from process.env under a type other than the environment record (a string-keyed record of string | undefined) is not supported: the hold is a snapshot copy taken where it is created, so its reads would see the environment as it was then while Node reads the live environment",
+    loc,
+    milestone: "later",
+    hint: "hold process.env without changing its type (const env = process.env), read the live table directly (process.env.NAME), or copy the entries you need: const env = { ...process.env, NAME: value }",
+  };
+}
+
+/** A binding initialized from `process.env` that the program reassigns.
+ * Node's binding holds the environment object until the reassignment; the
+ * hold here is a snapshot copy, so reads and writes before the reassignment
+ * would miss the live environment, and a live alias would keep writing it
+ * after the binding holds something else. */
+export function heldEnvReassignedDiag(loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2014",
+    message:
+      "a reassigned binding that holds process.env is not supported: Node's binding holds the environment object until it is reassigned, while the hold here is a snapshot copy of the environment",
+    loc,
+    milestone: "later",
+    hint: "hold process.env in a binding that is never reassigned (const env = process.env), or copy the entries you need: let env = { ...process.env }",
+  };
+}
+
+/** An identity comparison (`===`, `==` and their negations) between a value
+ * held from `process.env` and another object that is not the environment.
+ * Node compares the environment object itself; the hold here is a snapshot
+ * record, so the answer could differ from Node's. */
+export function heldEnvIdentityDiag(loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2014",
+    message:
+      "comparing process.env or a value held from it by identity with another object is not supported: the value here is a snapshot copy of the environment, not the environment object",
+    loc,
+    milestone: "later",
+    hint: "compare the entries you need (env.NAME === other.NAME), or compare two holds of process.env, which are the same object",
+  };
+}
+
+/** Records are monomorphic structs, so a value's shape must match the
+ * expected shape exactly OR narrow through the width-copy family
+ * (recordWidthPlan / the overflow capture: target fields copied off the
+ * source, extra fields dropped, per-field lifts). What reaches this is
+ * the RESIDUE those rules decline — `detail`, when the classifier has a
+ * pointed answer (describeRecordWidthBlocker), names the first blocking
+ * rule instead of leaving two near-identical type prints to eyeball. */
+export function recordShapeMismatchDiag(
+  expectedText: string,
+  actualText: string,
+  loc: SrcLoc,
+  detail?: string,
+): ScrDiagnostic {
+  return {
+    code: "SC2002",
+    message:
+      `record shapes must match exactly or width-coerce: expected '${expectedText}', got '${actualText}'` +
+      (detail !== undefined ? ` — ${detail}` : ""),
+    loc,
+    milestone: "later",
+    hint: "width subtyping compiles as a copy (each expected field copied off the source; extra fields drop) — this pair is outside the copy's rules; build a literal with exactly the expected fields instead",
+  };
+}
+
+/** Union values carry a runtime tag assigned per-union: a value of one
+ * union type flowing into a DIFFERENT union's slot re-tags at runtime when
+ * every source arm has a home in the destination (`A | B` into `A | B | C`
+ * — see unionRetagHelper). What this rejects is the remainder: a source arm
+ * with no identical destination arm, where the value could not be
+ * represented in the target union at all. */
+export function unionMismatchDiag(
+  expectedText: string,
+  actualText: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC2003",
+    message:
+      `union conversion has no unambiguous layout mapping: expected '${expectedText}', got '${actualText}' ` +
+      `(each source arm needs an identical destination arm, a unique compatible record/array layout, or a shared literal discriminant selecting compatible layouts)`,
+    loc,
+    milestone: "later",
+    hint: "narrow the value to a SINGLE arm first (a discriminant check, or '!== undefined'/'!== null' for unit arms); a plain arm value widens into any union that contains it, and a whole union widens into any union whose arms include the source's",
+  };
+}
+
+/** An object literal that SPREADS union-typed sources (`{ ...base,
+ * ...override }` where each source is `A | B | C`) builds one field set per
+ * combination of source arms. A union of records cannot hold that: each arm
+ * carries its own field table, so naming one arm would drop the fields the
+ * other arms contributed (Node keeps every field). The refusal names the
+ * candidate arms, because the honest repair is an explicit annotation per
+ * source (or one open record type), never a guessed arm. */
+export function unionLiteralMismatchDiag(
+  expectedText: string,
+  arms: readonly string[],
+  loc: SrcLoc,
+): ScrDiagnostic {
+  const named = arms.map((a) => `'${a}'`).join(", ");
+  return {
+    code: "SC2003",
+    message:
+      `a spread merge over union-typed sources builds a value that can carry fields from several arms at once, so no single arm of '${expectedText}' can represent it` +
+      (arms.length > 0 ? ` (candidate arms: ${named})` : ""),
+    loc,
+    milestone: "later",
+    hint: "merge ONE arm per path (narrow every spread source to that same arm first — a discriminant switch or an assertion — so the spread builds a single record), or declare ONE open record type whose fields are all optional instead of a union of all-optional arms",
+  };
+}
+
+/** A use of a binding whose DECLARATION did not compile: the declaration
+ * site already carries the real diagnostic (a fenced type, a blocked
+ * signature, an unsupported binding form), and every later reference falls
+ * through the resolution steps because no local/global/function was ever
+ * registered under the symbol. This cascade marker names the binding and
+ * points back at the root cause instead of misreporting the reference as
+ * an unsupported construct of its own. */
+export function blockedBindingUseDiag(name: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2004",
+    message: `uses of '${name}' inherit the blocker on its declaration`,
+    loc,
+    milestone: "later",
+    hint: `the declaration of '${name}' did not compile — fix the diagnostic reported there and these sites clear with it`,
+  };
+}
+
+/** Unsupported native operations keep stable diagnostic codes for tooling. */
+export function unsupportedAnyOperationDiag(feature: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2011",
+    message: `${feature} on 'any'-typed values cannot compile statically`,
+    loc,
+    milestone: "later",
+    hint: "use a supported typed operation, or 'unknown' with a checked cast ('x as T')",
+  };
+}
+
+export function unsupportedNativeExecutionDiag(feature: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC2010",
+    message: `${feature} cannot compile statically`,
+    loc,
+    milestone: "later",
+    hint: "scriptc compiles program code to native instructions; runtime JavaScript evaluation is unsupported",
+  };
+}
+
+export function unsupportedNativeApiDiag(
+  feature: string,
+  loc: SrcLoc,
+  hint?: string,
+): ScrDiagnostic {
+  return {
+    code: "SC2012",
+    message: `${feature} cannot compile statically`,
+    loc,
+    milestone: "later",
+    hint: hint ?? "use a supported API or rewrite this operation for native compilation",
+  };
+}
+
+export function unsupportedPackageImportDiag(pkg: string, loc: SrcLoc): ScrDiagnostic {
+  return npmStaticRefusalDiag(
+    pkg,
+    "its implementation is not part of the compiled module graph",
+    loc,
+  );
+}
+
+export function unsupportedPackageValueDiag(pkg: string, loc: SrcLoc): ScrDiagnostic {
+  return npmStaticRefusalDiag(
+    pkg,
+    "its implementation is not part of the compiled module graph",
+    loc,
+  );
+}
+
+export function npmStaticRefusalDiag(
+  pkg: string,
+  detail: string,
+  loc: SrcLoc,
+  hint?: string,
+): ScrDiagnostic {
+  return {
+    code: "SC2013",
+    message: `cannot compile npm package '${pkg}' statically: ${detail}`,
+    loc,
+    milestone: "later",
+    hint:
+      hint ??
+      "use a dependency with supported source, or replace the unsupported operation; scriptc has no interpreter fallback",
+  };
+}
+
+/** comptime went wrong at evaluation time. The callback runs in an isolated
+ * `node:vm` context inside the compiler's own Node process and its RESULT is
+ * baked into the binary as a literal — everything that can fail at that
+ * stage lands here with a specific detail: the callback threw, evaluation
+ * exceeded the compile-time budget, or the returned value cannot be written
+ * as a literal of the expected type (NaN/Infinity, undefined/null/functions,
+ * shape mismatches — the detail names the offending path, dynCheck-style). */
+export function comptimeFailedDiag(detail: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC1110",
+    message: `comptime evaluation failed: ${detail}`,
+    loc,
+  };
+}
+
+/* ── SC4xxx: library-mode/profile refusals ─────────────────────────────────
+ * The library-emission mode's own code block (design §5.4 + the ratified
+ * SC4xxx range): neither preflight nor type rules nor backend coverage —
+ * each refusal names the profile entry involved and the fix. Profile
+ * teaching text no longer threads through individual factories: EVERY
+ * library-mode refusal passes through one decoration pass
+ * (library/fence-eval.ts's decorateLibraryRefusals — the SC4004/SC4005
+ * rider generalized to any refusal code or manifest id), which attaches
+ * the profile's text as the diagnostic's attributed `note`. */
+
+/** SC4001 — the profile file itself is malformed: parse errors, unknown
+ * fields at meaning-changing positions, prefix violations, duplicate
+ * symbols, bad C identifiers. Anchored at the profile file. */
+export function libProfileDiag(detail: string, profilePath: string): ScrDiagnostic {
+  return {
+    code: "SC4001",
+    message: `library profile invalid: ${detail}`,
+    loc: { file: profilePath, start: 0, end: 0 },
+  };
+}
+
+/** SC4002 — an export-map entry names something the entry module does not
+ * export as a function value. */
+export function libExportUnresolvedDiag(
+  exportName: string,
+  detail: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC4002",
+    message: `library export '${exportName}' cannot be resolved: ${detail}`,
+    loc,
+    hint:
+      "the export map may only name exports of the profile's ONE entry module, and the entry module decides " +
+      'where the function lives: re-export it from another module (export { handle } from "./sdk/handler", ' +
+      'or export * from "./sdk/handler"), declare it there and export it through a list (export { handle }), ' +
+      "or declare a forwarding wrapper function",
+  };
+}
+
+/** SC4003 — a mapped export's parameter or return is outside the v1
+ * marshalling classes, or does not fit the class the profile declared. */
+export function libUnmappableSignatureDiag(
+  exportName: string,
+  position: string,
+  detail: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC4003",
+    message: `library export '${exportName}': ${position} ${detail}`,
+    loc,
+    hint:
+      "marshalling classes: f64/u8/u32/i32 (TS number; the integer plumbing classes are param-only), i64/u64 (TS number, " +
+      "prove-or-refuse at compile time — params and returns), bool, string, bytes (Uint8Array/Buffer), and a void return; " +
+      "records and unions slot in when the contract-sidecar conversation (asks 2/3) lands — deferral, not permanent unsupport",
+  };
+}
+
+/** SC4004 — a mapped export is async or a generator: a synchronous ABI
+ * entry cannot be either. The profile's teaching arrives via the shared
+ * decoration pass (the "async" shared key or an SC4004 key). */
+export function libAsyncExportDiag(
+  exportName: string,
+  kind: "async" | "generator",
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC4004",
+    message: `library export '${exportName}' is ${kind === "async" ? "an async function" : "a generator"} — a profile entry is a synchronous ABI symbol`,
+    loc,
+    hint: "expose a synchronous facade function and map that instead",
+  };
+}
+
+/** SC4005 — the library module graph reaches event-loop or ambient-process
+ * surface (async functions, generators, timers, sockets, signals, child
+ * processes, ...): async_free is a v1 REQUIREMENT, derived from the module
+ * graph, never observed at runtime. */
+export function libAsyncSurfaceDiag(surface: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC4005",
+    message: `library mode requires an async_free module graph, and this graph reaches ${surface}`,
+    loc,
+    hint:
+      "v1 library artifacts link no event loop, install no signal handlers, and create no threads — remove the surface from " +
+      "everything the entry module reaches",
+  };
+}
+
+/** SC4008 — the ask-5 determinism denial: the profile fences a surface by
+ * its surface-manifest id, and the compiled library module graph REACHES
+ * it. Minted only for manifest entries the static tier compiles (a fenced
+ * surface the tier refuses anyway keeps its own code, with the fence's
+ * teaching riding that refusal as the note); anchored at the reaching
+ * construct. `surfaceCode` is the diagnostic code the manifest entry
+ * carries, when it carries one. */
+export function libFenceDiag(
+  profileName: string,
+  surfaceId: string,
+  surfaceName: string,
+  loc: SrcLoc,
+  surfaceCode?: string,
+  teaching?: string,
+): ScrDiagnostic {
+  const diag: ScrDiagnostic = {
+    code: "SC4008",
+    message: `the '${profileName}' profile fences '${surfaceId}' (${surfaceName}${surfaceCode !== undefined ? `, ${surfaceCode}` : ""}), and this library graph reaches it`,
+    loc,
+    hint:
+      "the profile denies this surface at compile time (a determinism fence over the surface manifest's ids) — " +
+      "remove the use from everything the entry module reaches, or lift the fence",
+  };
+  if (teaching !== undefined) diag.note = `from the '${profileName}' profile: ${teaching}`;
+  return diag;
+}
+
+/** SC4007 — a mapped export whose signature keeps type parameters: every
+ * compiled function is one concrete signature (the SC2005 monomorphization
+ * rule, re-anchored at the profile entry). */
+export function libGenericExportDiag(exportName: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC4007",
+    message: `library export '${exportName}' is generic — a profile entry needs one concrete compiled signature`,
+    loc,
+    hint:
+      "pin a concrete instantiation in the entry (or facade) module and map that: " +
+      "export const update_f64 = update<number>",
+  };
+}
+
+/** SC4009 — the contract sidecar cannot be projected: a profile
+ * designation names nothing the entry declares, a designated type falls
+ * outside the schema's closed vocabulary, or a contract convention const
+ * is malformed. The sidecar records verdicts, never guesses — anything
+ * unprojectable refuses with the offending declaration named. */
+export function libSidecarDiag(detail: string, loc: SrcLoc, hint?: string): ScrDiagnostic {
+  return {
+    code: "SC4009",
+    message: `contract sidecar: ${detail}`,
+    loc,
+    hint:
+      hint ??
+      "the sidecar's type table speaks a closed vocabulary (bool, number, string/Uint8Array, optional, arrays, " +
+        "named records, string-literal-union enums, and kind-tagged unions of object literals) read from the entry " +
+        "module's exported declarations in source order",
+  };
+}
+
+/** SC4010 — a tabled or designated type's members gather from MORE THAN
+ * ONE declaration site (interface merging, module augmentation, a
+ * same-name exported declaration in another module): the merged member
+ * order is a checker implementation detail no sidecar consumer can
+ * reproduce from source, and declaration order IS the wire contract. The
+ * teaching names every contributing site. */
+export function libSidecarMergedDiag(
+  name: string,
+  sites: readonly string[],
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC4010",
+    message: `contract sidecar: '${name}' gathers members from ${sites.length} declaration sites (${sites.join(", ")}) — a tabled type's order must derive from ONE declaration site`,
+    loc,
+    hint:
+      `merged declaration order is a checker implementation detail that no sidecar consumer can reproduce from source — ` +
+      `collapse '${name}' into a single declaration and delete or rename the other site(s): ${sites.join(", ")}`,
+  };
+}
+
+/** SC4011 — a conditional or mapped type produces a tabled or designated
+ * type: type-level computation has no author-visible declaration order,
+ * so its member order cannot be the wire contract. */
+export function libSidecarComputedDiag(
+  name: string,
+  which: "conditional" | "mapped",
+  loc: SrcLoc,
+): ScrDiagnostic {
+  return {
+    code: "SC4011",
+    message: `contract sidecar: '${name}' is produced by a ${which} type — a tabled or designated type needs literal, declaration-ordered members`,
+    loc,
+    hint:
+      "table and arm order is wire contract read from the declaration site, and a computed type's member order is " +
+      "checker evaluation, not source — spell the union's arms (or the record's fields) literally in one declaration",
+  };
+}
+/** SC4012 — the library-mode host-contract violation trap a generated
+ * entry wrapper raises when an inbound value falls outside its marshalling
+ * class's f64-exact range: a bytes buffer's declared length past 2^53−1
+ * (no real buffer), or an i64/u64 parameter past ±(2^53−1) (ask 4 — the
+ * value cannot ride f64 exactly, and implicit rounding is a coercion the
+ * author never wrote). In both shapes the host and the library disagree
+ * about the call contract. A RUNTIME code, never a compile-time refusal:
+ * it rides the structured trap-teaching message (library/trap-teaching.ts)
+ * the wrapper delivers through the panic sink, alongside the trapping
+ * export's C symbol and the profile's teaching and remediation text for
+ * this code when the profile supplies them. */
+export const LIB_INBOUND_BYTES_TRAP_CODE = "SC4012";
+
+/** SC4013–SC4019 — the library-mode runtime detected-trap family. RUNTIME
+ * codes like SC4012, never compile-time refusals: every trap the runtime
+ * DETECTS in library mode reaches the panic sink as a structured
+ * trap-teaching message (library/trap-teaching.ts's encoding), assembled by
+ * the library trap funnel (scr_library.c) with the baseline human line
+ * unchanged as field 0, one of these codes, and the trapping entry's
+ * symbol; a profile may overlay teaching/remediation text per code through
+ * the program TU's overlay table. The kinds are the runtime's ACTUAL trap
+ * sites, classified by the funnel over the sites' message conventions:
+ *
+ *   SC4013  escaped exception at an entry (the "Uncaught ..." renderer,
+ *           scr_library_check_exc — declared entries do not throw)
+ *   SC4014  range trap ("scriptc: RangeError: ...": array/typed-array
+ *           index out of bounds, pop() on empty, invalid count value)
+ *   SC4015  type trap ("scriptc: TypeError: ...": a keyed read miss on a
+ *           result type that cannot say undefined)
+ *   SC4016  syntax trap ("scriptc: SyntaxError: ...": invalid regular
+ *           expression at runtime construction)
+ *   SC4017  out of memory ("scriptc: out of memory")
+ *   SC4018  internal invariant failure ("scriptc: internal error: ...")
+ *   SC4019  other detected trap (the family's residual: environment
+ *           failures like getcwd/os lookups, unsupported regex
+ *           operations, circular-structure conversion, the RC audit)
+ *   SC4025  host callback invoked before registration ("scriptc: library
+ *           callback ...": compiled code reached a profile-declared
+ *           callback channel the host never registered through the
+ *           profile's callback_register_symbol — a host-contract story
+ *           like SC4012, but the trap site is inside compiled code, so
+ *           the funnel assembles it and field 2 names the entry the
+ *           host called)
+ *   SC4026  library ABI entry invoked from a host callback ("scriptc:
+ *           library entry ..."): the callback-time guard poisons the
+ *           affected instance and the funnel assembles the attempted inner
+ *           ABI symbol in field 2
+ *
+ * There is no arithmetic/div-by-zero kind: JS division never traps, so the
+ * runtime has no such site. The list here is the compile-time face of the
+ * family (profile overlay filtering); the funnel's classification table in
+ * scr_library.c is the runtime face — keep the two in step. */
+export const LIB_RUNTIME_TRAP_CODES = [
+  "SC4013",
+  "SC4014",
+  "SC4015",
+  "SC4016",
+  "SC4017",
+  "SC4018",
+  "SC4019",
+  "SC4025",
+  "SC4026",
+] as const;
+
+/** SC4024 — a host-callback reference the profile cannot serve. Library
+ * mode maps signature-only ambient function declarations onto the
+ * profile's declared callback channels (the outbound seam: compiled code
+ * delivers bytes and scalars to the embedder synchronously). When the
+ * profile declares ANY callback, a call of a program-authored
+ * signature-only declaration that names no channel — or whose TypeScript
+ * signature does not fit the channel's declared classes — is a refusal,
+ * never an inert ReferenceError lowering: the author reached for the
+ * host seam and the profile does not provide it. Decorated with the
+ * profile's SC4024 teaching text like every library refusal. */
+export function libCallbackDiag(name: string, detail: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC4024",
+    message: `library callback '${name}' cannot be compiled: ${detail}`,
+    loc,
+    hint:
+      "profile-declared callbacks are the library's outbound seam: declare the channel in the profile's " +
+      "'callbacks' array (name, params, returns) and keep the ambient TypeScript signature on the callback " +
+      "marshalling classes — params f64/bool/string/bytes and the u8/u32/i32 plumbing classes, " +
+      "returns f64/bool/u8/u32/i32/void; the host registers an implementation through the profile's " +
+      "abi.callback_register_symbol before calling any entry that can reach the channel",
+  };
+}
+
+export function libNpmIneligibleDiag(pkg: string, reason: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC4020",
+    message: `library mode compiles npm packages statically or not at all, and '${pkg}' cannot compile statically: ${reason}`,
+    loc,
+    hint: "vendor compilable code from the package as project modules, or drop the dependency",
+  };
+}
+
+/** SC4021/SC4022/SC4023 — the ask-4 integer-boundary refusals, one code
+ * per failed obligation (the §2.4 check order picks exactly one). Every
+ * refusal carries the teaching triple: the SLOT (its sidecar slot path +
+ * the declared class), the FAILED OBLIGATION with the observed evidence
+ * (`detail` — the proven range, the may-be-NaN finding, or the spelling
+ * and its f64 read-back), and the AUTHOR'S FIX (`fix` — the concrete
+ * edit that states intent), anchored at the offending expression.
+ * Profile teachings ride any of the three codes as the attributed note
+ * via the shared decoration pass. */
+export function libIntBoundaryDiag(
+  path: string,
+  cls: "i64" | "u64",
+  obligation: "representability" | "wholeness" | "range",
+  detail: string,
+  fix: string,
+  loc: SrcLoc,
+): ScrDiagnostic {
+  const code =
+    obligation === "representability" ? "SC4021" : obligation === "wholeness" ? "SC4022" : "SC4023";
+  return {
+    code,
+    message: `integer slot '${path}' (${cls}) cannot be proven — ${obligation} failed: ${detail}`,
+    loc,
+    hint: fix,
+  };
+}
+
+export function iceDiag(message: string, loc: SrcLoc): ScrDiagnostic {
+  return {
+    code: "SC9001",
+    message: `internal compiler error: ${message} — please report this`,
+    loc,
+  };
+}

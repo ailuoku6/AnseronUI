@@ -138,7 +138,7 @@ if (target === 'android') {
   mkdirSync('examples/native/android/app/src/main/assets',{recursive:true});
   writeFileSync('examples/native/android/app/src/main/assets/core.manifest.json',JSON.stringify(manifest,null,2)+'\n');
 }
-if (target === 'ios-simulator' || target === 'ios-device') writeFileSync('examples/native/ios/core.manifest.json',JSON.stringify(manifest,null,2)+'\n');
+if (target === 'ios-simulator' || target === 'ios-device') { mkdirSync('examples/native/ios', {recursive:true}); writeFileSync('examples/native/ios/core.manifest.json',JSON.stringify(manifest,null,2)+'\n'); }
 if (target === 'native') run('clang',['-I','packages/core/native/include','packages/core/native/test/stdio.c',join(destination,'entry.lib.a'),'-o',join(destination,'probe')],env);
 writeFileSync(join(destination,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
 console.log(`Built ${target}: ${destination}`);

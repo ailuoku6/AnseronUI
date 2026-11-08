@@ -1,0 +1,106 @@
+#include "diagnostics.h"
+#include "emit.h"
+#include "profile.h"
+#include "runtime-unit.h"
+#include "target.h"
+
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/TargetParser/Host.h"
+
+#include <optional>
+#include <cstdlib>
+#include <string>
+
+using namespace llvm;
+
+#ifndef SCRIPTC_PACKAGE_VERSION
+#define SCRIPTC_PACKAGE_VERSION "0.0.0-dev"
+#endif
+
+namespace {
+
+int version(int Argc, char **Argv) {
+  if (Argc != 3 || StringRef(Argv[2]) != "--format=json")
+    return scriptc::reportError("usage", "version requires --format=json");
+  std::string Error;
+  std::unique_ptr<TargetMachine> Machine = scriptc::createTargetMachine(
+      scriptc::DefaultTarget, "2", Error);
+  if (!Machine)
+    return scriptc::reportError("target_machine_failed", Error);
+
+  json::Array Targets;
+  StringRef Backends = scriptc::TargetBackends;
+  while (!Backends.empty()) {
+    auto Split = Backends.split(',');
+    Targets.push_back(Split.first);
+    Backends = Split.second;
+  }
+  json::Array SupportedTargets;
+  StringRef TargetsText = scriptc::AllowedTargets;
+  while (!TargetsText.empty()) {
+    auto Split = TargetsText.split(',');
+    SupportedTargets.push_back(Split.first);
+    TargetsText = Split.second;
+  }
+  json::Object Response{
+      {"ok", true},
+      {"protocol_version", scriptc::ProtocolVersion},
+      {"scriptc_package_version", SCRIPTC_PACKAGE_VERSION},
+      {"llvm_version", LLVM_VERSION_STRING},
+      {"host_triple", sys::getDefaultTargetTriple()},
+      {"targets", std::move(Targets)},
+      {"supported_targets", std::move(SupportedTargets)},
+      {"default_target", scriptc::DefaultTarget},
+      {"data_layout", Machine->createDataLayout().getStringRepresentation()},
+      // Commands and options added within one protocol version, for callers
+      // that also run against older helpers.
+      {"features", json::Array{"runtime-unit-profile", "profile-functions",
+                                "runtime-unit-optional-bitcode"}},
+  };
+  outs() << formatv("{0}\n", json::Value(std::move(Response)));
+  return 0;
+}
+
+} // namespace
+
+int main(int Argc, char **Argv) {
+  scriptc::installFatalDiagnosticHandler();
+  // Process-isolated test seam for the fatal handler itself. It is inert in
+  // every ordinary invocation and ensures a future LLVM fatal never becomes
+  // an unstructured abort/stack trace in the Node caller.
+  if (std::getenv("SCRIPTC_LLVM_TEST_FATAL") != nullptr)
+    report_fatal_error("scriptc LLVM fatal diagnostic self-test");
+  if (Argc >= 2 && StringRef(Argv[1]) == "version")
+    return version(Argc, Argv);
+  if (Argc >= 2 && StringRef(Argv[1]) == "runtime-unit")
+    return scriptc::runtimeUnit(Argc, Argv);
+  if (Argc >= 2 && StringRef(Argv[1]) == "prune-import")
+    return scriptc::pruneImport(Argc, Argv);
+  if (Argc >= 2 && StringRef(Argv[1]) == "merge-profiles")
+    return scriptc::mergeProfiles(Argc, Argv);
+  if (Argc >= 2 && StringRef(Argv[1]) == "profile-functions")
+    return scriptc::profileFunctions(Argc, Argv);
+  if (Argc >= 2 && StringRef(Argv[1]) == "emit") {
+    std::optional<scriptc::EmitOptions> Options =
+        scriptc::parseEmitOptions(Argc, Argv);
+    if (!Options)
+      return scriptc::reportError(
+          "usage",
+          "emit requires --input <file> --output <file> and accepts "
+          "--filetype <obj|asm> --target <triple> --opt-level <0|1|2|3|s|z> "
+          "--relocation-model pic --diagnostic-format json "
+          "--source-path <path> --import-bitcode <file> --cache-dir <dir> "
+          "--profile-generate <pattern> --profile-use <file.profdata>");
+    return scriptc::emit(*Options);
+  }
+  return scriptc::reportError("usage",
+                              "expected 'version --format=json', 'emit', 'runtime-unit', "
+                              "'prune-import', 'merge-profiles', or "
+                              "'profile-functions'");
+}

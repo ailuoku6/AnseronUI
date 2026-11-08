@@ -1,0 +1,53 @@
+# Publishes AnseronUI to npm.
+#
+# Tag a release as v<version>, where <version> matches package.json, then push
+# the tag. The workflow can also be started manually from GitHub Actions.
+# Configure npm Trusted Publishing for this repository before the first release:
+# package `anseronui` -> trusted publisher GitHub Actions -> this workflow.
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "Tag v${TAG_VERSION} does not match package.json version ${PACKAGE_VERSION}."
+            exit 1
+          fi
+
+      # npm Trusted Publishing authenticates this step through GitHub OIDC.
+      # npm publish runs prepublishOnly (typecheck and tests), then prepack (SDK).
+      - name: Publish package
+        run: npm publish --access public --provenance

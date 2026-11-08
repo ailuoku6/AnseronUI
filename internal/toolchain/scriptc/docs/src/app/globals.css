@@ -1,0 +1,32 @@
+@import "@vercel/geistdocs/styles.css";
+
+:root {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html { scroll-padding-top: 5rem; }
+body { background: var(--ds-background-100); color: var(--ds-gray-1000); }
+button { cursor: pointer; }
+
+.skip-link {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 100;
+  transform: translateY(-200%);
+  padding: 12px;
+  background: var(--ds-background-100);
+}
+.skip-link:focus { transform: translateY(0); }
+
+/* Literal HTML is retained in the MDX content, including CLI definition lists. */
+.prose table { display: block; max-width: 100%; overflow-x: auto; }
+.prose dl { margin-block: 1rem; }
+.prose dt { margin-top: 0.75rem; color: var(--ds-gray-1000); }
+.prose dd { margin-top: 0.25rem; padding-left: 1.25rem; color: var(--ds-gray-900); }
+
+.compatibility-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.compatibility-table th, .compatibility-table td { padding: 0.5rem 0.75rem; text-align: left; color: var(--ds-gray-900); }
+.compatibility-table th { border-bottom: 1px solid var(--ds-gray-alpha-400); font-size: 0.75rem; font-weight: 500; }
+.compatibility-table td { border-bottom: 1px solid var(--ds-gray-alpha-200); }

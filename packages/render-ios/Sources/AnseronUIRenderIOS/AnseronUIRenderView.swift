@@ -5,6 +5,8 @@ import UIKit
 /// Removing it from a superview does not destroy the page, so it can be reparented.
 @MainActor public final class AnseronUIRenderView: UIView {
     public var onReady: (() -> Void)?
+    /// Lets the owning app extend the page background into system safe areas.
+    public var onPageBackgroundColor: ((UIColor) -> Void)?
     public var onDiagnostic: ((String, String) -> Void)?
     public var onFailure: ((Error) -> Void)?
     public private(set) var page: String?
@@ -129,6 +131,10 @@ import UIKit
             default: throw NativeExtensionError.unsupportedMethod(method)
             }
         }, createCore: createCore)
+        host.renderer.onPageBackgroundColor = { [weak self] color in
+            guard let self, !self.isDestroyed, self.generation == currentGeneration else { return }
+            self.onPageBackgroundColor?(color)
+        }
         host.onReady = { [weak self] in
             guard let self, !self.isDestroyed, self.generation == currentGeneration else { return }
             self.onReady?()

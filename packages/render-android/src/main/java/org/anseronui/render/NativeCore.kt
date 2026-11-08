@@ -3,8 +3,7 @@ package org.anseronui.render
 import org.json.JSONArray
 
 /** Every JNI call runs on the fixed AndroidHost owner thread. */
-class NativeCore : AndroidCoreTransport {
-    override val bundleBuildId = "anseronui-demo"
+class NativeCore(override val bundleBuildId: String = "anseronui-demo") : AndroidCoreTransport {
     override val runtimeEpoch = 1L
     private var handle = nativeOpen()
     init { check(handle != 0L) { "Unable to create native Core" } }

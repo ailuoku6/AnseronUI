@@ -33,6 +33,8 @@ pageView.destroy()
 
 标准 `Context` / `AttributeSet` 构造器也支持 XML 布局加载。页面名必须与编译进 Core 的页面清单匹配。
 
+`onPageBackgroundColor` 在成功提交后报告页面第一个根节点的目标背景色，包括后续更新和路由切换。独立 App 可用它同步 Activity 根容器背景，在透明系统栏后绘制页面颜色，同时保留内容 inset 并调整系统栏图标亮暗；嵌入式容器不会自行修改 Activity 窗口。透明背景由宿主决定底色，动画期间报告目标颜色。
+
 ## 尺寸与生命周期
 
 - `load(page)` 可在首次布局前调用，宽高都大于零时才启动 Core。

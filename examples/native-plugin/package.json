@@ -1,0 +1,15 @@
+{
+  "name": "@anseronui/example-device",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src", "ios", "android", "web"],
+  "peerDependencies": { "anseronui": "^0.0.1" },
+  "anseronui": {
+    "schemaVersion": 1,
+    "typescript": "src/index.ts",
+    "ios": { "sources": ["ios"], "factory": "AnseronDevicePlugin", "frameworks": ["UIKit"] },
+    "android": { "sources": ["android"], "factory": "org.anseronui.device.DevicePlugin" },
+    "web": { "entry": "web/index.ts" }
+  }
+}

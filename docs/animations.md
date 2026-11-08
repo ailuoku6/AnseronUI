@@ -1,6 +1,6 @@
 # 动画
 
-AnseronUI 的动画参考 Kuikly 的状态到属性模型：Core 只提交目标样式、最终布局和动画参数，iOS 的 `CADisplayLink`、Android 的 `Choreographer`、Web 的 `requestAnimationFrame` 在平台端插值。动画期间不逐帧调用 TSX，不逐帧通过桥传输属性，也不逐帧运行 Flexily。
+AnseronUI 的动画采用状态到属性模型：Core 只提交目标样式、最终布局和动画参数，iOS 的 `CADisplayLink`、Android 的 `Choreographer`、Web 的 `requestAnimationFrame` 在平台端插值。动画期间不逐帧调用 TSX，不逐帧通过桥传输属性，也不逐帧运行 Flexily。
 
 组件页右上角的「动画」提供声明式展开/收起、ref 串行与取消、延迟往返循环三个示例。完整代码见 `examples/components/animation-showcase.tsx`。
 
@@ -87,7 +87,7 @@ async function play() {
 
 ## 当前边界
 
-这是常用属性动画的首版，并未完整复制 Kuikly 的 API：暂不提供子树动画作用域、单节点独立多轨时间线、关键帧、3D 变换、路径动画、暂停/恢复/seek，以及声明式结束回调。需要准确编排完成、取消与串行操作时使用 ref Promise API。布局宽高动画通过更新原生 view 的布局实现，比纯透明度/变换动画更昂贵，大列表中应优先使用变换。
+这是常用属性动画的首版：暂不提供子树动画作用域、单节点独立多轨时间线、关键帧、3D 变换、路径动画、暂停/恢复/seek，以及声明式结束回调。需要准确编排完成、取消与串行操作时使用 ref Promise API。布局宽高动画通过更新原生 view 的布局实现，比纯透明度/变换动画更昂贵，大列表中应优先使用变换。
 
 协议 minor 已更新为 1.3；新增 `animation` 配置以 JSON 字符串放入 `SetProps`，新增变换为数值属性；命令式调用沿用 `__view` 模块，不新增逐帧协议消息。更新业务 bundle 时需要同时更新三端 renderer。
 
