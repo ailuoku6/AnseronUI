@@ -25,7 +25,10 @@ export const sdkAliases = Object.fromEntries([
 ]);
 export function sdkFiles(root) {
   const vendor = JSON.parse(readFileSync(join(root, 'internal/toolchain/scriptc.vendor.json'), 'utf8'));
-  const result = [...files, ...vendor.sdkFiles.map(path => `internal/toolchain/scriptc/${path}`)];
+  // npm strips ignore files from archives. They are checkout metadata, not
+  // compiler inputs, so exclude them from copying and fingerprinting alike.
+  const vendorFiles = vendor.sdkFiles.filter(path => !/(^|\/)\.(npmignore|gitignore)$/.test(path));
+  const result = [...files, ...vendorFiles.map(path => `internal/toolchain/scriptc/${path}`)];
   function walk(path) {
     for (const entry of readdirSync(join(root, path), { withFileTypes: true })) {
       if (['AGENTS.md', '.DS_Store', '__pycache__', 'node_modules', 'test', 'tests'].includes(entry.name)) continue;

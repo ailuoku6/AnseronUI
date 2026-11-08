@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 const root = resolve('.');
 function run(cmd, args, cwd = root, env = process.env) {
@@ -11,7 +12,7 @@ function run(cmd, args, cwd = root, env = process.env) {
   assert.equal(result.status, 0, `${cmd} ${args.join(' ')}\n${result.stdout}\n${result.stderr}`);
   return result.stdout;
 }
-test('packed SDK creates a portable app with all native templates and no private workspace imports', () => {
+test('packed SDK creates a portable app with all native templates and no private workspace imports', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'anseronui npm package '));
   try {
     // publish --dry-run passes npm_config_dry_run to lifecycle scripts. This local
@@ -59,6 +60,16 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(existsSync(join(app, '.gitignore')));
     assert.match(readFileSync(join(app, 'src/pages/home.tsx'), 'utf8'), /from "anseronui\/ui"/);
     const sdk = join(directory, 'package/dist/sdk');
+    // Exercise setup's file reads against the actual npm archive: npm can
+    // strip metadata that was present in dist/sdk before packing.
+    const { sdkFiles, sdkFingerprint, copySDK } = await import(pathToFileURL(join(sdk, 'scripts/sdk-files.mjs')).href);
+    for (const path of sdkFiles(sdk)) {
+      assert.ok(existsSync(join(sdk, path)), `Missing SDK input after npm pack: ${path}`);
+    }
+    assert.match(sdkFingerprint(sdk), /^[a-f0-9]{64}$/);
+    const stagedSDK = join(directory, 'staged-sdk');
+    copySDK(sdk, stagedSDK);
+    assert.equal(sdkFingerprint(stagedSDK), sdkFingerprint(sdk));
     assert.doesNotMatch(readFileSync(join(sdk, 'scripts/prepare-compiler.mjs'), 'utf8'), /run\('git'|spawnSync\('git'/);
     assert.doesNotMatch(readFileSync(join(sdk, 'packages/render-web/src/reference-host.ts'), 'utf8'), /["']@anseronui\//);
     // The TSX lowerer must still emit a known alias into the AOT staging tree.
