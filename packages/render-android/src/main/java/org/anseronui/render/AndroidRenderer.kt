@@ -3,6 +3,7 @@ package org.anseronui.render
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.content.res.ColorStateList
+import android.util.TypedValue
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
@@ -228,6 +229,14 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         setPadding((12 * density).roundToInt(), (6 * density).roundToInt(), (12 * density).roundToInt(), (6 * density).roundToInt())
     }
 
+    private fun themeColor(attribute: Int, fallback: Int): Int {
+        val value = TypedValue()
+        return if (root.context.theme.resolveAttribute(attribute, value, true)) {
+            if (value.resourceId != 0) runCatching { root.context.getColor(value.resourceId) }.getOrDefault(fallback)
+            else value.data
+        } else fallback
+    }
+
     /** Call on the UI thread; real controls measure their own text and padding. */
     fun measure(kind: String, text: String, fontSize: Float, maxWidth: Float, props: JSONObject? = null): TextSize {
         require(Looper.myLooper() == Looper.getMainLooper()) { "Measurement must run on the UI thread" }
@@ -451,7 +460,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         background.setStroke((props.optDouble("borderWidth", 0.0) * density).roundToInt(), parseColor(props.optString("borderColor", ""), Color.TRANSPARENT))
         if (view is TextView) {
             view.textSize = props.optDouble("fontSize", 16.0).toFloat()
-            view.setTextColor(parseColor(props.optString("color", ""), if (record.kind == "Button") Color.rgb(0, 122, 255) else Color.BLACK))
+            view.setTextColor(parseColor(props.optString("color", ""), if (record.kind == "Button") Color.rgb(0, 122, 255) else themeColor(android.R.attr.textColorPrimary, Color.BLACK)))
             view.typeface = android.graphics.Typeface.create(view.typeface, if (props.optString("fontWeight") == "bold") android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
             if (props.optString("fontStyle") == "italic") view.setTypeface(view.typeface, android.graphics.Typeface.ITALIC)
             view.gravity = when (props.optString("textAlign")) { "center" -> android.view.Gravity.CENTER_HORIZONTAL; "right" -> android.view.Gravity.RIGHT; else -> android.view.Gravity.LEFT }
@@ -511,7 +520,10 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 }
                 "TextInput" -> {
                     val input = view as EditText
+                    input.background = null
+                    input.setPadding(0, 0, 0, 0)
                     input.hint = props.optString("placeholder", "")
+                    input.setHintTextColor(parseColor(props.optString("placeholderTextColor", ""), themeColor(android.R.attr.textColorHint, Color.GRAY)))
                     input.isEnabled = props.optBoolean("editable", true)
                     input.isSingleLine = true
                     input.inputType = if (props.optBoolean("secureTextEntry")) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD else when (props.optString("keyboardType")) {
@@ -562,7 +574,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         if (view is AndroidVideoView) {
             val previous = view.props
             view.props = JSONObject(props.toString())
-            view.resizeMode = props.optString("resizeMode", "contain")
+            view.resizeMode = props.optString("resizeMode", "cover")
             view.clipToOutline = props.optDouble("borderRadius", 0.0) > 0
             view.requestLayout()
             val video = view.player

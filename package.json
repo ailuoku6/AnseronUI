@@ -59,7 +59,7 @@
     "@scriptc/runtime-darwin-arm64": "0.4.8",
     "@scriptc/runtime-wasm32-wasi": "0.4.8"
   },
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Create and build AnseronUI apps for iOS, Android and Web from shared TSX pages",
   "license": "MIT",
   "repository": {

@@ -17,7 +17,7 @@ internal class AndroidVideoView(context: Context) : FrameLayout(context) {
     }
     var videoWidth = 0
     var videoHeight = 0
-    var resizeMode = "contain"
+    var resizeMode = "cover"
     var prepared = false
     var firstFrame = false
     var appliedControl: String? = null

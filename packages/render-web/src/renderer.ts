@@ -199,6 +199,16 @@ export class DOMRenderer {
           font: "16px system-ui, -apple-system, BlinkMacSystemFont, sans-serif", cursor: "pointer",
         });
       }
+      if (command.kind === "TextInput") {
+        Object.assign(element.style, {
+          appearance: "none", boxSizing: "border-box", border: "0", borderRadius: "0",
+          outline: "none", background: "transparent", padding: "0",
+          font: "16px system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+        });
+      }
+      if (command.kind === "Text" || command.kind === "RichText") {
+        element.style.fontFamily = "system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
+      }
       const record: NodeRecord = { element, animation: new NodeAnimation(values => paintElement(element, values)), native, kind: command.kind, enabled: new Set(), composing: false, inputRevision: 0, pendingInputRevision: 0, pendingValue: null };
       this.records.set(command.nodeId, record);
       element.dataset.tsnNode = String(command.nodeId);
@@ -376,7 +386,8 @@ export class DOMRenderer {
       input.autocomplete = props.autoCorrect === false ? "off" : "on";
       input.inputMode = ({ numeric: "numeric", "decimal-pad": "decimal", "phone-pad": "tel", "email-address": "email", url: "url" } as Record<string, string>)[String(props.keyboardType)] ?? "text";
       input.placeholder = String(props.placeholder ?? "");
-      input.style.setProperty("--placeholder-color", String(props.placeholderTextColor ?? ""));
+      if (props.placeholderTextColor !== undefined) input.style.setProperty("--placeholder-color", String(props.placeholderTextColor));
+      else input.style.removeProperty("--placeholder-color");
       input.style.setProperty("color-scheme", "light dark");
     }
   }
