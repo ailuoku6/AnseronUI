@@ -37,7 +37,7 @@ npm run test:layout
 npm run test:layout:upstream
 ```
 
-`test:layout` 使用锁定的 scriptc 0.4.8，重建固定提交上游，比较原版 Node、适配版 Node、适配版 native 的两组历史布局探针，并额外验证 engine 和 native library/C host。所有生成产物留在根目录 `.verification/layout/`，最终摘要在 `summary.json`。当前验证脚本通过本地 `packages/flexily/.git` 中的固定提交重建原版差分参照；没有该 Git 对象时会明确失败。`.git` 是本地验证前置条件，不应作为文件提交到父仓库，源码发布时也不会随普通目录一起分发。源码副本缺少它时，可按下方步骤补齐。
+`test:layout` 使用锁定的 scriptc 0.4.8，重建固定提交上游，比较原版 Node、适配版 Node、适配版 native 的两组历史布局探针，并额外验证 engine 和 native library/C host。所有生成产物留在根目录 `.verification/layout/`，最终摘要在 `summary.json`。验证脚本从 `packages/flexily/UPSTREAM-scriptc-adaptation.json` 读取来源，将固定提交自动获取到 `.verification/layout/upstream.git`，再重建原版差分参照。首次获取需要联网；缓存存在后可离线运行。
 
 `npm run test:layout:wasm` 进一步编译同一 library profile 为 Wasm reactor，并通过 Node 的真实 WASI Preview 1 宿主运行、比较输出，需要 PATH 中有 `zig`。该验证不等于浏览器 DOM 或移动端 UI 接入。
 
@@ -49,16 +49,14 @@ npm run bench:layout -- --testNamePattern='^(?!.*Flexily: 5000 nodes)'
 
 上式明确排除已知耗时异常的 5000 节点创建项；如要完整基准，去掉筛选。Node 基准不能替代 native/Wasm 性能测试，当前不作跨端性能或小于 5% 回退承诺。跨端宿主文本、移动端 library、浏览器宿主与长期 RC 行为需分别验收，不能由 macOS executable 或 Node WASI 通过推导。
 
-## 源码发行包的上游验证前置条件
+## 源码管理与上游验证
 
-如果 `packages/flexily/.git` 不存在，在框架根目录执行以下命令，只初始化本地参照历史，不 checkout 或 reset 已适配源码：
+`packages/flexily` 是主仓库直接跟踪源码的普通 workspace 包。上游 Git 历史仅用于差分验证，由脚本保存在忽略的 `.verification/` 目录中。在框架根目录执行：
 
 ```sh
-git -C packages/flexily init
-git -C packages/flexily fetch --depth=1 https://github.com/beorn/flexily.git 4850f1fb475f8147458059b45fb4f148d14a6ab4
 npm run test:layout
 ```
 
-获取上游对象需要联网。已有本地 clone 时无需重复初始化。父仓库应将适配源码作为普通文件提交，避免误添加成没有 `.gitmodules` 的 gitlink；不要提交本地 Git 元数据。实际使用入口仍为 `@anseronui/layout`，不是上游完整组合 API。
+删除 `.verification/layout/upstream.git` 后，下次运行会重新获取固定提交。实际使用入口仍为 `@anseronui/layout`，不是上游完整组合 API。
 
 更多入口：[中文文档](../../docs/README.md) · [能力清单](../../docs/capabilities.md) · [架构与原理](../../docs/architecture.md)。

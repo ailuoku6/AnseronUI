@@ -36,16 +36,19 @@ summary.compiler = run(cli, ["--version"]).stdout.toString().trim();
 if (summary.compiler !== "0.4.8") throw new Error("Expected locked scriptc 0.4.8, got " + summary.compiler);
 run(join(root, "node_modules/.bin/tsc"), ["--noEmit", "-p", "packages/layout/tsconfig.json"]);
 
-// Reconstruct the pinned upstream without changing the adapted checkout.
+// Keep the upstream reference history outside the ordinary workspace package.
 const provenance = JSON.parse(readFileSync(join(flexily, "UPSTREAM-scriptc-adaptation.json"), "utf8"));
 const original = join(output, "upstream");
 mkdirSync(original, { recursive: true });
-if (existsSync(join(flexily, ".git"))) {
-  const archive = run("git", ["-C", flexily, "archive", provenance.commit]).stdout;
-  run("tar", ["-x", "-C", original], { input: archive });
-} else {
-  throw new Error("The pinned Flexily git clone is required to reproduce the upstream differential");
+const upstreamGit = join(output, "upstream.git");
+if (!existsSync(upstreamGit)) run("git", ["init", "--bare", upstreamGit]);
+const cachedCommit = spawnSync("git", ["--git-dir", upstreamGit, "cat-file", "-e", provenance.commit + "^{commit}"], { cwd: root });
+if (cachedCommit.error) throw cachedCommit.error;
+if (cachedCommit.status !== 0) {
+  run("git", ["--git-dir", upstreamGit, "fetch", "--depth=1", provenance.repository, provenance.commit]);
 }
+const archive = run("git", ["--git-dir", upstreamGit, "archive", provenance.commit]).stdout;
+run("tar", ["-x", "-C", original], { input: archive });
 
 for (const name of ["probe-layout", "probe-advanced"]) {
   const historical = join(root, "internal/experiments/flexily-scriptc");

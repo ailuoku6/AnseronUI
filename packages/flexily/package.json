@@ -1,0 +1,60 @@
+{
+  "name": "@anseronui/flexily",
+  "version": "0.8.5-anseronui.1",
+  "private": true,
+  "description": "Pure JavaScript flexbox layout engine — composable plugins, text measurement, Yoga-compatible API, no WASM",
+  "keywords": [
+    "canvas-ui",
+    "css",
+    "flexbox",
+    "layout",
+    "measure",
+    "pure-javascript",
+    "terminal",
+    "tui",
+    "ui-layout",
+    "yoga",
+    "yoga-alternative",
+    "yoga-wasm",
+    "zero-dependency"
+  ],
+  "homepage": "https://beorn.codes/flexily/",
+  "bugs": {
+    "url": "https://github.com/beorn/flexily/issues"
+  },
+  "license": "MIT",
+  "author": "Bjørn Stabell <bjorn@stabell.org>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/beorn/flexily.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index-scriptc.ts",
+    "./upstream": "./src/index.ts",
+    "./classic": "./src/index-classic.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.scriptc.json"
+  },
+  "peerDependencies": {
+    "debug": "^4.4.3",
+    "loggily": "^0.13.0"
+  },
+  "peerDependenciesMeta": {
+    "debug": {
+      "optional": true
+    },
+    "loggily": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "bun": ">=1.0",
+    "node": ">=18.0.0"
+  }
+}
