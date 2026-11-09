@@ -20,7 +20,7 @@
     "pretypecheck:framework": "npm run lower:counter",
     "typecheck:framework": "tsc --noEmit -p tsconfig.framework.json",
     "test:framework": "vitest run --config scripts/framework.vitest.config.ts",
-    "test:build": "node --test scripts/core-inputs.test.mjs scripts/lower-timers.test.mjs",
+    "test:build": "node --test scripts/core-inputs.test.mjs scripts/lower-timers.test.mjs scripts/compiler-sdk.test.mjs",
     "test:tooling": "node --test scripts/anseronui.test.mjs scripts/native-plugins.test.mjs",
     "lower:counter": "node --import tsx scripts/lower-tsx.mjs examples/counter/page.tsx .verification/framework/counter.ts",
     "dev:counter": "vite --config examples/counter/vite.config.ts",
@@ -59,7 +59,7 @@
     "@scriptc/runtime-darwin-arm64": "0.4.8",
     "@scriptc/runtime-wasm32-wasi": "0.4.8"
   },
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Create and build AnseronUI apps for iOS, Android and Web from shared TSX pages",
   "license": "MIT",
   "repository": {
