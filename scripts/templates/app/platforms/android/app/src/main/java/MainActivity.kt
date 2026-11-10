@@ -17,6 +17,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        AnseronUILinks.receive(intent); AnseronUINotifications.receiveIntent(this, intent)
         // Draw the root background behind transparent system bars; inset only the TSX content.
         if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
         else window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
@@ -68,6 +69,8 @@ class MainActivity : Activity() {
         if (content.pop()) return
         super.onBackPressed()
     }
+
+    override fun onNewIntent(intent: android.content.Intent) { super.onNewIntent(intent); setIntent(intent); AnseronUILinks.receive(intent); AnseronUINotifications.receiveIntent(this, intent) }
 
     override fun onDestroy() { content.destroy(); super.onDestroy() }
 

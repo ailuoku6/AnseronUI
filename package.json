@@ -46,7 +46,11 @@
     "test:browser:split": "node scripts/test-web-extensions.mjs split",
     "prepack": "node scripts/pack-sdk.mjs",
     "test:package": "node --test scripts/npm-package.test.mjs",
-    "prepublishOnly": "npm run typecheck:framework && npm run test:tooling && npm run test:build && npm run test:package"
+    "prepublishOnly": "npm run typecheck:framework && npm run test:tooling && npm run test:build && npm run test:package",
+    "build:core:macos": "node scripts/build-core.mjs macos-arm64",
+    "build:macos": "node scripts/build-app.mjs macos",
+    "macos": "npm run build:macos && open .verification/macos/App.app",
+    "test:macos": "node scripts/test-macos.mjs"
   },
   "devDependencies": {
     "@types/debug": "4.1.13",
@@ -59,8 +63,8 @@
     "@scriptc/runtime-darwin-arm64": "0.4.8",
     "@scriptc/runtime-wasm32-wasi": "0.4.8"
   },
-  "version": "0.0.5",
-  "description": "Create and build AnseronUI apps for iOS, Android and Web from shared TSX pages",
+  "version": "0.0.6",
+  "description": "Create and build AnseronUI apps for iOS, Android, macOS and Web from shared TSX pages",
   "license": "MIT",
   "repository": {
     "type": "git",

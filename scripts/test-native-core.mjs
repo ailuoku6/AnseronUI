@@ -43,6 +43,10 @@ async function settle(outputs) {
       if (!more.length) return;
       queue.push(...more); continue;
     }
+    if(p.type==='InvokeModule' && p.module==='router' && p.method==='getParams') {
+      const index = modules.indexOf(p); if (index >= 0) modules.splice(index, 1);
+      queue.push(...await send({ type: 'ModuleResult', requestId: p.requestId, ok: true, value: JSON.stringify({ source: 'host', message: '原生参数' }) }));
+    }
     if(p.type==='MeasureRequest') queue.push(...await send({type:'MeasureResult',requestId:p.requestId,nodeId:p.nodeId,width:Math.min(p.maxWidth,Math.ceil(p.text.length*p.fontSize*0.6+16)),height:p.fontSize*1.3+12,baseline:p.fontSize}));
     if(p.type==='Commit') queue.push(...await send({type:'CommitAck',revision:p.revision}));
   }
@@ -59,8 +63,17 @@ if (page==='counter') {
   node('text','Count: 0');
   await settle(await send({type:'Tap',nodeId:node('title','+1'),revision}));
   node('text','Count: 1');
+  node('text', '路由参数: ' + JSON.stringify({ source: 'host', message: '原生参数' }));
+  await settle(await send({ type: 'Tap', nodeId: node('title', '打开 Async Form'), revision }));
+  const navigation = modules.find(item => item.module === 'router' && item.method === 'push');
+  assert(navigation, 'Missing route push');
+  assert.deepEqual(JSON.parse(navigation.argument), { page: 'async-form', params: { source: 'counter', count: 1, message: '来自 Counter 的参数', options: { editable: true }, tags: ['路由', '示例'] } });
 } else if (page === 'extensions') {
   const byID = id => node('testID', id);
+  const scroll = [...nodes].find(([,props]) => props.testID === 'extensions-scroll');
+  const content = [...nodes].find(([,props]) => props.parent === scroll[0]);
+  assert(content[1].frame.height > scroll[1].frame.height + 1000, 'System examples must extend scrollable content');
+  assert(nodes.get(byID('native-info')).frame.height > 20, 'System example buttons retain usable height');
   const native = byID('extension-switch');
   assert.equal(nodes.get(native).kind, 'Native');
   assert.deepEqual(JSON.parse(nodes.get(native).nativeProps), {value:false});
@@ -85,6 +98,39 @@ if (page==='counter') {
   assert(!nodes.has(native));
   await settle(await send({type:'Tap',nodeId:node('title','检查卸载 ref'),revision}));
   node('text','状态: ref cleared / stale rejected');
+  // Exercise the typed service facade through real compiled AOT/Wasm code.
+  await settle(await send({type:'Tap',nodeId:byID('native-storage'),revision}));
+  call=modules.shift(); assert.equal(call.module,'capabilities'); assert.equal(JSON.parse(call.argument).module,'storage');
+  await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'true'}));
+  call=modules.shift(); assert.equal(call.module,'storage'); assert.equal(call.method,'set'); assert.equal(JSON.parse(call.argument).namespace,'showcase');
+  await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'null'}));
+  call=modules.shift(); assert.equal(call.method,'get');
+  await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:JSON.stringify('AOT storage verified')}));
+  assert(nodes.get(byID('native-status')).text.includes('AOT storage verified'));
+  await settle(await send({type:'Tap',nodeId:byID('native-info'),revision}));
+  call=modules.shift(); assert.equal(call.module,'capabilities');
+  await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'true'}));
+  for (const [module,value] of [['app',{name:'demo',version:'1',build:'1',applicationId:'test'}],['device',{platform:'test',version:'1',model:'test'}],['locale',{language:'zh',timezone:'Asia/Shanghai'}]]) {
+    call=modules.shift(); assert.equal(call.module,module); assert.equal(call.method,'getInfo');
+    await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:JSON.stringify(value)}));
+  }
+  assert(nodes.get(byID('native-status')).text.includes('Asia/Shanghai'));
+  await settle(await send({type:'Tap',nodeId:node('title','监听网络 / 窗口 / 主题 / 键盘 / 前后台 / 链接 / 传输'),revision}));
+  for (let i=0;i<7;i++) {
+    const index=modules.findIndex(item=>item.module==='capabilities'); assert(index>=0,'subscription capabilities '+JSON.stringify(modules));
+    call=modules.splice(index,1)[0];
+    await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:JSON.parse(call.argument).module==='network'?'true':'false'}));
+  }
+  call=modules.shift(); assert.equal(call.module,'events'); assert.equal(call.method,'next');
+  await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'{"connected":true,"type":"wifi"}'}));
+  assert(nodes.get(byID('native-events')).text.includes('network'), 'compiled subscription callback: '+nodes.get(byID('native-events')).text);
+  call=modules.shift(); assert.equal(call.module,'events'); assert.equal(call.method,'next');
+  await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'{"connected":false,"type":"none"}'}));
+  assert(nodes.get(byID('native-events')).text.includes('false'), 'compiled subscription receives subsequent events');
+  await settle(await send({type:'Tap',nodeId:node('title','停止环境监听'),revision}));
+  node('text','已停止监听'); modules.length=0;
+
+
 } else if (page === 'components') {
   assert.deepEqual([...new Set([...nodes.values()].map(props => props.kind))].sort(), requiredNodes.slice().sort());
   const byID = id => node('testID', id);

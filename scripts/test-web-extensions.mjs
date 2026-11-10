@@ -2,8 +2,8 @@ import {build} from 'esbuild';
 import {writeFile,mkdir,readFile} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 await mkdir('.verification',{recursive:true});
-const suite=['layout','split'].includes(process.argv[2])?process.argv[2]:'extensions';
-const entry=suite==='layout'?'verifyLayout':suite==='split'?'verifySplitTimers':'verifyExtensions';
+const suite=['layout','split','routing'].includes(process.argv[2])?process.argv[2]:'extensions';
+const entry=suite==='layout'?'verifyLayout':suite==='split'?'verifySplitTimers':suite==='routing'?'verifyRouting':'verifyExtensions';
 const encoded = suite === 'split' ? await Promise.all(['business','framework'].map(async kind => (await readFile(`.verification/${kind}-wasm/entry.wasm`)).toString('base64'))) : [];
 const args = encoded.map(text => `Uint8Array.from(atob(${JSON.stringify(text)}), c => c.charCodeAt(0))`).join(',');
 const result=await build({stdin:{contents:`import {${entry}} from './packages/render-web/test/${suite}.browser.ts';
@@ -28,7 +28,7 @@ let web = WKWebView(frame: NSRect(x:0,y:0,width:500,height:900),configuration:co
 ${suite==='split'?`let window = NSWindow(contentRect:NSRect(x:0,y:0,width:500,height:900),styleMask:[.borderless],backing:.buffered,defer:false)
 window.contentView = web
 window.orderFront(nil)
-`:''}web.loadHTMLString(try String(contentsOfFile: CommandLine.arguments[1],encoding:.utf8),baseURL:nil)
+`:''}web.loadHTMLString(try String(contentsOfFile: CommandLine.arguments[1],encoding:.utf8),baseURL:URL(string:"https://anseronui.test"))
 DispatchQueue.main.asyncAfter(deadline:.now()+30){print("WebKit timeout");exit(2)}
 app.run()
 `);

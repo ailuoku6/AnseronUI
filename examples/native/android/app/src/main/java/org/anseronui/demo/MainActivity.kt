@@ -15,6 +15,7 @@ class MainActivity : Activity() {
     private val availablePages: List<String> by lazy { readPages() }
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        AnseronUILinks.receive(intent); AnseronUINotifications.receiveIntent(this, intent)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         layout.setOnApplyWindowInsetsListener { view, insets ->
             view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
@@ -43,6 +44,8 @@ class MainActivity : Activity() {
         if (content.pop()) return
         super.onBackPressed()
     }
+    override fun onNewIntent(intent: android.content.Intent) { super.onNewIntent(intent); setIntent(intent); AnseronUILinks.receive(intent); AnseronUINotifications.receiveIntent(this, intent) }
+
     override fun onDestroy() { content.destroy(); super.onDestroy() }
     private fun readPages(): List<String> = runCatching {
         val json = assets.open("core.manifest.json").bufferedReader().use { JSONObject(it.readText()) }
@@ -72,4 +75,14 @@ private class DemoSwitch(context: Context, private val emit: (String, Any?) -> U
         complete(Result.success(JSONObject().put("value", control.isChecked))); return null
     }
     override fun dispose() { control.setOnCheckedChangeListener(null) }
+}
+
+class DemoApplication : android.app.Application() {
+    override fun onCreate() {
+        super.onCreate()
+        AnseronUIBackground.register("org.anseronui.demo.refresh") { context, complete ->
+            context.getSharedPreferences("anseronui.demo", 0).edit().putLong("lastBackgroundRun", System.currentTimeMillis()).apply()
+            complete(true); null
+        }
+    }
 }

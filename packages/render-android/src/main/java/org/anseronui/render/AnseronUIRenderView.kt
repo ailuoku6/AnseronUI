@@ -27,53 +27,67 @@ class AnseronUIRenderView @JvmOverloads constructor(
     var onFailure: (Throwable) -> Unit = {}
     var page: String? = null
         private set
-    val routeStack: List<String> get() = routes.toList()
+    val routeStack: List<String> get() = routes.map { it.page }
+    val routeParams: JSONObject get() = JSONObject(routes.lastOrNull()?.params ?: "{}")
     var isDestroyed = false
         private set
 
-    private var host: AndroidHost? = null
-    private var renderRoot: FrameLayout? = null
-    private var lastSize: Pair<Float, Float>? = null
-    private var generation = 0L
-    private var failed = false
-    private val routes = mutableListOf<String>()
+    private val host: AndroidHost? get() = routes.lastOrNull()?.host
+    private val renderRoot: FrameLayout? get() = routes.lastOrNull()?.root
+    private class Route(val page: String, val params: String) {
+        var host: AndroidHost? = null
+        var root: FrameLayout? = null
+        var lastSize: Pair<Float, Float>? = null
+        var failed = false
+        var disposed = false
+        var color: Int? = null
+    }
+    private val routes = mutableListOf<Route>()
+    private fun snapshot(params: JSONObject): String {
+        val encoded = params.toString()
+        require(encoded.toByteArray(Charsets.UTF_8).size <= 48000) { "ROUTE_PARAMS_TOO_LARGE" }
+        return encoded
+    }
 
     /** Replaces the previous page. The new instance starts once the view has a nonzero size. */
-    fun load(page: String) {
+    @JvmOverloads fun load(page: String, params: JSONObject = JSONObject()) {
         requireMainThread()
         check(!isDestroyed) { "Container is destroyed" }
         require(page.isNotBlank()) { "Page must not be blank" }
-        routes.clear(); routes.add(page)
+        val entry = Route(page, snapshot(params)); retireAllPages(); routes.add(entry)
         loadCurrentPage()
     }
 
     /** Pushes a page while preserving the current route for pop/back. */
-    fun push(page: String) {
+    @JvmOverloads fun push(page: String, params: JSONObject = JSONObject()) {
         requireMainThread(); check(!isDestroyed); require(page.isNotBlank())
-        routes.add(page); loadCurrentPage()
+        val entry = Route(page, snapshot(params))
+        renderRoot?.let { removeView(it) }; routes.add(entry); loadCurrentPage()
     }
 
     /** Replaces the current route entry. */
-    fun replace(page: String) {
+    @JvmOverloads fun replace(page: String, params: JSONObject = JSONObject()) {
         requireMainThread(); check(!isDestroyed && routes.isNotEmpty()); require(page.isNotBlank())
-        routes[routes.lastIndex] = page; loadCurrentPage()
+        val entry = Route(page, snapshot(params))
+        retirePage(routes.removeAt(routes.lastIndex)); routes.add(entry); loadCurrentPage()
     }
 
     /** Pops the current route, returning false when already at the root. */
     fun pop(): Boolean {
         requireMainThread()
         if (isDestroyed || routes.size <= 1) return false
-        routes.removeAt(routes.lastIndex); loadCurrentPage(); return true
+        retirePage(routes.removeAt(routes.lastIndex)); loadCurrentPage(); return true
     }
 
     /** Called by Activity/Fragment before applying its default back behavior. */
     fun handleBackPress(): Boolean = host?.handleBackPress() == true
 
     private fun loadCurrentPage() {
-        val page = routes.lastOrNull() ?: return
-        retirePage()
-        this.page = page
-        renderRoot = FrameLayout(context).also { addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)) }
+        val entry = routes.lastOrNull() ?: return
+        page = entry.page
+        val root = entry.root ?: FrameLayout(context).also { entry.root = it }
+        if (root.parent == null) addView(root, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        entry.color?.let { onPageBackgroundColor(it) }
         requestLayout()
     }
 
@@ -87,60 +101,70 @@ class AnseronUIRenderView @JvmOverloads constructor(
         requireMainThread()
         if (isDestroyed) return
         isDestroyed = true
-        retirePage()
+        retireAllPages()
         page = null
-        routes.clear()
     }
 
-    private fun retirePage() {
-        generation++
-        host?.destroy()
-        host = null
-        renderRoot?.let { removeView(it) }
-        renderRoot = null
-        lastSize = null
-        failed = false
+    private fun retirePage(entry: Route) {
+        entry.disposed = true
+        entry.host?.destroy(); entry.host = null
+        entry.root?.let { removeView(it) }; entry.root = null
+    }
+    private fun retireAllPages() {
+        val old = routes.toList(); routes.clear(); old.forEach { retirePage(it) }
     }
 
     private fun synchronizeSize() {
-        if (isDestroyed || failed) return
-        val page = page ?: return
-        val root = renderRoot ?: return
+        if (isDestroyed) return
+        val entry = routes.lastOrNull() ?: return
+        if (entry.failed) return
+        val page = entry.page
+        val root = entry.root ?: return
         val density = resources.displayMetrics.density
         val size = root.width / density to root.height / density
         val currentHost = host
         if (currentHost != null) {
-            if (size != lastSize) {
-                lastSize = size
+            if (size != entry.lastSize) {
+                entry.lastSize = size
                 currentHost.resize(size.first, size.second)
             }
             return
         }
         if (size.first <= 0 || size.second <= 0) return
-        val currentGeneration = generation
         val nextHost = AndroidHost(root, createCore, baseUrl, extensions = extensions, router = { method, args ->
-            val pageArg = (args as? JSONObject)?.optString("page", "")
-            when (method) {
-                "push" -> { if (pageArg.isNullOrBlank()) error("INVALID_ROUTE"); AndroidRouteResult(JSONObject.NULL) { push(pageArg) } }
-                "replace" -> { if (pageArg.isNullOrBlank()) error("INVALID_ROUTE"); AndroidRouteResult(JSONObject.NULL) { replace(pageArg) } }
-                "pop", "back" -> { if (routes.size <= 1) error("ROUTER_EMPTY"); AndroidRouteResult(JSONObject.NULL) { pop() } }
-                "current" -> AndroidRouteResult(routes.lastOrNull() ?: JSONObject.NULL)
-                else -> error("UNSUPPORTED_METHOD: $method")
+            check(!isDestroyed && !entry.disposed) { "SURFACE_DISPOSED" }
+            if (method == "getParams") AndroidRouteResult(JSONObject(entry.params))
+            else if (method == "current") AndroidRouteResult(entry.page)
+            else {
+                check(routes.lastOrNull() === entry) { "INACTIVE_ROUTE" }
+                val pageArg = (args as? JSONObject)?.optString("page", "")
+                val rawParams = (args as? JSONObject)?.opt("params")
+                require(rawParams == null || rawParams is JSONObject) { "INVALID_ROUTE_PARAMS" }
+                val params = rawParams as? JSONObject ?: JSONObject()
+                snapshot(params)
+                when (method) {
+                    "push" -> { if (pageArg.isNullOrBlank()) error("INVALID_ROUTE"); AndroidRouteResult(JSONObject.NULL) { if (routes.lastOrNull() === entry) push(pageArg, params) } }
+                    "replace" -> { if (pageArg.isNullOrBlank()) error("INVALID_ROUTE"); AndroidRouteResult(JSONObject.NULL) { if (routes.lastOrNull() === entry) replace(pageArg, params) } }
+                    "pop", "back" -> { if (routes.size <= 1) error("ROUTER_EMPTY"); AndroidRouteResult(JSONObject.NULL) { if (routes.lastOrNull() === entry) pop() } }
+                    "getParams" -> AndroidRouteResult(routeParams)
+                    "current" -> AndroidRouteResult(routes.lastOrNull()?.page ?: JSONObject.NULL)
+                    else -> error("UNSUPPORTED_METHOD: $method")
+                }
             }
         },
-            onReady = { if (!isDestroyed && generation == currentGeneration) onReady() },
-            onDiagnostic = { code, message -> if (!isDestroyed && generation == currentGeneration) onDiagnostic(code, message) },
+            onReady = { if (!isDestroyed && routes.lastOrNull() === entry) onReady() },
+            onDiagnostic = { code, message -> if (!isDestroyed && routes.lastOrNull() === entry) onDiagnostic(code, message) },
             onFailure = { error ->
-                if (!isDestroyed && generation == currentGeneration) {
-                    failed = true
-                    onFailure(error)
+                if (!isDestroyed && !entry.disposed) {
+                    entry.failed = true
+                    if (routes.lastOrNull() === entry) onFailure(error)
                 }
             })
-        host = nextHost
+        entry.host = nextHost
         nextHost.renderer.onPageBackgroundColor = { color ->
-            if (!isDestroyed && generation == currentGeneration) onPageBackgroundColor(color)
+            if (!entry.disposed) { entry.color = color; if (!isDestroyed && routes.lastOrNull() === entry) onPageBackgroundColor(color) }
         }
-        lastSize = size
+        entry.lastSize = size
         nextHost.start(page, size.first, size.second)
     }
 

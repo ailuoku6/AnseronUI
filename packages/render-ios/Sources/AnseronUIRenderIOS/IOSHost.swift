@@ -226,10 +226,12 @@ private final class CoreWorker {
     private var destroyed = false
     private let extensions: IOSPlatformExtensions
     private let router: IOSRouteHandler?
+    private let standardServices: StandardServices
     private var extensionRequests: [UInt32: () -> Void] = [:]
 
     public init(root: UIView, baseURL: URL? = nil, extensions: IOSPlatformExtensions? = nil, router: IOSRouteHandler? = nil, createCore: @escaping () throws -> IOSCoreTransport) {
         let registry = extensions ?? IOSPlatformExtensions()
+        self.standardServices = StandardServices(root: root, baseURL: baseURL, sources: registry.subscriptions)
         self.extensions = registry
         self.router = router
         renderer = IOSRenderer(root: root, extensions: registry)
@@ -274,9 +276,11 @@ private final class CoreWorker {
 
     public func resize(width: Double, height: Double) {
         precondition(started && !destroyed && width.isFinite && height.isFinite && width >= 0 && height >= 0)
+        standardServices.changed()
         worker.send(["type": "Resize", "width": width, "height": height])
     }
 
+    public func environmentChanged() { standardServices.changed() }
     public func wake() { worker.wake() }
     /// Synchronously asks Core whether the current TSX page consumed system back.
     public func handleBackPress() -> Bool { worker.backPress() }
@@ -291,6 +295,7 @@ private final class CoreWorker {
     deinit { worker.stop() }
 
     private func cancelExtensions() {
+        standardServices.dispose()
         let requests = extensionRequests; extensionRequests.removeAll()
         requests.values.forEach { $0() }
     }
@@ -323,8 +328,8 @@ private final class CoreWorker {
                 if let navigate = result.navigate { DispatchQueue.main.async { navigate() } }
                 cancel = nil
             } else {
-                guard let handler = extensions.modules[module] else { throw NativeExtensionError.unsupportedModule(module) }
-                cancel = try handler(method, args, completion)
+                if let handler = extensions.modules[module], !standardServices.handles(module, method) { cancel = try handler(method, args, completion) }
+                else { cancel = try standardServices.invoke(module, method, args, completion) }
             }
             if extensionRequests[id] != nil { extensionRequests[id] = cancel ?? {} }
         } catch { completion(.failure(error)) }

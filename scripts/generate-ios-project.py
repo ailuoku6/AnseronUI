@@ -14,6 +14,9 @@ build_files = []
 for path, filetype in [
     ('App.swift', 'sourcecode.swift'),
     ('../../../packages/render-ios/Sources/AnseronUIRenderIOS/Extensions.swift', 'sourcecode.swift'),
+    ('../../../packages/render-ios/Sources/AnseronUIRenderIOS/StandardServices.swift', 'sourcecode.swift'),
+    ('../../../packages/render-ios/Sources/AnseronUIRenderIOS/ApplicationServices.swift', 'sourcecode.swift'),
+    ('../../../packages/render-ios/Sources/AnseronUIRenderIOS/RadioServices.swift', 'sourcecode.swift'),
     ('../../../packages/render-ios/Sources/AnseronUIRenderIOS/Renderer.swift', 'sourcecode.swift'),
     ('../../../packages/render-ios/Sources/AnseronUIRenderIOS/Animation.swift', 'sourcecode.swift'),
     ('../../../packages/render-ios/Sources/AnseronUIRenderIOS/IOSHost.swift', 'sourcecode.swift'),

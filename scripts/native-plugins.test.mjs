@@ -66,7 +66,7 @@ test('rejects invalid schemas, missing sources, escaping paths and unsupported t
   const f = fixture();
   try {
     for (const mutate of [
-      spec => { spec.schemaVersion = 2; },
+      spec => { spec.schemaVersion = 3; },
       spec => { spec.ios.factory = 'Bad();'; },
       spec => { delete spec.ios.factory; },
       spec => { spec.android.permissions = ['camera"/>']; },
@@ -144,14 +144,14 @@ test('example plugin survives npm pack and offline tarball installation with all
     const pack = spawnSync('npm', ['pack', '--json', '--ignore-scripts', '--cache', cache, '--pack-destination', app], {cwd: join(root, 'examples/native-plugin'), encoding:'utf8'});
     assert.equal(pack.status, 0, pack.stderr);
     const [metadata] = JSON.parse(pack.stdout);
-    for (const file of ['src/index.ts', 'ios/DevicePlugin.swift', 'android/DevicePlugin.kt', 'web/index.ts']) assert.ok(metadata.files.some(entry => entry.path === file), file);
+    for (const file of ['macos/DevicePlugin.swift', 'src/index.ts', 'ios/DevicePlugin.swift', 'android/DevicePlugin.kt', 'web/index.ts']) assert.ok(metadata.files.some(entry => entry.path === file), file);
     write(join(app, 'package.json'), {name:'plugin-consumer', private:true});
     write(join(app, 'anseronui.config.json'), {schemaVersion:2});
     const install = spawnSync('npm', ['install', join(app, metadata.filename), '--offline', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund', '--cache', cache], {cwd:app, encoding:'utf8'});
     assert.equal(install.status, 0, install.stderr);
     const plugins = discoverNativePlugins(app);
     assert.deepEqual(plugins.map(plugin => plugin.name), ['@anseronui/example-device']);
-    for (const target of ['ios', 'android', 'web']) generateNativePlugins(app, plugins, target);
+    for (const target of ['ios', 'android', 'web', 'macos']) generateNativePlugins(app, plugins, target);
   } finally { rmSync(app, {recursive:true, force:true}); }
 });
 
@@ -168,5 +168,38 @@ test('generated Web registry runs adapters and rejects duplicate or reserved reg
     write(join(f.plugin, 'web/index.ts'), 'export function createExtensions() { return { modules: {http() {return null;}}}; }');
     generateNativePlugins(f.app, plugins);
     const reserved = run(); assert.notEqual(reserved.status, 0); assert.match(reserved.stderr, /Duplicate or reserved native module: http/);
+    write(join(f.plugin, 'web/index.ts'), "export function createExtensions() { return { modules: {device(){return 'web'}}, subscriptions: {'demo.tick': emit => {emit({value:42});return ()=>{};}}}; }");
+    generateNativePlugins(f.app, plugins);
+    const subscriptionScript = `import {createPluginExtensions} from ${JSON.stringify(join(directory,'web.ts'))};createPluginExtensions().subscriptions['demo.tick'](result=>console.log(result.value));`;
+    const subscription = spawnSync(process.execPath, ['--import','tsx','--input-type=module','-e',subscriptionScript], {cwd:root,encoding:'utf8'});
+    assert.equal(subscription.status, 0, subscription.stderr); assert.equal(subscription.stdout.trim(), '42');
+    write(join(f.plugin, 'web/index.ts'), "export function createExtensions() { return { subscriptions: {'demo.tick': () => ()=>{}}}; }");
+    generateNativePlugins(f.app, [...plugins, ...plugins]);
+    const duplicateSource = run(); assert.notEqual(duplicateSource.status, 0); assert.match(duplicateSource.stderr, /Duplicate native subscription: demo.tick/);
+
+  } finally { f.cleanup(); }
+});
+
+test('schema 2 explicitly registers AppKit plugins while schema 1 keeps its original boundary', () => {
+  const f = fixture();
+  try {
+    write(join(f.plugin,'macos/DevicePlugin.swift'), 'import AppKit\n@MainActor enum MacDevicePlugin { static func createExtensions() -> MacOSPlatformExtensions { MacOSPlatformExtensions() } }');
+    f.manifest.anseronui.macos = { sources:['macos'], factory:'MacDevicePlugin', frameworks:['AppKit'], infoPlist:{NSCameraUsageDescription:'Mac camera'} };
+    write(join(f.plugin,'package.json'),f.manifest);
+    assert.throws(() => discoverNativePlugins(f.app), /unknown field macos/);
+    f.manifest.anseronui.schemaVersion = 2;
+    write(join(f.plugin,'package.json'),f.manifest);
+    const plugins = discoverNativePlugins(f.app);
+    const directory = generateNativePlugins(f.app,plugins,'macos');
+    assert.match(readFileSync(join(directory,'GeneratedMacOSPlugins.swift'),'utf8'),/MacDevicePlugin.createExtensions/);
+    assert.match(readFileSync(join(directory,'GeneratedMacOSPlugins.swift'),'utf8'),/MacOSPlatformExtensions/);
+    const config = JSON.parse(readFileSync(join(directory,'macos.json'),'utf8'));
+    assert.deepEqual(config.frameworks,['AppKit']);
+    assert.equal(config.infoPlist.NSCameraUsageDescription,'Mac camera');
+    assert.equal(config.sources[0],join(f.plugin,'macos/DevicePlugin.swift'));
+    delete plugins[0].macos;
+    assert.throws(() => generateNativePlugins(f.app,plugins,'macos'),/does not support macos/);
+    generateNativePlugins(f.app,[],'macos');
+    assert.doesNotMatch(readFileSync(join(directory,'GeneratedMacOSPlugins.swift'),'utf8'),/MacDevicePlugin/);
   } finally { f.cleanup(); }
 });

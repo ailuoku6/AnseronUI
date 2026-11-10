@@ -60,7 +60,7 @@ function integrateApp() {
   };
   write(configPath, JSON.stringify(config, null, 2) + "\n", force);
   write(join(pageDir, "home.tsx"), `import { Text, View, definePage } from "@anseronui/ui";\nimport type { UIElement } from "@anseronui/ui";\n\nexport function Home(): UIElement {\n  return <View style={{ flexGrow: 1, padding: 24 }}>\n    <Text style={{ fontSize: 22, fontWeight: "bold" }}>AnseronUI 已接入</Text>\n  </View>;\n}\n\nexport const homePage = definePage("home", Home);\n`, force);
-  write(join(target, "ANSERONUI_INTEGRATION.md"), `# AnseronUI 接入清单\n\n此文件由 \`anseronui integrate\` 生成，保留现有应用入口，由业务宿主决定挂载位置。\n\n## 1. 构建配置\n\n- 页面配置：\`anseronui.config.json\`\n- TSX 页面目录：\`src/anseronui/pages\`\n- 在框架仓库根目录运行：\`npm run prepare:compiler\`，然后使用 \`npm run anseronui -- build web --config ${relative(frameworkRoot, configPath).split(sep).join("/")}\` 或对应原生 target。\n\n## 2. iOS\n\n将 \`packages/render-ios\` 作为 Swift Package 或源码 target 引入，创建 \`AnseronUIRenderView\`，约束尺寸后调用：\n\n\`pageView.load(page: "home")\`\n\n页面销毁时调用 \`pageView.destroy()\`。\n\n## 3. Android\n\n将 \`packages/render-android\` 作为 Gradle module/AAR 引入，在 Activity 或 Fragment 中添加 \`AnseronUIRenderView\`，布局完成后调用：\n\n\`pageView.load("home")\`\n\n宿主销毁时调用 \`pageView.destroy()\`。\n\n## 4. Web\n\n使用 \`@anseronui/render-web\` 的 \`BrowserHost\`，加载生成的 Wasm Core，并调用 \`host.mount("home", width, height)\`。\n\n## 5. 业务迁移建议\n\n先把一个页面接入并验证布局、事件和模块，再逐页把原有页面迁移到 \`src/anseronui/pages\`。原有导航、网络和状态管理可以继续保留，由宿主或 AnseronUI module 适配。\n`, force);
+  write(join(target, "ANSERONUI_INTEGRATION.md"), `# AnseronUI 接入清单\n\n此文件由 \`anseronui integrate\` 生成，保留现有应用入口，由业务宿主决定挂载位置。\n\n## 1. 构建配置\n\n- 页面配置：\`anseronui.config.json\`\n- TSX 页面目录：\`src/anseronui/pages\`\n- 在框架仓库根目录运行：\`npm run prepare:compiler\`，然后使用 \`npm run anseronui -- build web --config ${relative(frameworkRoot, configPath).split(sep).join("/")}\` 或对应原生 target。\n\n## 2. iOS\n\n将 \`packages/render-ios\` 作为 Swift Package 或源码 target 引入，创建 \`AnseronUIRenderView\`，约束尺寸后调用：\n\n\`pageView.load(page: "home")\`\n\n页面销毁时调用 \`pageView.destroy()\`。\n\n## 3. Android\n\n将 \`packages/render-android\` 作为 Gradle module/AAR 引入，在 Activity 或 Fragment 中添加 \`AnseronUIRenderView\`，布局完成后调用：\n\n\`pageView.load("home")\`\n\n宿主销毁时调用 \`pageView.destroy()\`。\n\n## 4. Web\n\n使用 \`@anseronui/render-web\` 的 \`BrowserHost\`，加载生成的 Wasm Core，并调用 \`host.mount("home", width, height)\`。\n\n## 5. macOS\n\n将 \`packages/render-macos\` 作为 Swift Package 或源码 target 引入，编译 C transport 并链接 \`macos-arm64\` Core archive。创建 AppKit \`AnseronUIRenderView\`，约束到 NSWindow 内容区域后调用 \`pageView.load(page: "home")\`，结束使用时调用 \`pageView.destroy()\`。具体链接步骤与最低系统验证边界见框架的 \`packages/render-macos/README.md\`。\n\n## 6. 业务迁移建议\n\n先把一个页面接入并验证布局、事件和模块，再逐页把原有页面迁移到 \`src/anseronui/pages\`。原有导航、网络和状态管理可以继续保留，由宿主或 AnseronUI module 适配。\n`, force);
   console.log(`AnseronUI integration files created in: ${target}`);
   console.log(`Review ${join(target, "ANSERONUI_INTEGRATION.md")} before linking native targets.`);
 }
@@ -89,7 +89,7 @@ function checkApp() {
 
 function buildApp() {
   const target = parsed.positionals[0];
-  if (!target || !["ios", "ios-device", "android", "web"].includes(target)) throw new Error("Usage: anseronui build <ios|ios-device|android|web> --config path");
+  if (!target || !["ios", "ios-device", "android", "web", "macos"].includes(target)) throw new Error("Usage: anseronui build <ios|ios-device|android|web|macos> --config path");
   const config = resolve(process.cwd(), valueAfter("--config", "anseronui.config.json"));
   if (!existsSync(config)) throw new Error(`Config not found: ${config}`);
   if (json(config).app) buildStandalone(config, target);
@@ -117,13 +117,14 @@ try {
 
   create <directory> [--name AppName] [--application-id com.example.app] [--package specifier] [--local-framework] [--force]
   setup | check | typecheck [--config path]
-  build <ios|ios-device|android|web> [--config path]
+  build <ios|ios-device|android|web|macos> [--config path]
   run ios [--device UUID-or-name] [--no-build] [--dry-run] [--config path]
   run android [--device serial | --avd name] [--no-build] [--dry-run] [--config path]
+  run macos [--no-build] [--dry-run] [--config path]
   dev web [--config path]
   integrate <existing-project> [--name app-name] [--force]
 
-From a generated app: npm run ios / npm run android.
+From a generated app: npm run ios / npm run android / npm run macos.
 iOS run targets simulators; iOS devices require your own signing configuration.`);
   }
 } catch (error) {

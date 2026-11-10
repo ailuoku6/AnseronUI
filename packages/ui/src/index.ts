@@ -1,3 +1,5 @@
+import type { NativeServices, HttpRequest, HttpResponse, SubscribeNative } from "./native-services.js";
+export * from "./native-services.js";
 import type { Timers } from "./timers.js";
 export { setTimeout, clearTimeout } from "./timers.js";
 export type { Timers } from "./timers.js";
@@ -220,26 +222,32 @@ export class RefCell {
   constructor(initial: unknown) { this.current = initial; }
 }
 export type EffectSetup = () => void | (() => void);
-export interface Services {
+export interface Services extends NativeServices {
+  subscribe: SubscribeNative;
   timers: Timers;
   /** Named platform extension; results and arguments cross as JSON. */
   invoke<T = unknown>(module: string, method: string, args?: unknown): Promise<T>;
   /** Navigation stack for AnseronUI pages mounted by the host container. */
   router: Router;
-  http: { getText(url: string): Promise<string> };
+  http: { getText(url: string): Promise<string>; request(options: HttpRequest): Promise<HttpResponse> };
   sleep(milliseconds: number): Promise<void>;
 }
+/** Route data crosses native hosts as JSON. Each navigation entry owns a snapshot. */
+export type RouteValue = string | number | boolean | null | RouteValue[] | { [key: string]: RouteValue };
+export type RouteParams = { [key: string]: RouteValue };
 export interface Router {
   /** Pushes a registered page onto the host navigation stack. */
-  push(page: string): Promise<void>;
+  push(page: string, params?: RouteParams): Promise<void>;
   /** Replaces the current page without growing the stack. */
-  replace(page: string): Promise<void>;
+  replace(page: string, params?: RouteParams): Promise<void>;
   /** Pops the current page. Rejects when the stack is already at its root. */
   pop(): Promise<void>;
   /** Alias for pop(), matching common native navigation terminology. */
   back(): Promise<void>;
   /** Returns the page currently displayed by the host. */
   current(): Promise<string>;
+  /** Reads a fresh snapshot of this navigation entry's parameters; defaults to {}. */
+  getParams<T extends RouteParams = RouteParams>(): Promise<T>;
 }
 export interface Context<T> {
   readonly id: number;

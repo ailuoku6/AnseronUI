@@ -1,8 +1,8 @@
 # AnseronUI
 
-使用 TypeScript/TSX 编写一套页面，构建运行于 **iOS、Android 和 Web** 的 App。iOS 使用 UIKit，Android 使用原生 View，Web 使用 DOM + Wasm；共享页面负责布局、状态、交互和业务逻辑。
+使用 TypeScript/TSX 编写共享页面，构建运行于 **iOS、Android、Web 和 macOS** 的 App。iOS 使用 UIKit，Android 使用原生 View，macOS 使用 AppKit，Web 使用 DOM + Wasm；共享页面负责布局、状态、交互和业务逻辑。
 
-AnseronUI 提供创建工程的 CLI、组件与 Hooks、页面路由、动画和原生能力扩展。底层通过 [scriptc](https://github.com/vercel-labs/scriptc) 编译共享代码，使用 [Flexily](https://github.com/beorn/flexily) 计算布局。移动端不依赖嵌入 JavaScript 引擎。
+AnseronUI 提供创建工程的 CLI、组件与 Hooks、页面路由、动画和原生能力扩展。底层通过 [scriptc](https://github.com/vercel-labs/scriptc) 编译共享代码，使用 [Flexily](https://github.com/beorn/flexily) 计算布局。iOS、Android 和 macOS 的共享业务 Core 不依赖嵌入 JavaScript 引擎。
 
 [创建并运行 App](#创建并运行独立-app) · [编写页面](#编写共享页面) · [能力清单](docs/capabilities.md) · [TS/TSX 限制](docs/typescript-limitations.md) · [完整文档](docs/README.md)
 
@@ -13,6 +13,7 @@ AnseronUI 提供创建工程的 CLI、组件与 Hooks、页面路由、动画和
 | 通用 | Node.js 24+、npm、可用网络；保留 npm optional dependencies |
 | iOS | macOS、完整 Xcode、已安装的 Simulator runtime、Python 3；最低 iOS 15 |
 | Android | Android SDK 35、NDK、JDK 17–22（推荐 17，支持 Android Studio JBR 21）；最低 Android API 26 |
+| macOS | Apple Silicon、macOS 15+ 构建主机与完整 Xcode；产物声明最低 macOS 14，旧系统待验证 |
 | Web / 跨平台编译 | 可用的 Zig 工具链；Web 使用支持 Wasm 和 ES modules 的浏览器 |
 
 当前主要验证环境为 **macOS Apple Silicon**，iOS 模拟器和设备产物固定 arm64，Android 产物固定 `arm64-v8a`。Android 设备或 AVD 也应使用 ARM64 架构。
@@ -32,7 +33,7 @@ npm run ios
 npm run android
 ```
 
-目标目录需要为空。`--application-id` 同时设置 iOS Bundle ID 和 Android applicationId；`--name` 可指定应用显示名称。生成的 App 固定依赖 AnseronUI 版本，可独立移动和维护；请提交应用的 `package-lock.json`。
+目标目录需要为空。`--application-id` 同时设置 iOS Bundle ID、Android applicationId 和 macOS bundle identifier；`--name` 可指定应用显示名称。生成的 App 固定依赖 AnseronUI 版本，可独立移动和维护；请提交应用的 `package-lock.json`。
 
 `setup` 使用随 npm 包提供的编译器源码准备构建环境，首次会安装依赖，无需 Git。升级 AnseronUI 后需重新执行 `npm run setup`。
 
@@ -58,6 +59,18 @@ npm run android -- --avd Medium_Phone_API_35
 
 设备名称、序列号和 AVD 名称需替换为本机实际值。执行 `npm run android -- --dry-run` 可以预览构建和启动步骤。
 
+### macOS
+
+新增应用包含原生 AppKit 宿主。在 Apple Silicon Mac（构建主机 macOS 15+、完整 Xcode）运行：
+
+```sh
+npm run build:macos
+npm run macos
+npm run macos -- --no-build
+```
+
+输出为 `.verification/macos/App.app`，构建时进行本机 ad-hoc 签名。当前支持 arm64、单窗口，最低部署版本声明为 macOS 14，已验证环境为 macOS 27.2。具体能力、旧应用接入和验证限制见 [macOS Renderer](packages/render-macos/README.md)。
+
 ### Web
 
 ```sh
@@ -75,6 +88,7 @@ awesomeAnseron/
 ├── anseronui.config.json      # 页面注册、应用标识和构建配置
 ├── platforms/ios/             # iOS 应用宿主
 ├── platforms/android/         # Android 应用宿主
+├── platforms/macos/App.swift  # macOS AppKit 应用宿主
 ├── web/                       # Web 入口、Vite 配置和公共资源
 ├── assets/                    # 应用资源目录，需按目标平台规则接入
 ├── package.json               # 应用依赖和开发命令
@@ -83,7 +97,7 @@ awesomeAnseron/
 
 日常开发主要修改 `src/` 和 `anseronui.config.json`；需要扩展原生能力时再修改平台宿主。图片、视频等资源的打包与引用规则见[能力清单](docs/capabilities.md)。
 
-三端容器直接展示 TSX 页面。设置页面根节点的 `backgroundColor`，系统栏背景会跟随页面主题。SDK 和构建缓存位于 `.anseronui/`，应用构建产物位于 `.verification/`、Android `build/` 和 `dist/web/`；这些目录不应提交到业务仓库。
+各平台容器直接展示共享 TSX 页面。设置页面根节点的 `backgroundColor`，移动端系统栏背景会跟随页面主题。SDK 和构建缓存位于 `.anseronui/`，应用构建产物位于 `.verification/`、Android `build/` 和 `dist/web/`；这些目录不应提交到业务仓库。
 
 ## 编写共享页面
 
@@ -147,9 +161,10 @@ npm run ios
 | 页面与交互 | `View`、`Text`、`RichText`、`Button`、`TextInput`、`ScrollView`、`Image`、`Video` | [组件、属性与事件](docs/capabilities.md) |
 | 布局与样式 | Flex、间距、对齐、尺寸约束、绝对定位、边框、圆角和文本样式 | [布局与样式](docs/capabilities.md) |
 | 状态与生命周期 | 函数组件、Hooks、Context 和 effect cleanup | [Hooks 与生命周期](docs/capabilities.md) |
-| 网络请求 | `useServices().http.getText()`，通过平台宿主执行请求 | [异步与平台 API 边界](docs/typescript-limitations.md#网络计时器和-async-的特别说明) |
+| 网络请求 | `useServices().http.request()` / `getText()`，通过平台宿主执行请求 | [异步与平台 API 边界](docs/typescript-limitations.md#网络计时器和-async-的特别说明) |
 | 延迟与计时器 | `setTimeout`、`clearTimeout`、`useTimers()` | [计时器](docs/timers.md) |
 | 动画 | 声明式过渡、ref 动画、延迟、循环和取消 | [动画](docs/animations.md) |
+| 标准系统能力 | 存储、设备信息、剪贴板、弹窗、分享、环境订阅、权限定位、文件传输、推送、后台任务、BLE 与 NFC | [标准系统能力](docs/native-services.md) |
 | 平台能力与自定义组件 | `useServices().invoke()`、异步 Module、原生组件和 ref | [原生扩展](docs/native-extensions.md) |
 
 共享页面使用的是 AnseronUI 的组件和运行时。编写页面和选择依赖前，请阅读 [TS/TSX 编写限制](docs/typescript-limitations.md)：DOM 标签、React 专用库、Node.js API 和任意 npm 依赖都需要按实际支持范围评估；类型检查通过后，还需完成目标平台编译和运行验证。
@@ -163,20 +178,21 @@ npm run ios
 | `npm run setup` | 首次安装或升级 SDK 后准备编译器 |
 | `npm run check` | 检查应用与页面配置 |
 | `npm run typecheck` | 检查 TypeScript / TSX |
-| `npm run ios` / `npm run android` | 构建、安装并启动应用 |
+| `npm run ios` / `npm run android` / `npm run macos` | 构建、安装或本机启动应用 |
 | `npm run build:ios` | 仅构建 iOS 模拟器应用 |
 | `npm run build:ios-device` | 构建未签名 iOS 真机应用 |
 | `npm run build:android` | 仅构建 Android Debug APK |
+| `npm run build:macos` | 构建本机 AppKit `.app` |
 | `npm run build:web` | 构建 Web/Wasm 应用，输出到 `dist/web/` |
 | `npm run dev:web` | 启动 Web 开发服务器 |
 
 CLI 的设备选择、缓存、路径规则和常见问题见[应用创建、构建与运行](docs/tooling.md)。
 
-## 接入现有 iOS、Android 或 Web 应用
+## 接入现有原生应用
 
-AnseronUI 支持把共享页面嵌入已有宿主。iOS 和 Android 使用 `AnseronUIRenderView`，Web 使用 `BrowserHost` 和 `WasmRuntime`；业务宿主负责挂载位置、原生能力注册及生命周期。
+AnseronUI 支持把共享页面嵌入已有宿主。iOS、Android 和 macOS 分别使用原生 `AnseronUIRenderView`，Web 使用 `BrowserHost` 和 `WasmRuntime`；业务宿主负责挂载位置、原生能力注册及生命周期。
 
-接入需要配置原生依赖和 Core 链接。具体步骤见[应用接入指南](docs/tooling.md)、[iOS 宿主](packages/render-ios/README.md)和[Android 宿主](packages/render-android/README.md)。
+接入需要配置原生依赖和 Core 链接。具体步骤见[应用接入指南](docs/tooling.md)、[iOS 宿主](packages/render-ios/README.md)、[Android 宿主](packages/render-android/README.md)和[macOS 宿主](packages/render-macos/README.md)。
 
 ## 当前使用边界
 
@@ -249,15 +265,16 @@ anseronui-device/
 
 所有源码路径相对于插件包根目录，必须包含在 npm 发布包内，不能越出包目录。`sources` 是目录列表：iOS 递归纳入 `.swift` 文件，Android 纳入 Kotlin/Java 源码目录。Swift 工厂类型需使用简单标识符，Android 工厂使用完整类名；为类型加上自己的命名前缀，避免不同插件冲突。
 
-三端工厂约定如下，原生模块和组件都通过返回的注册表声明：
+原生平台工厂约定如下，模块和组件都通过返回的注册表声明：
 
 | 平台 | 工厂入口 | 返回值 |
 | --- | --- | --- |
 | iOS | `@MainActor` 类型的 `static func createExtensions()` | `IOSPlatformExtensions` |
 | Android | Kotlin `object` 的 `fun createExtensions(context: Context)` | `AndroidPlatformExtensions` |
+| macOS | `@MainActor` 类型的 `static func createExtensions()` | `MacOSPlatformExtensions` |
 | Web | `web.entry` 导出的 `createExtensions()` | `PlatformExtensions` |
 
-iOS 插件 Swift 源码与渲染器一起编译进 App target，直接使用 `IOSPlatformExtensions` 等类型，不需要 `import AnseronUIRenderIOS`。Android 使用 `org.anseronui.render` 中的公开类型；工厂接收当前宿主 Context，可由此使用 Activity 能力。Web 的 `createExtensions()` 同步返回 `modules` / `components`，其中模块处理器可以异步执行。每次创建宿主都会调用工厂，请将监听器和资源释放接到现有取消函数或组件 `dispose()` 上。具体 Module、组件、JSON 数据与生命周期约束见[原生扩展](docs/native-extensions.md)。
+iOS/macOS 插件 Swift 源码与对应 Renderer 一起编译进 App target；macOS 使用 AppKit 的独立工厂和组件类型，不复用 UIKit 工厂。Android 使用 `org.anseronui.render` 中的公开类型；工厂接收当前宿主 Context，可由此使用 Activity 能力。Web 的 `createExtensions()` 同步返回 `modules` / `components`，其中模块处理器可以异步执行。每次创建宿主都会调用工厂，请将监听器和资源释放接到现有取消函数或组件 `dispose()` 上。具体 Module、组件、JSON 数据与生命周期约束见[原生扩展](docs/native-extensions.md)。
 
 共享 TS 入口可以这样包装平台模块，供业务组件使用：
 

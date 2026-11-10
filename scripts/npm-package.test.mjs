@@ -24,7 +24,8 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(paths.includes('THIRD_PARTY_NOTICES.md'));
     assert.ok(!paths.some(path => path.endsWith('/.DS_Store')));
     for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'scripts/anseronui.mjs', 'scripts/templates/app/gitignore',
-      'scripts/native-plugins.mjs',
+      'scripts/native-plugins.mjs', 'scripts/macos-app.mjs', 'scripts/templates/app/platforms/macos/App.swift',
+      'packages/render-macos/Sources/AnseronUIRenderMacOS/Renderer.swift', 'packages/render-macos/Sources/AnseronUICoreC/module.modulemap',
       'scripts/templates/app/platforms/android/gradle/wrapper/gradle-wrapper.jar',
       'scripts/templates/app/platforms/android/LICENSE-Gradle',
       'packages/flexily/LICENSE', 'packages/core/native/split_bridge.c',

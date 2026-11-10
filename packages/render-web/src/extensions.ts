@@ -10,8 +10,12 @@ export interface NativeViewInstance {
 export type NativeViewFactory = (context: { document: Document; emit(name: string, data?: unknown): void }) => NativeViewInstance;
 export type NativeModuleHandler = (method: string, args: unknown, signal: AbortSignal) => unknown | Promise<unknown>;
 export interface PlatformExtensions {
+  services?: import('./application-services.js').BrowserServiceOptions;
   modules?: Record<string, NativeModuleHandler>;
+  subscriptions?: Record<string, NativeEventSource>;
   components?: Record<string, NativeViewFactory>;
   /** Handles the built-in router module. The app host owns the page stack. */
   router?: NativeModuleHandler;
 }
+/** A subscription lives until unsubscribe/host disposal. Emit JSON values or report an error. */
+export type NativeEventSource = (emit: (result: { value?: unknown; error?: string }) => void) => (() => void) | void;

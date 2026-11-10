@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 
 public enum NativeExtensionError: Error { case unsupportedModule(String), unsupportedMethod(String), nodeUnmounted, invalidArguments, resultTooLarge }
+public typealias NativeEventSource = (_ emit: @escaping NativeCompletion) throws -> (() -> Void)?
 public typealias NativeCompletion = (Result<Any, Error>) -> Void
 /// Invoked on the main thread. Dispatch expensive work elsewhere and return cancellation if needed.
 public typealias NativeModuleHandler = (_ method: String, _ args: Any, _ completion: @escaping NativeCompletion) throws -> (() -> Void)?
@@ -20,9 +21,10 @@ public extension IOSNativeComponent {
 @MainActor public final class IOSPlatformExtensions {
     public typealias ComponentFactory = (_ emit: @escaping (String, Any) -> Void) throws -> IOSNativeComponent
     public var modules: [String: NativeModuleHandler]
+    public var subscriptions: [String: NativeEventSource]
     public var components: [String: ComponentFactory]
-    public init(modules: [String: NativeModuleHandler] = [:], components: [String: ComponentFactory] = [:]) {
-        self.modules = modules; self.components = components
+    public init(modules: [String: NativeModuleHandler] = [:], components: [String: ComponentFactory] = [:], subscriptions: [String: NativeEventSource] = [:]) {
+        self.modules = modules; self.components = components; self.subscriptions = subscriptions
     }
 }
 

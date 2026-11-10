@@ -160,7 +160,7 @@ function MediaPreview() {
 
 示例资源位于 `examples/components/assets`。默认原生示例和 Web 构建会打包它们；`asset://` 当前使用简单文件名。图片/视频应给出尺寸或可计算的布局约束，不能依赖媒体文件自动提供跨端固有尺寸。
 
-业务资源打包约定：iOS 对应 bundle 中的 `assets` 目录，Android 对应应用 assets，Web 对应 `/assets/`。新建应用配置了自己的 `web.publicDir` 时，需要自行把媒体放进该目录的 `assets` 子目录；Core 构建只复制 Wasm 和 manifest，不会自动扫描业务资源。网络 URL 的权限、可访问性、浏览器自动播放限制和系统支持的编解码器仍由宿主/平台决定。
+业务资源打包约定：iOS 对应 bundle 中的 `assets` 目录，macOS 将应用 `assets` 复制到 `.app/Contents/Resources/assets`，Android 对应应用 assets，Web 对应 `/assets/`。新建应用配置了自己的 `web.publicDir` 时，需要自行把媒体放进该目录的 `assets` 子目录；Core 构建只复制 Wasm 和 manifest，不会自动扫描业务资源。网络 URL 的权限、可访问性、浏览器自动播放限制和系统支持的编解码器仍由宿主/平台决定。
 
 ## 动画
 
@@ -200,7 +200,7 @@ const router = useRouter();
 - 用 `ref` 获取 `NodeHandle`，调用 `measure`、`focus`、`blur`、`scrollTo`、`animate`、`invoke`；
 - 用 `useImperativeHandle` 让函数组件公开业务句柄。
 
-原生扩展注册由 iOS、Android、Web 宿主注入，TSX 不直接持有 UIView、Android View 或 DOM 对象。详见[原生扩展](native-extensions.md)。
+原生扩展注册由 iOS、Android、macOS、Web 宿主注入，TSX 不直接持有 UIView、Android View、NSView 或 DOM 对象。详见[原生扩展](native-extensions.md)。
 
 ## 平台支持
 
@@ -208,9 +208,12 @@ const router = useRouter();
 | --- | --- | --- |
 | iOS | UIKit Renderer、AOT Core、图片/视频、触摸、动画、Module、原生组件、ref | `packages/render-ios` |
 | Android | Android View Renderer、JNI Core、图片/视频、触摸、动画、Module、原生组件、ref | `packages/render-android` |
+| macOS | AppKit Renderer、arm64 AOT Core、单窗口、组件/媒体映射、路由、Module、原生组件和 ref；专项验收边界见 Renderer 文档 | [packages/render-macos](../packages/render-macos/README.md) |
 | Web | DOM Renderer、Wasm Core、基础组件/媒体/触摸、浏览器 Module、原生组件扩展、ref、动画和路由 | `packages/render-web` |
 
 iOS 没有 Android 同等的统一物理返回键，导航控制器需要主动调用 `handleBackPress()`；Android 示例 Activity 已接入系统返回；Web 示例监听 `Escape` 和 `BrowserBack`。
+
+macOS 宿主也可调用 `handleBackPress()` 和 `pop()`，仓库示例通过 Navigate 菜单触发。macOS TextInput 为单行，移动端键盘提示不逐一对应；触摸协议映射为鼠标事件，桌面滚动仲裁与完整多指手势尚未对齐。RichText 点击、IME、媒体、拖动和动画已有 AppKit 回归覆盖；完整无障碍、macOS 14 和 Intel 仍需目标环境验收，详情见 [AppKit 能力边界](../packages/render-macos/README.md#能力与当前边界)。鸿蒙尚未实现。
 
 ## 当前限制
 
@@ -223,3 +226,7 @@ iOS 没有 Android 同等的统一物理返回键，导航控制器需要主动�
 ## 跨端计时器与独立构建
 
 共享 TS/TSX 支持 `setTimeout(callback, delay)`、`clearTimeout(id)` 和 `useTimers()`；页面退出取消未触发计时器。调用规则、异步作用域及暂不支持的计时器接口见[计时器](timers.md)。Framework Core 与业务包独立编译，业务变化可复用内核，详见[构建说明](core-bundles.md)。
+
+## 标准系统服务
+
+`useServices()` 已提供 HTTP request、普通/安全存储、应用/设备/语言信息、剪贴板、弹窗、链接、分享、触觉、环境状态与订阅、权限、定位、照片/文档选择及上传下载，以及推送通知、后台原生任务、BLE/GATT 和 NFC NDEF。支付与生物识别未接入。各端差异、生命周期与示例见[标准系统能力](native-services.md)。示例 App 的「扩展」页包含可操作用例。

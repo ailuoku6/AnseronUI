@@ -8,7 +8,7 @@ import {
 import type {
   Envelope, Frame, InputPayload, NativeEvent, EventKind, NodeKind, OutputPayload, RenderCommand, RenderProps,
 } from "@anseronui/protocol";
-import { normalizeChildren, setHookDispatcher, RefCell } from "@anseronui/ui";
+import { normalizeChildren, setHookDispatcher, RefCell, createNativeServices, NativeServiceError } from "@anseronui/ui";
 import type {
   Child, Component, Context, EffectSetup, HookDispatcher, Page, Ref, Services, Style, UIElement,
 } from "@anseronui/ui";
@@ -18,7 +18,7 @@ type StateSlot = { kind: "state" | "reducer"; value: unknown; pending: PendingUp
 type RefSlot = { kind: "ref"; ref: RefCell };
 type MemoSlot = { kind: "memo"; value: unknown; deps: readonly unknown[] };
 type EffectSlot = { kind: "effect"; setup: EffectSetup; deps?: readonly unknown[]; cleanup?: () => void };
-type ServiceSlot = { kind: "services"; facade: Services; active: boolean };
+type ServiceSlot = { kind: "services"; facade: Services; active: boolean; subscriptions: Set<() => void> };
 type Slot = StateSlot | RefSlot | MemoSlot | EffectSlot | ServiceSlot;
 type DraftSlot =
   | { kind: "state" | "reducer"; slot: StateSlot; value: unknown; watermark: number }
@@ -621,26 +621,75 @@ export class BusinessRuntime {
     };
     return slot;
   }
+  private validateRouteValue(value: unknown, seen: Set<unknown>): void {
+    if (value === null || typeof value === "string" || typeof value === "boolean") return;
+    if (typeof value === "number" && Number.isFinite(value)) return;
+    if (typeof value !== "object" || seen.has(value)) throw new Error("INVALID_ROUTE_PARAMS");
+    seen.add(value);
+    if (Array.isArray(value)) { for (const item of value) this.validateRouteValue(item, seen); }
+    else { for (const [, item] of Object.entries(value)) this.validateRouteValue(item, seen); }
+    seen.delete(value);
+  }
   private newServiceSlot(surface: Surface): ServiceSlot {
-    const route = async (method: "push" | "replace", page: string): Promise<void> => {
+    const route = async (method: "push" | "replace", page: string, params?: import("@anseronui/ui").RouteParams): Promise<void> => {
       if (!/^[a-z][a-z0-9_-]*$/.test(page)) throw new Error("INVALID_ROUTE");
-      await this.invokeModule(surface, slot, "router", method, JSON.stringify({ page }));
+      if (params !== undefined && (params === null || typeof params !== "object" || Array.isArray(params))) throw new Error("INVALID_ROUTE_PARAMS");
+      if (params !== undefined) this.validateRouteValue(params, new Set());
+      const argument = JSON.stringify(params === undefined ? { page } : { page, params });
+      if (argument.length > 12000) throw new Error("ROUTE_PARAMS_TOO_LARGE");
+      await this.invokeModule(surface, slot, "router", method, argument);
     };
     const pop = async (): Promise<void> => { await this.invokeModule(surface, slot, "router", "pop", "{}"); };
-    const slot: ServiceSlot = { kind: "services", active: true, facade: {
+    // Keep captured implementations non-generic: scriptc lowers generic local
+    // functions to module functions, which cannot retain this service scope.
+    // The public Services facade supplies the generic JSON result types.
+    const invokeJSON = async (module: string, method: string, args?: unknown): Promise<any> => {
+      try { return JSON.parse(await this.invokeModule(surface, slot, module, method, JSON.stringify(args ?? null))); }
+      catch (error) { throw new NativeServiceError(String(error)); }
+    };
+    const subscribe = (module: string, listener: (value: any) => void, onError?: (error: Error) => void) => {
+      if (this.rendering) throw new Error("SERVICE_DURING_RENDER");
+      if (!slot.active) throw new Error("SURFACE_DISPOSED");
+      const id = String(surface.nextRequestId++);
+      let active = true;
+      let pending = 0;
+      const stop = () => {
+        if (!active) return;
+        active = false; slot.subscriptions.delete(stop);
+        const request = surface.modules.get(pending);
+        if (request) { surface.modules.delete(pending); this.emit(surface, { type: "CancelRequest", requestId: pending }); request.reject(new Error("CANCELLED")); }
+        // Closing also covers the gap between successive next calls.
+        if (slot.active) void invokeJSON("events", "close", { id }).catch(() => {});
+      };
+      slot.subscriptions.add(stop);
+      const next = async (): Promise<void> => {
+        try {
+          while (active && slot.active) {
+            pending = surface.nextRequestId;
+            const value = await invokeJSON("events", "next", { id, module });
+            if (active && slot.active) listener(value);
+          }
+        } catch (error) { if (active && slot.active) { stop(); onError?.(error instanceof Error ? error : new Error(String(error))); } }
+      };
+      void next();
+      return stop;
+    };
+    const slot: ServiceSlot = { kind: "services", active: true, subscriptions: new Set(), facade: {
+      ...createNativeServices(invokeJSON, subscribe), subscribe,
       timers: { setTimeout: (callback, delay = 0) => timeoutInScope(surface.timerScope, callback, delay), clearTimeout },
       invoke: async <T>(module: string, method: string, args?: unknown): Promise<T> => {
-        if (module === "__view" || module === "http" || module === "timer" || module === "router") throw new Error("RESERVED_MODULE");
+        if (module === "events" || module === "__view" || module === "http" || module === "timer" || module === "router") throw new Error("RESERVED_MODULE");
         return JSON.parse(await this.invokeModule(surface, slot, module, method, JSON.stringify(args ?? null))) as T;
       },
       router: {
-        push: (page: string) => route("push", page),
-        replace: (page: string) => route("replace", page),
+        push: (page: string, params) => route("push", page, params),
+        replace: (page: string, params) => route("replace", page, params),
         pop,
         back: pop,
+        getParams: () => invokeJSON("router", "getParams"),
         current: async () => JSON.parse(await this.invokeModule(surface, slot, "router", "current", "{}")) as string,
       },
-      http: { getText: (url: string) => this.invokeModule(surface, slot, "http", "getText", url) },
+      http: { getText: (url: string) => this.invokeModule(surface, slot, "http", "getText", url), request: options => invokeJSON("http", "request", options) },
       sleep: async (milliseconds: number) => {
         if (!Number.isFinite(milliseconds) || milliseconds < 0) throw new Error("Invalid sleep duration");
         await this.invokeModule(surface, slot, "timer", "sleep", String(milliseconds));
@@ -856,6 +905,7 @@ export class BusinessRuntime {
       if (slot.kind === "state" || slot.kind === "reducer") slot.active = false;
       if (slot.kind === "effect" && slot.cleanup) this.runCleanup(surface, slot.cleanup);
       if (slot.kind === "services") {
+        for (const stop of slot.subscriptions) stop();
         slot.active = false;
         for (const [requestId, request] of surface.modules) if (request.owner === slot) {
           surface.modules.delete(requestId);

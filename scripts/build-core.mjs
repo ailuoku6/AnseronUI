@@ -15,7 +15,8 @@ const args = rawArgs.filter(arg => !['--framework-only','--business-only'].inclu
 if (args.length > 2 || args.some(arg => arg.startsWith('--'))) throw new Error('Expected target [config] [--framework-only|--business-only]');
 const target = args[0] ?? 'native';
 const configPath = args[1] ?? process.env.ANSERONUI_CONFIG;
-const targets = { native:'', 'ios-simulator':'aarch64-apple-ios-simulator', 'ios-device':'aarch64-apple-ios', android:'aarch64-linux-android', wasm:'wasm32-wasi' };
+const targets = { native:'', 'macos-arm64':'', 'ios-simulator':'aarch64-apple-ios-simulator', 'ios-device':'aarch64-apple-ios', android:'aarch64-linux-android', wasm:'wasm32-wasi' };
+if (target === 'macos-arm64' && (process.platform !== 'darwin' || process.arch !== 'arm64')) throw new Error('macOS currently requires an Apple Silicon Mac and Xcode.');
 if (!(target in targets)) throw new Error(`Unknown target ${target}: ${Object.keys(targets).join(', ')}`);
 function run(command, args, env = process.env) {
   const result = spawnSync(command, args, {stdio:'inherit', env});
@@ -29,14 +30,14 @@ function output(command, args) {
 }
 if (!existsSync('internal/toolchain/scriptc/packages/compiler/dist/index.js')) throw new Error('Run npm run prepare:compiler first');
 
-const env = {...process.env, SCRIPTC_TARGET:targets[target], SCRIPTC_CC:target === 'native' ? 'clang' : 'zigcc', ZIG_GLOBAL_CACHE_DIR:resolve('.verification/zig-cache')};
+const env = {...process.env, SCRIPTC_TARGET:targets[target], SCRIPTC_CC:['native','macos-arm64'].includes(target) ? 'clang' : 'zigcc', ZIG_GLOBAL_CACHE_DIR:resolve('.verification/zig-cache')};
 // Use the selected Xcode SDK rather than inheriting a Homebrew clang config with a stale sysroot.
-if (target === 'native' && process.platform === 'darwin') {
+if (['native','macos-arm64'].includes(target) && process.platform === 'darwin') {
   const compiler = output('xcrun',['--find','clang']);
   const sdk = output('xcrun',['--sdk','macosx','--show-sdk-path']);
   const bin = resolve('.verification/host-tools'); mkdirSync(bin,{recursive:true});
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
-  writeFileSync(join(bin,'clang'), `#!/bin/sh\nexec ${quote(compiler)} -isysroot ${quote(sdk)} "$@"\n`); chmodSync(join(bin,'clang'),0o755);
+  writeFileSync(join(bin,'clang'), `#!/bin/sh\nexec ${quote(compiler)} -isysroot ${quote(sdk)} ${target === 'macos-arm64' ? '-arch arm64 -mmacosx-version-min=14.0' : ''} "$@"\n`); chmodSync(join(bin,'clang'),0o755);
   env.PATH = `${bin}:${env.PATH}`;
 }
 if (target === 'android') {
@@ -44,6 +45,7 @@ if (target === 'android') {
   const ndks = join(sdk,'ndk');
   env.ANDROID_NDK_ROOT ??= join(ndks, readdirSync(ndks).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}))[0]);
 }
+const targetIdentity = target === 'macos-arm64' ? { platform: 'macos', arch: 'arm64', deploymentTarget: '14.0', sdk: output('xcrun',['--sdk','macosx','--show-sdk-version']), xcode: output('xcodebuild',['-version']), compiler: output('xcrun',['clang','--version']) } : null;
 const configuration = configPath ?? 'anseronui.config.json';
 const destination = resolve('.verification/core-' + target);
 mkdirSync(destination, {recursive:true});
@@ -60,7 +62,7 @@ for (const kind of (frameworkOnly ? ['framework'] : ['framework', 'business'])) 
   let cached = false;
   try {
     const manifest = JSON.parse(readFileSync(stamp, 'utf8'));
-    cached = manifest.kind === kind && manifest.target === target && manifest.abiVersion === 1 &&
+    cached = JSON.stringify(manifest.targetIdentity ?? null) === JSON.stringify(targetIdentity) && manifest.kind === kind && manifest.target === target && manifest.abiVersion === 1 &&
       manifest.sourceFingerprint === fingerprints[kind] && manifest.artifactSha256 === digest(artifact);
   } catch {}
   if (cached) console.log(`Reusing ${kind}: ${artifact}`);
@@ -73,7 +75,7 @@ for (const kind of (frameworkOnly ? ['framework'] : ['framework', 'business'])) 
     run(process.execPath, ['internal/toolchain/build-library.mjs', `.verification/source-${target}/${kind}/profile${target==='wasm'?'-wasm':''}.json`, directory], env);
     const after = kind === 'framework' ? frameworkFingerprint(root) : businessFingerprint(root, configuration);
     if (after !== fingerprints[kind]) throw new Error(`${kind} sources changed during compilation`);
-    writeFileSync(stamp, JSON.stringify({kind,target,abiVersion:1,sourceFingerprint:after,artifactSha256:digest(artifact)},null,2)+'\n');
+    writeFileSync(stamp, JSON.stringify({kind,target,targetIdentity,abiVersion:1,sourceFingerprint:after,artifactSha256:digest(artifact)},null,2)+'\n');
   }
   artifacts[kind] = artifact;
 }
@@ -110,7 +112,7 @@ if (target === 'wasm') {
 }
 if (sourceFingerprint !== coreFingerprint(root, configuration)) throw new Error('Sources changed during build; rebuild');
 const config = JSON.parse(readFileSync(configuration,'utf8'));
-const manifest = {buildId:config.buildId,protocolMajor:1,runtimeEpoch:1,abiVersion:1,format:'split-v1',
+const manifest = {buildId:config.buildId,target,targetIdentity,protocolMajor:1,runtimeEpoch:1,abiVersion:1,format:'split-v1',
   pages:config.pages.map(page=>({...page,name:page.name??page.source.split('/').slice(-2,-1)[0]})),
   configPath:configuration,sourceFingerprint,frameworkFingerprint:fingerprints.framework,businessFingerprint:fingerprints.business,
   frameworkSha256:digest(artifacts.framework),businessSha256:digest(artifacts.business)};

@@ -1,0 +1,4 @@
+module AnseronUICoreC [system] {
+  header "../../../core/native/include/anseronui_transport.h"
+  export *
+}

@@ -1,4 +1,6 @@
-import { View, Text, Button, TextInput, createNativeComponent, definePage, useRef, useState, useServices, useImperativeHandle } from "@anseronui/ui";
+import { DeviceShowcase } from './device-showcase.js';
+import { NativeShowcase } from "./native-showcase.js";
+import { ScrollView, View, Text, Button, TextInput, createNativeComponent, definePage, useRef, useState, useServices, useImperativeHandle } from "@anseronui/ui";
 import type { NodeHandle, RefTarget, UIElement, NativeComponentEvent } from "@anseronui/ui";
 
 const PlatformSwitch = createNativeComponent<{ value: boolean }>("DemoSwitch");
@@ -18,7 +20,7 @@ export function Extensions(): UIElement {
   const [enabled, setEnabled] = useState(false);
   const [status, setStatus] = useState("等待调用");
   const [platform, setPlatform] = useState("unknown");
-  return <View style={{ flexDirection: "column", padding: 20, gap: 14, flexGrow: 1, backgroundColor: "#f3f5fa" }}>
+  return <ScrollView testID="extensions-scroll" style={{ flexGrow: 1, flexDirection: "column" }}><View style={{ flexDirection: "column", padding: 20, gap: 14, flexShrink: 0, backgroundColor: "#f3f5fa" }}>
     <Text style={{ fontSize: 22, fontWeight: "bold" }}>原生扩展实验室</Text>
     <Text style={{ fontSize: 14 }}>Module · 原生组件 · 节点 / 组件 ref</Text>
     <Button title="读取平台信息" onClick={async () => {
@@ -54,6 +56,8 @@ export function Extensions(): UIElement {
       }
     }} />
     <Text testID="extension-status" style={{ fontSize: 14, color: "#275de5" }}>状态: {status}</Text>
-  </View>;
+    <NativeShowcase />
+    <DeviceShowcase />
+  </View></ScrollView>;
 }
 export const extensionsPage = definePage("extensions", Extensions);

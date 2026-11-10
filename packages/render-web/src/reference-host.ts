@@ -1,3 +1,4 @@
+import { BrowserNativeServices } from "./native-services.js";
 import type { PlatformExtensions } from "./extensions.js";
 import { ReferenceRuntime } from "@anseronui/core";
 import { PROTOCOL_MAJOR, PROTOCOL_MINOR, decodeEnvelope, encodeEnvelope, validateEnvelope } from "@anseronui/protocol";
@@ -74,6 +75,7 @@ export function measureBrowserText(root: HTMLElement): TextMeasure {
 
 /** Drives an adapter through the versioned protocol and DOM renderer. */
 export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter> {
+  private readonly nativeServices: BrowserNativeServices;
   readonly runtime: R;
   readonly renderer: DOMRenderer;
   readonly diagnostics: { code: string; message: string }[] = [];
@@ -90,6 +92,7 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
 
   constructor(root: HTMLElement, runtime: R, measure?: TextMeasure, private readonly extensions: PlatformExtensions = {}) {
     this.runtime = runtime;
+    this.nativeServices = new BrowserNativeServices(root, extensions.subscriptions, extensions.services);
     this.measure = measure ?? measureBrowserText(root);
     this.renderer = new DOMRenderer(root, event => {
       if (this.disposed) return;
@@ -124,6 +127,7 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
     await this.flush();
     for (const cancel of this.requests.values()) cancel();
     this.requests.clear();
+    this.nativeServices.dispose();
     this.renderer.dispose(); this.runtime.dispose(); this.disposed = true;
   }
 
@@ -148,7 +152,7 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
   private async drive(): Promise<void> {
     for (let cycle = 0; cycle < 32; cycle++) {
       const messages = this.runtime.step();
-      if (messages.length === 0) return;
+      if (messages.length === 0) { if (this.runtime.hasPendingWork()) continue; return; }
       for (const message of messages) {
         validateEnvelope<OutputPayload>(message);
         if (message.bundleBuildId !== this.runtime.bundleBuildId || message.runtimeEpoch !== this.runtime.runtimeEpoch ||
@@ -200,8 +204,8 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
           }
           const modules = this.extensions.modules ?? {};
           const handler = Object.prototype.hasOwnProperty.call(modules, payload.module) ? modules[payload.module] : undefined;
-          if (!handler) throw new Error("UNSUPPORTED_MODULE: " + payload.module);
-          return handler(payload.method, args, controller.signal);
+          if (handler && !this.nativeServices.available(payload.module, payload.method)) return handler(payload.method, args, controller.signal);
+          return this.nativeServices.call(payload.module, payload.method, args, controller.signal);
         }).then(value => this.completeModule(payload.requestId, true, JSON.stringify(value ?? null)))
           .catch(error => this.completeModule(payload.requestId, false, String(error)));
       }

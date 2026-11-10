@@ -14,7 +14,7 @@ for (const page of config.pages) {
 const mode = process.argv[3] ?? 'business';
 if (!['framework', 'business'].includes(mode)) throw new Error('Invalid bundle mode');
 const stageTarget = process.argv[4];
-if (stageTarget && !['native','ios-simulator','ios-device','android','wasm'].includes(stageTarget)) throw new Error('Invalid staging target');
+if (stageTarget && !['native','macos-arm64','ios-simulator','ios-device','android','wasm'].includes(stageTarget)) throw new Error('Invalid staging target');
 const stage = resolve(stageTarget ? '.verification/source-' + stageTarget + '/' + mode : '.verification/' + mode + '-source');
 await rm(stage, {recursive:true, force:true});
 await mkdir(stage, {recursive:true});

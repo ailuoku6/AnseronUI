@@ -1,6 +1,6 @@
 # 原生扩展：Module、原生组件和 ref
 
-AnseronUI 可以让共享 TSX 调用平台 API、挂载平台自定义视图，以及通过 ref 调用节点或函数组件公开的方法。注册表由每个宿主注入：iOS 使用 `IOSPlatformExtensions`，Android 使用 `AndroidPlatformExtensions`，Web 使用 `PlatformExtensions`。示例见 `examples/extensions/page.tsx`，三端演示 App 的「扩展」页使用同一份 TSX。
+AnseronUI 可以让共享 TSX 调用平台 API、挂载平台自定义视图，以及通过 ref 调用节点或函数组件公开的方法。注册表由每个宿主注入：iOS 使用 `IOSPlatformExtensions`，Android 使用 `AndroidPlatformExtensions`，Web 使用 `PlatformExtensions`。示例见 `examples/extensions/page.tsx`，演示 App 的「扩展」页使用同一份 TSX。
 
 ## 调用平台 Module
 
@@ -24,7 +24,7 @@ function ReadDevice() {
 
 `useServices()` 绑定当前函数组件生命周期。组件卸载时，未完成请求被取消并拒绝；宿主丢弃取消后的迟到结果以及重复完成。原生处理器可以返回取消函数，用来停止网络、定位等底层任务。没有返回取消函数时，底层任务本身不会被强制停止。
 
-所有通用模块调用都返回 Promise。Core 在独立执行线程上运行，宿主不支持同步返回模块调用结果，也没有通用的持续事件订阅 API。持续订阅需要另行设计订阅/取消协议；一次模块调用只能完成一次。`http`、`timer`、`__view`、`router` 是框架保留模块名，不要注册同名模块。
+所有通用模块调用都返回 Promise。Core 在独立执行线程上运行，宿主不支持同步返回模块调用结果，一次模块调用只能完成一次。持续事件使用 `services.subscribe()` 和宿主的 `subscriptions` 注册表，见[标准系统能力](native-services.md)。`http`、`timer`、`__view`、`router`、`events` 是框架保留模块名，不要注册同名模块。
 
 模块名、方法名最大 128 字符；模块名匹配 `[A-Za-z_][A-Za-z0-9_.-]*`。参数和返回值通过 JSON 传输，只传字符串、有限数值、布尔值、null、数组和普通对象；不要传函数、原生对象、循环引用或 BigInt。未传参数时使用 null。协议字符串上限为 65,536 字符，iOS/Android 的扩展返回和事件编码另外限制为 65,536 UTF-8 字节；业务应将单次载荷控制在 64 KiB 以内。
 
@@ -155,4 +155,12 @@ function Editor(props: { ref?: RefTarget<EditorHandle> }) {
 
 通过 `anseronui create` 生成的独立 App 支持 npm 原生插件：在包的 `package.json` 声明 `anseronui.schemaVersion: 1`、共享 TS 入口及各平台工厂。setup/build 扫描生产依赖并生成 `.anseronui/plugins/`，将工厂返回的模块和组件注入宿主。注册表仍遵守本文的异步调用、取消、JSON 载荷和组件生命周期约束。
 
-插件清单、权限配置、发布命令和当前自动接入范围见[README：发布带原生能力的 npm 包](../README.md#发布带原生能力的-npm-包)，完整三端实现见 [`examples/native-plugin`](../examples/native-plugin)。已有原生工程仍可直接手动注入本文所示的扩展注册表。
+插件清单、权限配置、发布命令和当前自动接入范围见[README：发布带原生能力的 npm 包](../README.md#发布带原生能力的-npm-包)，平台示例见 [`examples/native-plugin`](../examples/native-plugin)。已有原生工程仍可直接手动注入本文所示的扩展注册表。
+
+## macOS AppKit 插件
+
+macOS 平台使用插件清单 `schemaVersion: 2`，新增 `macos: { sources: ["macos"], factory: "MyMacPlugin", frameworks: ["AppKit"] }`。新 SDK 同时支持旧 schema 1，但旧插件不自动获得 macOS 支持。`MacOSPlatformExtensions` 和 `MacOSNativeComponent` 使用 AppKit NSView；Foundation 业务服务可以与 iOS 共用，UIKit 组件和工厂需要单独实现。
+
+参考 [macOS Renderer](../packages/render-macos/README.md) 与 `examples/native-plugin/macos/DevicePlugin.swift`。
+
+标准 HTTP、存储、设备信息、权限、定位、分享、文件传输等无需自行注册，见[标准系统能力与用例](native-services.md)。标准方法由框架实现优先处理，自定义扩展请使用自己的命名空间。

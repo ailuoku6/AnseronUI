@@ -11,4 +11,13 @@
 <key>UILaunchScreen</key><dict/>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+<key>NSLocationWhenInUseUsageDescription</key><string>演示读取当前位置</string>
+<key>NSCameraUsageDescription</key><string>演示申请相机权限</string>
+<key>NSMicrophoneUsageDescription</key><string>演示申请麦克风权限</string>
+<key>NSPhotoLibraryUsageDescription</key><string>演示申请照片权限</string>
+<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>anseronui</string></array></dict></array>
+<key>NSBluetoothAlwaysUsageDescription</key><string>连接蓝牙设备并读取设备数据</string>
+<key>NFCReaderUsageDescription</key><string>读取和写入 NFC 标签</string>
+<key>UIBackgroundModes</key><array><string>processing</string><string>remote-notification</string></array>
+<key>BGTaskSchedulerPermittedIdentifiers</key><array><string>org.anseronui.demo.refresh</string></array>
 </dict></plist>

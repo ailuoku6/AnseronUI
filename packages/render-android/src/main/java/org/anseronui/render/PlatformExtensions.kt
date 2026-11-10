@@ -7,6 +7,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 
 /** Main-thread entry; implementations may complete on any thread and return a cancellation action. */
+typealias NativeEventSource = (emit: NativeCompletion) -> (() -> Unit)?
 typealias NativeCompletion = (Result<Any?>) -> Unit
 typealias NativeModuleHandler = (method: String, args: Any?, complete: NativeCompletion) -> (() -> Unit)?
 interface AndroidNativeComponent {
@@ -19,7 +20,8 @@ interface AndroidNativeComponent {
 typealias NativeComponentFactory = (context: Context, emit: (String, Any?) -> Unit) -> AndroidNativeComponent
 class AndroidPlatformExtensions(
     val modules: Map<String, NativeModuleHandler> = emptyMap(),
-    val components: Map<String, NativeComponentFactory> = emptyMap()
+    val components: Map<String, NativeComponentFactory> = emptyMap(),
+    val subscriptions: Map<String, NativeEventSource> = emptyMap()
 )
 internal fun decodeNativeJSON(value: String): Any? = JSONTokener(value).nextValue().let { if (it === JSONObject.NULL) null else it }
 internal fun encodeNativeJSON(value: Any?): String {

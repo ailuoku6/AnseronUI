@@ -1,6 +1,6 @@
 import XCTest
 import UIKit
-import AnseronUIDemo
+@testable import AnseronUIDemo
 
 private final class RecordingCore: IOSCoreTransport {
     let bundleBuildId = "container-test"
@@ -67,6 +67,123 @@ private final class RecordingCore: IOSCoreTransport {
 }
 
 @MainActor final class RenderViewTests: XCTestCase {
+    func testPushRetainsHostAndPopDisposesOnlyTopEntry() async throws {
+        let firstDisposed = expectation(description: "root disposed at container destruction")
+        let secondDisposed = expectation(description: "detail disposed on pop")
+        let firstCommitted = expectation(description: "root mounted")
+        let secondCommitted = expectation(description: "detail mounted")
+        let first = RecordingCore(disposed: firstDisposed, committed: firstCommitted)
+        let second = RecordingCore(disposed: secondDisposed, committed: secondCommitted)
+        let lock = NSLock(); var cores = [first, second]; var created = 0
+        let view = AnseronUIRenderView(frame: CGRect(x: 0, y: 0, width: 320, height: 480), createCore: {
+            lock.lock(); defer { lock.unlock() }; created += 1; return cores.removeFirst()
+        })
+        view.load(page: "counter", params: ["root": true]); view.layoutIfNeeded()
+        await fulfillment(of: [firstCommitted], timeout: 5)
+        let originalRoot = try XCTUnwrap(view.subviews.first)
+        view.push(page: "async-form", params: ["id": 7]); view.layoutIfNeeded()
+        await fulfillment(of: [secondCommitted], timeout: 5)
+        XCTAssertNil(originalRoot.superview)
+        XCTAssertFalse(first.messages.contains { $0["type"] as? String == "DestroySurface" })
+        XCTAssertTrue(view.pop()); view.layoutIfNeeded()
+        await fulfillment(of: [secondDisposed], timeout: 5)
+        XCTAssertTrue(view.subviews.first === originalRoot)
+        XCTAssertEqual(view.routeParams["root"] as? Bool, true)
+        lock.lock(); let totalCreated = created; lock.unlock()
+        XCTAssertEqual(totalCreated, 2, "Back reuses the original Core")
+        XCTAssertEqual(first.messages.filter { $0["type"] as? String == "CreateSurface" }.count, 1)
+        view.destroy()
+        await fulfillment(of: [firstDisposed], timeout: 5)
+    }
+
+    func testRouteParameterSnapshotsAndBackRestoration() {
+        let view = AnseronUIRenderView(createCore: { XCTFail("Zero-sized view must defer Core startup"); throw HostError.invalidOutput })
+        defer { view.destroy() }
+        let nested = NSMutableDictionary(dictionary: ["value": "original"])
+        view.load(page: "counter", params: ["nested": nested])
+        nested["value"] = "changed"
+        XCTAssertEqual((view.routeParams["nested"] as? [String: String])?["value"], "original")
+        view.push(page: "async-form", params: ["id": 1])
+        view.push(page: "async-form", params: ["id": 2, "values": [true, NSNull()]])
+        XCTAssertEqual(view.routeStack, ["counter", "async-form", "async-form"])
+        XCTAssertEqual(view.routeParams["id"] as? Int, 2)
+        XCTAssertTrue(view.pop()); XCTAssertEqual(view.routeParams["id"] as? Int, 1)
+        view.replace(page: "async-form", params: ["replacement": true])
+        XCTAssertNil(view.routeParams["id"])
+        XCTAssertEqual(view.routeParams["replacement"] as? Bool, true)
+        XCTAssertTrue(view.pop())
+        XCTAssertEqual((view.routeParams["nested"] as? [String: String])?["value"], "original")
+        XCTAssertFalse(view.pop())
+        view.push(page: "async-form")
+        XCTAssertTrue(view.routeParams.isEmpty)
+        view.load(page: "counter")
+        XCTAssertEqual(view.routeStack, ["counter"]); XCTAssertTrue(view.routeParams.isEmpty)
+    }
+
+    func testApplicationInboxSurvivesPageDisposalAndAcknowledgesByID() async throws {
+        let tag = UUID().uuidString
+        let first = StandardServices(root: UIView(), baseURL: nil)
+        AnseronUINotifications.receive(["test": tag, "sequence": 1])
+        AnseronUINotifications.receive(["test": tag, "sequence": 2], opened: true)
+        first.dispose()
+        let second = StandardServices(root: UIView(), baseURL: nil)
+        defer { second.dispose() }
+        func call(_ module: String, _ method: String, _ args: [String: Any] = [:]) async throws -> Any {
+            try await withCheckedThrowingContinuation { continuation in
+                do { _ = try second.invoke(module, method, args) { continuation.resume(with: $0) } }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+        let all = try await call("notifications", "getEvents") as! [[String: Any]]
+        let matching = all.filter { ($0["payload"] as? [String: Any])?["test"] as? String == tag }
+        XCTAssertEqual(matching.count, 2)
+        XCTAssertEqual(matching.map { $0["kind"] as! String }, ["received", "opened"])
+        let ids = matching.map { $0["id"] as! String }
+        _ = try await call("notifications", "acknowledge", ["ids": [ids[0]]])
+        let remaining = try await call("notifications", "getEvents") as! [[String: Any]]
+        XCTAssertFalse(remaining.contains { $0["id"] as? String == ids[0] })
+        XCTAssertTrue(remaining.contains { $0["id"] as? String == ids[1] })
+        _ = try await call("notifications", "acknowledge", ["ids": ids])
+        XCTAssertThrowsError(try second.invoke("background", "schedule", ["identifier": "unregistered"]) { _ in }) { error in XCTAssertTrue(String(describing: error).contains("INVALID_ARGUMENT")) }
+        XCTAssertThrowsError(try second.invoke("notifications", "schedule", ["id": "invalid", "title": "test", "body": "body", "delaySeconds": -1]) { _ in })
+    }
+
+    func testStandardServicesStorageAndSubscriptionLifecycle() async throws {
+        let root = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let services = StandardServices(root: root, baseURL: nil)
+        defer { services.dispose() }
+        func call(_ module: String, _ method: String, _ args: [String: Any] = [:]) async throws -> Any {
+            try await withCheckedThrowingContinuation { continuation in
+                do { _ = try services.invoke(module, method, args) { continuation.resume(with: $0) } }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+        let namespace = "test-" + UUID().uuidString
+        _ = try await call("storage", "set", ["namespace": namespace, "key": "message", "value": "你好"])
+        _ = try await call("storage", "set", ["namespace": namespace + "other", "key": "message", "value": "keep"])
+        let value = try await call("storage", "get", ["namespace": namespace, "key": "message"])
+        XCTAssertEqual(value as? String, "你好")
+        _ = try await call("storage", "clear", ["namespace": namespace])
+        let retained = try await call("storage", "get", ["namespace": namespace + "other", "key": "message"])
+        XCTAssertEqual(retained as? String, "keep")
+        _ = try await call("storage", "clear", ["namespace": namespace + "other"])
+        _ = try await call("secureStorage", "set", ["namespace": namespace, "key": "token", "value": "test-value"])
+        let secureValue = try await call("secureStorage", "get", ["namespace": namespace, "key": "token"])
+        XCTAssertEqual(secureValue as? String, "test-value")
+        _ = try await call("secureStorage", "clear", ["namespace": namespace])
+        let empty = try await call("secureStorage", "get", ["namespace": namespace, "key": "token"])
+        XCTAssertTrue(empty is NSNull)
+        let supported = try await call("capabilities", "has", ["module": "biometrics"])
+        XCTAssertEqual(supported as? Bool, false)
+        let first = try await call("events", "next", ["id": "metrics", "module": "window"])
+        XCTAssertEqual((first as? [String: Any])?["width"] as? CGFloat, 320)
+        var deliveries = 0
+        let stop = try services.invoke("events", "next", ["id": "metrics", "module": "window"]) { _ in deliveries += 1 }
+        stop?(); root.frame.size.width = 640; services.changed()
+        XCTAssertEqual(deliveries, 0, "Cancelled observers cannot receive late values")
+        XCTAssertThrowsError(try services.invoke("device", "missing", NSNull()) { _ in })
+    }
+
     func testAnimationFramesCancellationAndDisposal() async throws {
         let root = UIView(frame: CGRect(x:0,y:0,width:390,height:844))
         let renderer = IOSRenderer(root:root)
@@ -109,6 +226,23 @@ private final class RecordingCore: IOSCoreTransport {
             outcomes.append((try? result.get() as? [String:Bool])?["finished"] ?? false)
         }
         renderer.clear(); XCTAssertEqual(outcomes,[false,true,false]); XCTAssertTrue(root.subviews.isEmpty)
+    }
+
+    func testButtonDoesNotPublishAnUntouchedControlledInputWithZeroRevision() throws {
+        let renderer = IOSRenderer(root: UIView())
+        var events: [RendererEvent] = []
+        renderer.onEvent = { events.append($0) }
+        try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type": "Commit", "revision": 1, "commands": [
+            ["type": "CreateNode", "nodeId": 1, "kind": "TextInput"],
+            ["type": "SetProps", "nodeId": 1, "props": ["value": "预填文本"]],
+            ["type": "BindEvent", "nodeId": 1, "event": "changeText", "enabled": true],
+            ["type": "CreateNode", "nodeId": 2, "kind": "Button"],
+            ["type": "SetProps", "nodeId": 2, "props": ["title": "read"]],
+            ["type": "BindEvent", "nodeId": 2, "event": "tap", "enabled": true],
+        ]]))
+        let button = try XCTUnwrap(renderer.view(for: 2) as? UIButton)
+        button.sendActions(for: .touchUpInside)
+        XCTAssertEqual(events.map { $0.type }, ["Tap"])
     }
 
     func testScrollViewportClipsContentAfterPropsUpdate() throws {

@@ -2,6 +2,65 @@ import XCTest
 import UIKit
 
 final class SharedCoreUITests: XCTestCase {
+    func testRoutingWithParametersAndReplacement() {
+        let app = XCUIApplication(); app.launch()
+        XCTAssertTrue(app.buttons["+1"].waitForExistence(timeout: 15)); app.buttons["+1"].tap()
+        app.buttons["打开 Async Form"].tap()
+        let params = app.staticTexts["form-route-params"]
+        XCTAssertTrue(params.waitForExistence(timeout: 15))
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "\"count\":1"), evaluatedWith: params); waitForExpectations(timeout: 10)
+        XCTAssertTrue(params.label.contains("来自 Counter 的参数"))
+        app.buttons["替换当前页并传参"].tap()
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "replace 的新参数"), evaluatedWith: params); waitForExpectations(timeout: 10)
+        app.buttons["返回 Counter"].tap()
+        let root = app.staticTexts["counter-route-params"]
+        XCTAssertTrue(root.waitForExistence(timeout: 15))
+        expectation(for: NSPredicate(format: "label == %@", "路由参数: {}"), evaluatedWith: root); waitForExpectations(timeout: 10)
+    }
+
+    func testRouteParametersAndPreservedPageState() {
+        let app = XCUIApplication(); app.launch()
+        XCTAssertTrue(app.staticTexts["Count: 0"].waitForExistence(timeout: 15))
+        app.buttons["+1"].tap()
+        app.buttons["打开 Async Form"].tap()
+        let params = app.staticTexts["form-route-params"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "\"count\":1"), evaluatedWith: params); waitForExpectations(timeout: 15)
+        let field = app.textFields["form-draft"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("retained draft")
+        app.buttons["打开 Counter 后返回验证表单保留"].tap()
+        XCTAssertTrue(app.staticTexts["Count: 0"].waitForExistence(timeout: 15))
+        app.buttons["返回上一页"].tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 15)); XCTAssertEqual(field.value as? String, "retained draft")
+        app.buttons["替换当前页并传参"].tap()
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "replace 的新参数"), evaluatedWith: params); waitForExpectations(timeout: 15)
+        XCTAssertEqual(field.value as? String, "Task name", "replace creates a fresh form")
+        app.buttons["返回 Counter"].tap()
+        XCTAssertTrue(app.staticTexts["Count: 1"].waitForExistence(timeout: 15))
+    }
+
+    func testStandardNativeServicesShowcase() {
+        let app = XCUIApplication(); app.launch()
+        XCTAssertTrue(app.segmentedControls.buttons["扩展"].waitForExistence(timeout: 15))
+        app.segmentedControls.buttons["扩展"].tap()
+        let info = app.buttons["native-info"]
+        XCTAssertTrue(info.waitForExistence(timeout: 15))
+        let scroll = app.scrollViews["extensions-scroll"]
+        for _ in 0..<8 { if info.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(info.isHittable); info.tap()
+        let status = app.staticTexts["native-status"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "iOS"), evaluatedWith: status); waitForExpectations(timeout: 15)
+        let storage = app.buttons["native-storage"]
+        for _ in 0..<6 { if storage.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(storage.isHittable); storage.tap()
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "AnseronUI 原生能力示例"), evaluatedWith: status); waitForExpectations(timeout: 15)
+        let inbox = app.buttons["device-notification-inbox"]
+        for _ in 0..<24 { if inbox.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(inbox.isHittable); inbox.tap()
+        let deviceStatus = app.staticTexts["device-status"]
+        expectation(for: NSPredicate(format: "label BEGINSWITH %@", "["), evaluatedWith: deviceStatus); waitForExpectations(timeout: 15)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "standard-native-services"; shot.lifetime = .keepAlways; add(shot)
+    }
+
     func testAnimationShowcase() {
         let app = XCUIApplication()
         app.launchArguments += ["--components"]

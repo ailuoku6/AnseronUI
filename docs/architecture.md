@@ -1,6 +1,6 @@
 # AnseronUI 架构、运行原理与仓库规范
 
-本文解释 AnseronUI 为什么能让同一份 TSX 运行在 iOS、Android 和 Web，以及开源仓库中各目录和 `.gitignore` 规则的含义。
+本文解释 AnseronUI 为什么能让同一份 TSX 运行在 iOS、Android、Web 和 macOS，以及开源仓库中各目录和 `.gitignore` 规则的含义。
 
 ## 设计目标
 

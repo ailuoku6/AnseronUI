@@ -5,17 +5,17 @@ import { createHash } from 'node:crypto';
 // Explicit distribution boundary: never copy checkout history, dependencies or build outputs.
 const directories = [
   ...['core', 'ui', 'layout', 'flexily', 'protocol', 'ui-compiler', 'render-web'].map(name => `packages/${name}/src`),
-  'packages/core/native', 'packages/render-ios/Sources',
+  'packages/core/native', 'packages/render-ios/Sources', 'packages/render-macos/Sources',
   'packages/render-android/src/main/java', 'packages/render-android/src/main/cpp',
   'scripts/templates/app',
 ];
 const files = [
   'LICENSE', 'THIRD_PARTY_NOTICES.md',
-  'packages/flexily/LICENSE', 'packages/render-ios/Package.swift',
+  'packages/render-macos/Package.swift', 'packages/flexily/LICENSE', 'packages/render-ios/Package.swift',
   'packages/render-android/src/main/AndroidManifest.xml',
   'internal/toolchain/build-library.mjs', 'internal/toolchain/async-embedding.patch', 'internal/toolchain/scriptc.vendor.json',
   ...['anseronui', 'standalone-app', 'native-plugins', 'sdk-files', 'prepare-compiler', 'prepare-tools',
-    'build-core', 'build-app', 'stage-core', 'core-inputs', 'lower-timers'].map(name => `scripts/${name}.mjs`),
+    'macos-app', 'build-core', 'build-app', 'stage-core', 'core-inputs', 'lower-timers'].map(name => `scripts/${name}.mjs`),
 ];
 export const toolchainHost = `${process.platform}-${process.arch}${process.platform === 'linux' ? (process.report.getReport().header.glibcVersionRuntime ? '-gnu' : '-musl') : process.platform === 'win32' ? '-msvc' : ''}`;
 export const sdkAliases = Object.fromEntries([

@@ -1,5 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <queries>
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="http" /></intent>
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="mailto" /></intent>
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="tel" /></intent>
+    </queries>
     <!-- The pinned AOT runtime packs pointers in values and cannot preserve heap tags. -->
-    <application android:allowNativeHeapPointerTagging="false" />
+    <application android:allowNativeHeapPointerTagging="false">
+        <service android:name="org.anseronui.render.AnseronUIJobService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
+        <receiver android:name="org.anseronui.render.AnseronUINotificationReceiver" android:exported="false" />
+        <provider android:name="org.anseronui.render.AnseronUIFileProvider" android:authorities="${applicationId}.anseronui.files" android:exported="false" android:grantUriPermissions="true" />
+    </application>
 </manifest>

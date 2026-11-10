@@ -179,6 +179,36 @@ describe("reference Core", () => {
     h.runtime.dispose();
   });
 
+  it("snapshots route params, supports typed reads and rejects invalid JSON", async () => {
+    let router!: import("@anseronui/ui").Router;
+    const h = harness(definePage("route-params", () => { router = useRouter(); return <View />; }));
+    h.send({ type: "CreateSurface", page: "route-params", width: 20, height: 20 }); h.drain();
+    const params = { id: 7, nested: { title: "中文", flags: [true, null] } };
+    const pending = router.push("details", params); params.nested.title = "changed";
+    const request = h.drain().find(item => item.type === "InvokeModule");
+    if (!request || request.type !== "InvokeModule") throw new Error("No push request");
+    expect(JSON.parse(request.argument)).toEqual({ page: "details", params: { id: 7, nested: { title: "中文", flags: [true, null] } } });
+    h.send({ type: "ModuleResult", requestId: request.requestId, ok: true, value: "null" }); h.drain(); await pending;
+    const replaced = router.replace("details", { replaced: true });
+    const replaceRequest = h.drain().find(item => item.type === "InvokeModule");
+    if (!replaceRequest || replaceRequest.type !== "InvokeModule") throw new Error("No replace request");
+    expect(JSON.parse(replaceRequest.argument)).toEqual({ page: "details", params: { replaced: true } });
+    h.send({ type: "ModuleResult", requestId: replaceRequest.requestId, ok: true, value: "null" }); h.drain(); await replaced;
+    const read = router.getParams<{ id: number }>();
+    const readRequest = h.drain().find(item => item.type === "InvokeModule");
+    if (!readRequest || readRequest.type !== "InvokeModule") throw new Error("No params request");
+    expect(readRequest.method).toBe("getParams");
+    h.send({ type: "ModuleResult", requestId: readRequest.requestId, ok: true, value: '{"id":7}' }); h.drain();
+    expect((await read).id).toBe(7);
+    const cycle: Record<string, unknown> = {}; cycle.self = cycle;
+    for (const value of [null, [], { bad: undefined }, { bad: NaN }, { bad: Infinity }, { bad: () => {} }, cycle]) {
+      await expect(router.push("details", value as import("@anseronui/ui").RouteParams)).rejects.toThrow("INVALID_ROUTE_PARAMS");
+    }
+    await expect(router.push("details", { text: "x".repeat(12000) })).rejects.toThrow("ROUTE_PARAMS_TOO_LARGE");
+    expect(h.drain().some(item => item.type === "InvokeModule")).toBe(false);
+    h.runtime.dispose();
+  });
+
   it("dispatches synchronous system back presses and reports consumption", () => {
     let allow = true;
     const page = definePage("back-press", () => <View onBackPress={() => allow} />);
@@ -656,4 +686,53 @@ it('timer callback failures are diagnostics and do not leave a live handle', () 
   h.send({type:'ModuleResult',requestId:request.requestId,ok:true,value:''});
   expect(h.drain()).toContainEqual({type:'Diagnostic',code:'TIMER_ERROR',message:'Error: timer boom'});
   h.runtime.dispose();
+});
+
+describe('standard native services', () => {
+  it('delivers subscription values repeatedly and cancels pending reads on component removal', async () => {
+    let services!: import('@anseronui/ui').Services;
+    let remove = () => {};
+    const values: unknown[] = [];
+    const errors: Error[] = [];
+    function Child(): UIElement { services = useServices(); return <Text>child</Text>; }
+    function Page(): UIElement { const [visible, setVisible] = useState(true); remove = () => setVisible(false); return <View>{visible ? <Child /> : null}</View>; }
+    const h = harness(definePage('native-stream', Page));
+    h.send({ type: 'CreateSurface', page: 'native-stream', width: 320, height: 480 }); h.drain();
+    const stop = services.network.subscribe(value => values.push(value), error => errors.push(error));
+    const first = h.drain().find(item => item.type === 'InvokeModule');
+    expect(first).toMatchObject({ module: 'events', method: 'next' });
+    if (first?.type !== 'InvokeModule') throw new Error('missing subscription');
+    h.send({ type: 'ModuleResult', requestId: first.requestId, ok: true, value: '{"connected":true,"type":"wifi"}' }); h.drain();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(values).toEqual([{ connected: true, type: 'wifi' }]);
+    const second = h.drain().find(item => item.type === 'InvokeModule');
+    expect(second).toMatchObject({ module: 'events', method: 'next', argument: first.argument });
+    if (second?.type !== 'InvokeModule') throw new Error('missing next read');
+    remove(); const outputs = h.drain();
+    expect(outputs).toContainEqual({ type: 'CancelRequest', requestId: second.requestId });
+    expect(outputs).toContainEqual(expect.objectContaining({ type: 'InvokeModule', module: 'events', method: 'close' }));
+    h.send({ type: 'ModuleResult', requestId: second.requestId, ok: true, value: '{"connected":false,"type":"none"}' }); h.drain();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(values).toHaveLength(1); expect(errors).toEqual([]);
+    stop(); h.runtime.dispose();
+  });
+
+  it('returns HTTP status/headers and maps errors to stable service codes', async () => {
+    let services!: import('@anseronui/ui').Services;
+    function Page(): UIElement { services = useServices(); return <View />; }
+    const h = harness(definePage('native-http', Page));
+    h.send({ type: 'CreateSurface', page: 'native-http', width: 320, height: 480 }); h.drain();
+    const response = services.http.request({ url: 'https://example.test/api', method: 'POST', headers: { Authorization: 'example' }, body: '{}' });
+    const request = h.drain().find(item => item.type === 'InvokeModule');
+    expect(request).toMatchObject({ module: 'http', method: 'request' });
+    if (request?.type !== 'InvokeModule') throw new Error('missing HTTP');
+    expect(JSON.parse(request.argument)).toMatchObject({ method: 'POST', body: '{}' });
+    h.send({ type: 'ModuleResult', requestId: request.requestId, ok: true, value: '{"status":401,"headers":{},"body":"unauthorized"}' }); h.drain();
+    await expect(response).resolves.toMatchObject({ status: 401, body: 'unauthorized' });
+    const failure = services.secureStorage.get('token');
+    const pending = h.drain().find(item => item.type === 'InvokeModule');
+    if (pending?.type !== 'InvokeModule') throw new Error('missing secure storage');
+    h.send({ type: 'ModuleResult', requestId: pending.requestId, ok: false, value: 'UNSUPPORTED: secureStorage' }); h.drain();
+    await expect(failure).rejects.toMatchObject({ name: 'NativeServiceError', code: 'UNSUPPORTED' }); h.runtime.dispose();
+  });
 });

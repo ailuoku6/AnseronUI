@@ -1,8 +1,30 @@
 import UIKit
+import UserNotifications
 
-@main final class AppDelegate: UIResponder, UIApplicationDelegate {
+@main final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     var window: UIWindow?
+    func application(_ app: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken token: Data) { AnseronUINotifications.didRegister(deviceToken: token) }
+    func application(_ app: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) { AnseronUINotifications.didFailToRegister(error) }
+    func application(_ app: UIApplication, didReceiveRemoteNotification payload: [AnyHashable: Any], fetchCompletionHandler complete: @escaping (UIBackgroundFetchResult) -> Void) {
+        AnseronUINotifications.receive(Dictionary(uniqueKeysWithValues: payload.map { (String(describing: $0.key), $0.value) })); complete(.noData)
+    }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler complete: @escaping (UNNotificationPresentationOptions) -> Void) {
+        DispatchQueue.main.async {
+            AnseronUINotifications.receive(Dictionary(uniqueKeysWithValues: notification.request.content.userInfo.map { (String(describing: $0.key), $0.value) })); complete([.banner, .sound])
+        }
+    }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler complete: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            AnseronUINotifications.receive(Dictionary(uniqueKeysWithValues: response.notification.request.content.userInfo.map { (String(describing: $0.key), $0.value) }), opened: true); complete()
+        }
+    }
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool { AnseronUILinks.receive(url); return true }
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        AnseronUIBackground.register("org.anseronui.demo.refresh") { complete in
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "anseronui.demo.lastBackgroundRun"); complete(true); return nil
+        }
+        UNUserNotificationCenter.current().delegate = self
+        if let url = options?[.url] as? URL { AnseronUILinks.receive(url) }
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.rootViewController = DemoController()
         window.makeKeyAndVisible()

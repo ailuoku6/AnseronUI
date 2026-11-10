@@ -599,7 +599,11 @@ private final class TouchSession {
             button.accessibilityLabel = props.accessibilityLabel
         } else if let field = view as? UITextField {
             record.applyingValue = true
-            if (props.inputRevision ?? 0) >= record.inputRevision && field.markedTextRange == nil && field.text != (props.value ?? "") { field.text = props.value ?? "" }
+            if (props.inputRevision ?? 0) >= record.inputRevision && field.markedTextRange == nil {
+                let value = props.value ?? ""
+                if field.text != value { field.text = value }
+                record.lastInputValue = value
+            }
             field.placeholder = props.placeholder ?? ""
             field.font = .systemFont(ofSize: fontSize)
             field.textColor = parseColor(props.color) ?? .label
@@ -707,6 +711,7 @@ private final class TouchSession {
         let value = field.text ?? ""
         guard value != record.lastInputValue else { return }
         record.lastInputValue = value
+        if record.inputRevision == 0 { record.inputRevision = 1 }
         onEvent?(RendererEvent(type: "InputChange", nodeId: found.key, revision: revision, value: value, inputRevision: record.inputRevision))
     }
 

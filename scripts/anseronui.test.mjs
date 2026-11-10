@@ -201,3 +201,22 @@ test('iOS run boots a selected shutdown simulator before installing', { skip: pr
     assert.ok(boot >= 0 && install > boot);
   } finally { f.cleanup(); }
 });
+
+test('macOS scaffolds an AppKit host and runs locally with explicit artifact validation', () => {
+  const f = fixture();
+  try {
+    assert.ok(existsSync(join(f.app,'platforms/macos/App.swift')));
+    const pkg = JSON.parse(readFileSync(join(f.app,'package.json'),'utf8'));
+    assert.match(pkg.scripts['build:macos'],/build macos/);
+    assert.match(pkg.scripts.macos,/run macos/);
+    const preview = appCLI(f,['run','macos','--dry-run','--no-build']);
+    assert.equal(preview.status,0,preview.stderr);
+    assert.deepEqual(JSON.parse(preview.stdout).steps,['validate app','launch locally']);
+    const device = appCLI(f,['run','macos','--device','unexpected','--dry-run']);
+    assert.notEqual(device.status,0); assert.match(device.stderr,/runs locally/);
+    if (process.platform === 'darwin' && process.arch === 'arm64') {
+      const absent = appCLI(f,['run','macos','--no-build']);
+      assert.notEqual(absent.status,0); assert.match(absent.stderr,/app missing/);
+    }
+  } finally { f.cleanup(); }
+});

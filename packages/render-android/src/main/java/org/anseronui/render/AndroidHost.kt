@@ -38,6 +38,7 @@ class AndroidHost(
     private val extensions: AndroidPlatformExtensions = AndroidPlatformExtensions(),
     private val router: ((method: String, args: Any?) -> Any?)? = null
 ) {
+    private val standardServices = StandardServices(root, baseUrl, extensions.subscriptions)
     private val ui = Handler(Looper.getMainLooper())
     private val thread = HandlerThread("AnseronUICore").apply { start() }
     private val owner = Handler(thread.looper)
@@ -279,8 +280,8 @@ class AndroidHost(
                 result.navigate?.let { ui.post(it) }
                 null
             } else {
-                val handler = extensions.modules[module] ?: error("UNSUPPORTED_MODULE: $module")
-                handler(method, args, completion)
+                val handler = extensions.modules[module]
+                if (handler != null && !standardServices.handles(module, method)) handler(method, args, completion) else standardServices.invoke(module, method, args, completion)
             }
             if (extensionRequests.containsKey(id)) extensionRequests[id] = cancel ?: {}
         } catch (error: Throwable) { completion(Result.failure(error)) }
@@ -300,6 +301,7 @@ class AndroidHost(
         core?.dispose()
         core = null
         ui.post {
+            standardServices.dispose()
             val cancellations = extensionRequests.values.toList(); extensionRequests.clear()
             cancellations.forEach { it() }
             renderer.clear()

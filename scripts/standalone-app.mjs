@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { copySDK, sdkFingerprint, toolchainHost, sdkAliases } from './sdk-files.mjs';
+import { buildMacOS, requireMacOS, validateMacOSBuild } from './macos-app.mjs';
 import { discoverNativePlugins, generateNativePlugins, pluginBuildConfig } from './native-plugins.mjs';
 
 const framework = fileURLToPath(new URL('../', import.meta.url));
@@ -99,19 +100,20 @@ export function createStandalone(targetPath, { name, applicationId, force = fals
   const scripts = {
     setup: `${forward} setup`, check: `${forward} check`, typecheck: `${forward} typecheck`,
     'dev:web': `${forward} dev web`,
-    ...Object.fromEntries(['web', 'ios', 'ios-device', 'android'].map(platform => [`build:${platform}`, `${forward} build ${platform}`])),
-    ios: `${forward} run ios`, android: `${forward} run android`,
-    'run:ios': `${forward} run ios`, 'run:android': `${forward} run android`,
+    ...Object.fromEntries(['web', 'ios', 'ios-device', 'android', 'macos'].map(platform => [`build:${platform}`, `${forward} build ${platform}`])),
+    ios: `${forward} run ios`, android: `${forward} run android`, macos: `${forward} run macos`,
+    'run:ios': `${forward} run ios`, 'run:android': `${forward} run android`, 'run:macos': `${forward} run macos`,
   };
   write(join(target, 'package.json'), JSON.stringify({ name: packageName, version: '0.1.0', private: true, type: 'module', engines: { node: '>=24.0.0' }, scripts, ...(!localFramework ? { dependencies: { anseronui: packageSpec ?? json(join(framework, 'package.json')).version } } : {}) }, null, 2) + '\n');
   write(join(target, 'assets/.gitkeep'), '');
+  write(join(target, 'platforms/macos/App.swift'), readFileSync(join(templates, 'platforms/macos/App.swift'), 'utf8').replaceAll('__APP_NAME__', displayName));
   // Gradle resolves these through its root project; paths work outside the framework too.
   write(join(target, 'platforms/android/settings.gradle'), `pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\nrootProject.name = '${displayName}'\ninclude ':app', ':render'\n`);
   const renderer = posix(relative(join(target, 'platforms/android'), resolve(target, config.app.framework, 'packages/render-android')));
   write(join(target, 'platforms/android/render/build.gradle'), `plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }\nandroid {\n namespace 'org.anseronui.render'\n compileSdk 35\n defaultConfig { minSdk 26 }\n compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }\n kotlinOptions { jvmTarget = '17' }\n sourceSets.main {\n  java.srcDirs = [rootProject.file(${JSON.stringify(renderer + '/src/main/java')})]\n  manifest.srcFile rootProject.file(${JSON.stringify(renderer + '/src/main/AndroidManifest.xml')})\n  jniLibs.srcDirs = [rootProject.file('../../.verification/android-jni')]\n }\n}\n`);
-  write(join(target, 'README.md'), `# ${displayName}\n\nAnseronUI 跨平台应用，应用标识 \`${identifier}\`。\n\n\`npm install\` → \`npm run setup\` → \`npm run ios\` / \`npm run android\`。\n\nsetup 使用 npm 包内的固定版本编译器源码构建工具链，无需 Git。iOS 需要 macOS、Xcode、模拟器 runtime 和 Python 3。Android 需要 SDK 35、NDK、JDK 17–22 及 arm64-v8a 设备或模拟器。\n\n指定设备：\`npm run ios -- --device <UUID或名称>\`、\`npm run android -- --device <serial>\`，或 \`npm run android -- --avd <AVD名称>\`。\`--no-build\` 复用已有产物，\`--dry-run\` 预览操作。\n\n\`npm run check\` 检查配置；\`npm run typecheck\` 检查 TSX。\`npm run build:ios\` / \`npm run build:android\` 只构建；\`build:ios-device\` 生成未签名真机产物，需自行配置 Xcode 签名。\n\nWeb：\`npm run build:web\`，然后 \`npm run dev:web\`。修改 TSX 后需重新编译 Wasm。\n\n页面位于 \`src/pages\`；页面清单位于 \`anseronui.config.json\`。${localFramework ? '本地源码模式：页面路径相对于框架目录。' : '配置中的页面、源码及 Web 路径相对于本工程，可整体移动工程。npm 依赖固定版本，提交 package-lock.json 以锁定依赖。SDK 与编译器缓存位于 .anseronui/，构建产物位于 .verification/、platforms/android/app/build/ 和 dist/web/。无需框架源码仓库。'}\n\n三端仅显示 TSX 页面，系统栏背景跟随页面根节点 backgroundColor。\n\n原生插件：使用 \`npm install <插件包>\` 安装到生产依赖，\`npm run check\` 查看已发现插件，再重新构建目标平台。构建自动接入包内的原生源码和注册表；生成文件位于 \`.anseronui/plugins/\`，请勿手动修改。插件发布协议见 AnseronUI 框架 README。\n`);
+  write(join(target, 'README.md'), `# ${displayName}\n\nAnseronUI 跨平台应用，应用标识 \`${identifier}\`。\n\n\`npm install\` → \`npm run setup\` → \`npm run ios\` / \`npm run android\` / \`npm run macos\`。\n\nsetup 使用 npm 包内的固定版本编译器源码构建工具链，无需 Git。iOS 需要 macOS、Xcode、模拟器 runtime 和 Python 3。macOS AppKit 需要 Apple Silicon、macOS 15+ 构建主机与 Xcode。Android 需要 SDK 35、NDK、JDK 17–22 及 arm64-v8a 设备或模拟器。\n\n指定设备：\`npm run ios -- --device <UUID或名称>\`、\`npm run android -- --device <serial>\`，或 \`npm run android -- --avd <AVD名称>\`。\`--no-build\` 复用已有产物，\`--dry-run\` 预览操作。\n\n\`npm run check\` 检查配置；\`npm run typecheck\` 检查 TSX。\`npm run build:ios\` / \`npm run build:android\` / \`npm run build:macos\` 只构建；\`build:ios-device\` 生成未签名真机产物，需自行配置 Xcode 签名。\n\nWeb：\`npm run build:web\`，然后 \`npm run dev:web\`。修改 TSX 后需重新编译 Wasm。\n\n页面位于 \`src/pages\`；页面清单位于 \`anseronui.config.json\`。${localFramework ? '本地源码模式：页面路径相对于框架目录。' : '配置中的页面、源码及 Web 路径相对于本工程，可整体移动工程。npm 依赖固定版本，提交 package-lock.json 以锁定依赖。SDK 与编译器缓存位于 .anseronui/，构建产物位于 .verification/、platforms/android/app/build/ 和 dist/web/。无需框架源码仓库。'}\n\n四端使用共享 TSX 页面；iOS、Android 与 Web 支持范围见框架文档，macOS 使用原生 AppKit Renderer。\n\n原生插件：使用 \`npm install <插件包>\` 安装到生产依赖，\`npm run check\` 查看已发现插件，再重新构建目标平台。构建自动接入包内的原生源码和注册表；生成文件位于 \`.anseronui/plugins/\`，请勿手动修改。插件发布协议见 AnseronUI 框架 README。\n`);
   generateNativePlugins(target, []);
-  console.log(`Created independent AnseronUI app: ${target}\nApplication ID: ${identifier}\nNext: cd ${JSON.stringify(target)}${localFramework ? '' : ' && npm install'} && npm run setup && npm run ios\nAndroid: npm run android`);
+  console.log(`Created independent AnseronUI app: ${target}\nApplication ID: ${identifier}\nNext: cd ${JSON.stringify(target)}${localFramework ? '' : ' && npm install'} && npm run setup && npm run ios\nAndroid: npm run android\nmacOS: npm run macos`);
 }
 
 export function setupStandalone(configPath, { prepareCompiler = false } = {}) {
@@ -209,7 +211,8 @@ function javaEnvironment(env) {
   return { ...env, JAVA_HOME: home };
 }
 export function buildStandalone(configPath, target) {
-  if (!['web', 'ios', 'ios-device', 'android'].includes(target)) throw new Error('Expected web, ios, ios-device, or android');
+  if (!['web', 'ios', 'ios-device', 'android', 'macos'].includes(target)) throw new Error('Expected web, ios, ios-device, android, or macos');
+  if (target === 'macos') requireMacOS();
   if (target.startsWith('ios') && process.platform !== 'darwin') throw new Error('iOS builds require macOS and Xcode.');
   const ctx = setupStandalone(configPath);
   const { app, config, file, framework } = ctx;
@@ -226,7 +229,7 @@ export function buildStandalone(configPath, target) {
   }
   writeFileSync(fd, JSON.stringify({ pid: process.pid, config: file }));
   try {
-    const coreTarget = { web: 'wasm', ios: 'ios-simulator', 'ios-device': 'ios-device', android: 'android' }[target];
+    const coreTarget = { web: 'wasm', ios: 'ios-simulator', 'ios-device': 'ios-device', android: 'android', macos: 'macos-arm64' }[target];
     run(process.execPath, ['scripts/build-core.mjs', coreTarget, file], { env, cwd: framework });
     const core = join(framework, '.verification/core-' + coreTarget);
     const localCore = join(app, '.verification/core-' + coreTarget);
@@ -236,7 +239,8 @@ export function buildStandalone(configPath, target) {
     const manifest = json(join(core, 'manifest.json'));
     manifest.localArtifactSha256 = createHash('sha256').update(readFileSync(join(localCore, localArtifact))).digest('hex');
     write(join(localCore, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-    if (target === 'web') run(process.execPath, ['node_modules/vite/bin/vite.js', 'build', '--config', resolve(framework, config.web.viteConfig)], { cwd: framework });
+    if (target === 'macos') buildMacOS({framework,app,config,core:localCore,standalone:true});
+    else if (target === 'web') run(process.execPath, ['node_modules/vite/bin/vite.js', 'build', '--config', resolve(framework, config.web.viteConfig)], { cwd: framework });
     else if (target === 'android') {
       const native = join(app, 'platforms/android');
       write(join(native, 'app/src/main/assets/core.manifest.json'), readFileSync(join(core, 'manifest.json')));
@@ -247,7 +251,7 @@ export function buildStandalone(configPath, target) {
       const ios = join(app, 'platforms/ios');
       write(join(ios, 'core.manifest.json'), readFileSync(join(core, 'manifest.json')));
       run('python3', [join(app, 'scripts/generate-ios-project.py')]);
-      run('xcodebuild', ['-project', join(ios, 'App.xcodeproj'), '-scheme', 'App', '-configuration', 'Debug', '-sdk', target === 'ios' ? 'iphonesimulator' : 'iphoneos', '-derivedDataPath', join(app, '.verification/' + target), 'CODE_SIGNING_ALLOWED=NO', 'ARCHS=arm64', 'build']);
+      run('xcodebuild', ['-project', join(ios, 'App.xcodeproj'), '-scheme', 'App', '-configuration', 'Debug', '-sdk', target === 'ios' ? 'iphonesimulator' : 'iphoneos', '-derivedDataPath', join(app, '.verification/' + target), ...(target === 'ios' ? ['CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-'] : ['CODE_SIGNING_ALLOWED=NO']), 'ARCHS=arm64', 'build']);
     }
   } finally { closeSync(fd); rmSync(lock); }
 }
@@ -293,10 +297,23 @@ async function untilReady(check, description, timeout = 180000) {
   throw new Error(`Timed out waiting for ${description}.`);
 }
 export async function runStandalone(configPath, target, options = {}) {
-  if (!['ios', 'android'].includes(target)) throw new Error('run supports ios (simulator) or android.');
+  if (!['ios', 'android', 'macos'].includes(target)) throw new Error('run supports ios (simulator), android, or macos.');
+  if (target === 'macos' && (options.device || options.avd)) throw new Error('macOS runs locally; --device and --avd are not supported.');
   if (options.device && options.avd) throw new Error('Choose --device or --avd, not both.');
   if (target === 'ios' && options.avd) throw new Error('--avd is Android-only.');
   const { app, config } = appContext(configPath);
+  if (target === 'macos') {
+    if (options['dry-run']) {
+      console.log(JSON.stringify({platform:target,build:!options['no-build'],applicationId:config.app.applicationId,steps:[...(!options['no-build'] ? ['build'] : []),'validate app','launch locally']},null,2));
+      return;
+    }
+    requireMacOS();
+    if (!options['no-build']) buildStandalone(configPath,target);
+    const artifact = validateMacOSBuild(app,config.buildId);
+    run('open',['-n',artifact]);
+    console.log(`Launched ${config.app.name} on macOS.`);
+    return;
+  }
   if (options['dry-run']) {
     console.log(JSON.stringify({ platform: target, build: !options['no-build'], applicationId: config.app.applicationId, device: options.device ?? 'auto', avd: options.avd ?? null, steps: ['select/boot device', ...(!options['no-build'] ? ['build'] : []), 'install', 'launch'] }, null, 2));
     return;

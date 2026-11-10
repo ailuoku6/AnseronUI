@@ -19,3 +19,7 @@ function DeviceButton() {
 ```
 
 插件协议与发布步骤见仓库根 README 的「发布带原生能力的 npm 包」。此包尚未发布到 npm。
+
+## macOS
+
+示例已增加 `macos/DevicePlugin.swift`，通过 schema 2 显式声明 AppKit 工厂 `AnseronMacDevicePlugin`。应用安装后使用 `npm run macos` 构建运行。原有三端适配继续保留；schema 2 需要包含 macOS 支持的新 AnseronUI SDK，旧 SDK 会拒绝该清单。

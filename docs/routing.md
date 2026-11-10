@@ -1,44 +1,64 @@
 # 页面路由
 
-AnseronUI 的页面路由由宿主容器维护栈，TSX 通过 `useRouter()` 发起跳转。页面仍然是 `anseronui.config.json` 中注册的 `definePage`，所以 iOS、Android 和 Web 使用同一套页面名称。
+AnseronUI 的页面路由由宿主容器维护栈，TSX 通过 `useRouter()` 发起跳转。页面名称来自构建配置中注册的 `definePage`，iOS、Android 和 Web 使用同一套名称。
 
 ```tsx
-import { Button, Text, View, useRouter } from "@anseronui/ui";
+import { Button, Text, View, definePage, useEffect, useRouter, useState } from "@anseronui/ui";
+import type { RouteParams, UIElement } from "@anseronui/ui";
 
-function Home() {
+function Home(): UIElement {
   const router = useRouter();
+  const [count, setCount] = useState(0);
   return <View>
-    <Text>首页</Text>
-    <Button title="打开详情" onClick={() => { void router.push("details"); }} />
+    <Text>计数: {count}</Text>
+    <Button title="+1" onClick={() => setCount(value => value + 1)} />
+    <Button title="打开详情" onClick={() => { void router.push("details", { source: "home", count, filter: { active: true } }); }} />
   </View>;
 }
 
-function Details() {
+function Details(): UIElement {
   const router = useRouter();
+  const [params, setParams] = useState<RouteParams>({});
+  useEffect(() => { let active = true; void router.getParams().then(value => { if (active) setParams(value); }); return () => { active = false; }; }, []);
   return <View>
-    <Text>详情页</Text>
+    <Text>来源: {String(params.source)}，计数: {String(params.count)}</Text>
     <Button title="返回" onClick={() => { void router.back(); }} />
   </View>;
 }
 ```
 
-`Router` 提供以下方法：
+`push(page, params?)` 把新条目压入栈。`replace(page, params?)` 只替换栈顶；`pop()`／`back()` 返回上一条目；根页面调用会以 `ROUTER_EMPTY` 拒绝。`current()` 返回当前页面名称，`getParams<T>()` 返回当前条目的参数快照，缺少参数时为 `{}`。`RouteParams` 只接受 JSON 值（字符串、有限数字、布尔、null、数组和对象），不得传函数、循环引用或未支持的对象。
 
-- `push(page)`：将已注册页面压入栈并显示。
-- `replace(page)`：替换当前栈顶页面。
-- `pop()` / `back()`：返回上一页；根页面调用会拒绝；具体错误文本随宿主实现不同（如 `ROUTER_EMPTY`）。
-- `current()`：读取宿主当前页面名称。
+参数随导航条目保存，调用时立即复制，不会受调用方之后修改对象影响。每次导航参数上限 48 KB；超出时以 `ROUTE_PARAMS_TOO_LARGE` 拒绝。入栈同一页面两次会创建两个独立实例，各自持有不同状态和参数。
 
-`push` 和 `replace` 的页面名必须符合小写字母开头的 `a-z0-9_-` 规则，并且必须出现在构建配置的 `pages` 中。导航调用返回 Promise；宿主收到请求后替换渲染容器，旧页面的节点 ref 和未完成服务请求按页面销毁语义失效。当前版本不保留旧页面实例状态，也不传递路由参数；需要跨页数据时使用由宿主持有的 Module 或持久化服务。页面 surface 的 Hook state 以及随运行时重建的模块变量不能当作跨页缓存。
+## 页面状态
 
-## 宿主行为
+`push` 后，原页面 surface、Hook state、输入值、滚动位置、动画、引用和运行时状态均保留在导航栈中，暂时从可见层级分离。`pop` 恢复原实例，不重新挂载页面；`getParams()` 读取的是调用它的页面条目参数。隐藏页面不应继续发起导航；只有栈顶条目可以执行 push／replace／pop。
 
-`AnseronUIRenderView.load(page)` 从根页面开始并重置路由栈；`push(page)`、`replace(page)` 和 `pop()` 可供原生宿主直接控制栈。Web 的 `BrowserHost` 通过 `PlatformExtensions.router` 注册同样的处理器。路由模块是框架保留能力，业务模块不能再注册名为 `router` 的 module。
+移除条目的生命周期如下：
 
-页面切换会销毁当前 Core surface，再以新页面创建 surface。切换期间旧页面的动画、ref、定时器、HTTP 请求和模块请求都会按现有销毁流程取消；系统返回键或导航栏返回按钮应调用 `pop()`/`back()`。
+- `pop`：销毁刚离开的栈顶页面，恢复下一条原实例。
+- `replace`：销毁被替换的栈顶页面，较早的页面保持不变。
+- `load(page, params?)`：销毁整个旧栈并创建一个新的根页面。
+- 宿主销毁：销毁栈中所有页面。
 
-系统返回键的拦截见[返回键监听](back-press.md)：宿主先调用 `handleBackPress()`，未消费时再执行 `pop()`。
+销毁条目会取消其未完成服务请求和订阅，失效原生组件 ref，并释放该页面持有的传输文件引用。页面可另外通过 `useEffect` 清理需要暂停的计时器或后台资源。平台在同一容器内复用独立页面实例；不承诺跨进程持久化、进程终止后恢复、原生系统路由动画或内存压力下的页面回收。
 
-## 当前边界
+## 宿主接口
 
-本版先覆盖页面栈和跨端跳转，暂不包含路由参数、深链解析、转场动画、页面缓存、嵌套路由和持久化导航状态。需要携带数据时，建议先把数据放入共享模块，再在目标页读取。
+原生 `AnseronUIRenderView.load(page, params)` 重置整个栈，`push(page, params)`／`replace(page, params)`／`pop()` 直接操作栈。`routeStack` 与 `routeParams` 提供当前导航信息。
+
+Web 使用 `BrowserPageStack` 保存同一套页面实例及状态：
+
+```ts
+const stack = new BrowserPageStack(container, async (root, page, router) => {
+  const host = new BrowserHost(root, await loadRuntime(), undefined, { router });
+  await host.mount(page, root.clientWidth, root.clientHeight);
+  return host;
+});
+stack.router.load('home', { source: 'app' });
+```
+
+传给 BrowserHost 的 `router` handler 需由 `handlerFor` 或 `BrowserPageStack` 按导航条目绑定。Web 页面栈协调容器 attach/detach、resize、返回键与页面销毁。路由模块是框架保留能力，业务扩展不可注册同名 `router` module。
+
+系统返回键先交给当前页面 `handleBackPress()`；页面未消费时再执行栈返回。Web 浏览器的系统前进／后退历史不与内存路由栈同步；集成入口应按需自行拦截浏览器返回键。
