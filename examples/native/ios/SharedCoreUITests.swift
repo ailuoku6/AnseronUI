@@ -2,6 +2,29 @@ import XCTest
 import UIKit
 
 final class SharedCoreUITests: XCTestCase {
+    func testEdgeSwipeBackCancelsAndRestoresRetainedPage() {
+        let app = XCUIApplication(); app.launch()
+        XCTAssertTrue(app.staticTexts["Count: 0"].waitForExistence(timeout: 15))
+        app.buttons["+1"].tap()
+        app.buttons["打开 Async Form"].tap()
+        let params = app.staticTexts["form-route-params"]
+        XCTAssertTrue(params.waitForExistence(timeout: 15))
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.5))
+        // A short, slow drag must cancel without destroying the current page.
+        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)),
+                   withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertTrue(params.isHittable)
+        // replace must keep the previous entry available to the edge gesture.
+        app.buttons["替换当前页并传参"].tap()
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "replace 的新参数"), evaluatedWith: params)
+        waitForExpectations(timeout: 10)
+        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        XCTAssertTrue(app.staticTexts["Count: 1"].waitForExistence(timeout: 15))
+        // There is no route to pop at the root.
+        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        XCTAssertTrue(app.staticTexts["Count: 1"].isHittable)
+    }
+
     func testRoutingWithParametersAndReplacement() {
         let app = XCUIApplication(); app.launch()
         XCTAssertTrue(app.buttons["+1"].waitForExistence(timeout: 15)); app.buttons["+1"].tap()

@@ -41,6 +41,7 @@ private final class CoreWorker {
     private var pendingSurface: (page: String, width: Double, height: Double)?
     private var requests: [UInt32: () -> Void] = [:]
     private var backWaiter: ((Bool) -> Void)?
+    private var backRequestID: UUID?
 
     init(createCore: @escaping () throws -> IOSCoreTransport, baseURL: URL?) {
         self.createCore = createCore
@@ -68,14 +69,34 @@ private final class CoreWorker {
     func backPress() -> Bool {
         var consumed = false
         let semaphore = DispatchSemaphore(value: 0)
-        enqueue { [weak self] in
-            guard let self else { semaphore.signal(); return }
-            self.backWaiter = { value in consumed = value; semaphore.signal() }
-            try self.sendNow(["type": "BackPress"])
-        }
+        requestBackPress { value in consumed = value; semaphore.signal() }
         _ = semaphore.wait(timeout: .now() + .milliseconds(750))
-        backWaiter = nil
         return consumed
+    }
+
+    func requestBackPress(_ completion: @escaping (Bool) -> Void) {
+        enqueue { [weak self] in
+            guard let self else { completion(false); return }
+            // The protocol has no request ID, so do not overlap back requests.
+            guard self.backWaiter == nil else { completion(true); return }
+            let id = UUID()
+            self.backRequestID = id
+            self.backWaiter = completion
+            try self.sendNow(["type": "BackPress"])
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(750)) { [weak self] in
+                self?.enqueue { [weak self] in
+                    guard let self, self.backRequestID == id else { return }
+                    self.completeBackPress(false)
+                }
+            }
+        }
+    }
+
+    private func completeBackPress(_ consumed: Bool) {
+        let completion = backWaiter
+        backWaiter = nil
+        backRequestID = nil
+        completion?(consumed)
     }
     func stop() { enqueue { [weak self] in self?.finish() } }
 
@@ -158,7 +179,7 @@ private final class CoreWorker {
             guard let id = payload["requestId"] as? UInt32 else { throw HostError.invalidOutput }
             requests.removeValue(forKey: id)?()
         case "BackPressResult":
-            backWaiter?(payload["consumed"] as? Bool ?? false)
+            completeBackPress(payload["consumed"] as? Bool ?? false)
         case "SurfaceDisposed": emitUI(payload); finish()
         default: throw HostError.invalidOutput
         }
@@ -208,6 +229,7 @@ private final class CoreWorker {
         jobs.removeAll()
         condition.broadcast()
         condition.unlock()
+        completeBackPress(false)
         requests.values.forEach { $0() }
         requests.removeAll()
         core?.dispose()
@@ -284,6 +306,19 @@ private final class CoreWorker {
     public func wake() { worker.wake() }
     /// Synchronously asks Core whether the current TSX page consumed system back.
     public func handleBackPress() -> Bool { worker.backPress() }
+    /// Checks back interception without blocking UIKit's gesture/animation loop.
+    public func handleBackPress(completion: @escaping (Bool) -> Void) {
+        guard !destroyed else { completion(false); return }
+        var completed = false
+        let resolve: (Bool) -> Void = { consumed in
+            guard !completed else { return }
+            completed = true
+            completion(consumed)
+        }
+        worker.requestBackPress { consumed in DispatchQueue.main.async { resolve(consumed) } }
+        // Also resolves if the worker has already stopped accepting jobs.
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(750)) { resolve(false) }
+    }
     public func destroy() {
         if destroyed { return }
         destroyed = true

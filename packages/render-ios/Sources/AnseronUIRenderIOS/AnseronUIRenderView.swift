@@ -3,7 +3,7 @@ import UIKit
 
 /// Embeddable page container. Call destroy() when its owner finishes using it.
 /// Removing it from a superview does not destroy the page, so it can be reparented.
-@MainActor public final class AnseronUIRenderView: UIView {
+@MainActor public final class AnseronUIRenderView: UIView, UIGestureRecognizerDelegate {
     public var onReady: (() -> Void)?
     /// Lets the owning app extend the page background into system safe areas.
     public var onPageBackgroundColor: ((UIColor) -> Void)?
@@ -23,6 +23,14 @@ import UIKit
         init(_ page: String, _ params: String) { self.page = page; self.params = params }
     }
     private var routes: [Route] = []
+    private var backPreview: (current: UIView, previous: UIView)?
+    private var backTransitionID: UUID?
+    private lazy var backGesture: UIScreenEdgePanGestureRecognizer = {
+        let gesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleBackGesture(_:)))
+        gesture.edges = .left
+        gesture.delegate = self
+        return gesture
+    }()
     public var routeStack: [String] { routes.map { $0.page } }
     public var routeParams: [String: Any] { (try? decodeNativeJSON(routes.last?.params ?? "{}")) as? [String: Any] ?? [:] }
     private func parameterSnapshot(_ params: [String: Any]) -> String {
@@ -44,6 +52,7 @@ import UIKit
         self.baseURL = baseURL
         self.createCore = createCore
         super.init(frame: frame)
+        addGestureRecognizer(backGesture)
     }
 
     @available(*, unavailable, message: "Create AnseronUIRenderView programmatically")
@@ -53,6 +62,7 @@ import UIKit
     public func load(page: String, params: [String: Any] = [:]) {
         precondition(!isDestroyed && !page.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         let entry = Route(page, parameterSnapshot(params))
+        resetBackPreview()
         retireAllPages()
         routes = [entry]
         loadCurrentPage()
@@ -62,6 +72,7 @@ import UIKit
     public func push(page: String, params: [String: Any] = [:]) {
         precondition(!isDestroyed && !page.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         let entry = Route(page, parameterSnapshot(params))
+        resetBackPreview()
         renderRoot?.removeFromSuperview()
         routes.append(entry)
         loadCurrentPage()
@@ -71,6 +82,7 @@ import UIKit
     public func replace(page: String, params: [String: Any] = [:]) {
         precondition(!isDestroyed && !routeStack.isEmpty && !page.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         let entry = Route(page, parameterSnapshot(params))
+        resetBackPreview()
         retirePage(routes.removeLast())
         routes.append(entry)
         loadCurrentPage()
@@ -78,6 +90,7 @@ import UIKit
 
     @discardableResult public func pop() -> Bool {
         guard !isDestroyed, routeStack.count > 1 else { return false }
+        resetBackPreview()
         retirePage(routes.removeLast())
         loadCurrentPage()
         return true
@@ -85,6 +98,69 @@ import UIKit
 
     /// Called by a navigation controller before applying its default back behavior.
     public func handleBackPress() -> Bool { host?.handleBackPress() ?? false }
+
+    public override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === backGesture else { return true }
+        let velocity = backGesture.velocity(in: self)
+        return !isDestroyed && routes.count > 1 && backPreview == nil && bounds.width > 0
+            && velocity.x > abs(velocity.y)
+    }
+
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                                  shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Give an edge drag priority over a page's scroll view pan gesture.
+        gestureRecognizer === backGesture && otherGestureRecognizer.view is UIScrollView
+    }
+
+    @objc private func handleBackGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            guard routes.count > 1, let current = renderRoot, let previous = routes[routes.count - 2].root else { return }
+            previous.frame = bounds
+            insertSubview(previous, belowSubview: current)
+            backPreview = (current, previous)
+            updateBackPreview(translation: gesture.translation(in: self).x)
+        case .changed:
+            updateBackPreview(translation: gesture.translation(in: self).x)
+        case .ended, .cancelled, .failed:
+            guard let preview = backPreview else { return }
+            let distance = max(0, gesture.translation(in: self).x)
+            let velocity = gesture.velocity(in: self).x
+            let shouldPop = gesture.state == .ended && velocity >= 0
+                && (distance > bounds.width / 3 || velocity > 500)
+            let consumed = shouldPop && handleBackPress()
+            let finish = shouldPop && !consumed
+            let transitionID = UUID()
+            backTransitionID = transitionID
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                preview.current.transform = finish ? CGAffineTransform(translationX: self.bounds.width, y: 0) : .identity
+                preview.previous.transform = finish ? .identity : CGAffineTransform(translationX: -self.bounds.width * 0.25, y: 0)
+            }, completion: { [weak self] _ in
+                guard let self, self.backTransitionID == transitionID else { return }
+                self.resetBackPreview()
+                if finish { _ = self.pop() }
+            })
+        default: break
+        }
+    }
+
+    private func updateBackPreview(translation: CGFloat) {
+        guard let preview = backPreview else { return }
+        let distance = min(bounds.width, max(0, translation))
+        preview.current.transform = CGAffineTransform(translationX: distance, y: 0)
+        preview.previous.transform = CGAffineTransform(translationX: (distance - bounds.width) * 0.25, y: 0)
+    }
+
+    private func resetBackPreview() {
+        backTransitionID = nil
+        guard let preview = backPreview else { return }
+        backPreview = nil
+        preview.current.layer.removeAllAnimations()
+        preview.previous.layer.removeAllAnimations()
+        preview.current.transform = .identity
+        preview.previous.transform = .identity
+        preview.previous.removeFromSuperview()
+    }
 
     private func loadCurrentPage() {
         guard let entry = routes.last else { return }
@@ -107,6 +183,7 @@ import UIKit
 
     public override func layoutSubviews() {
         super.layoutSubviews()
+        if let preview = backPreview, preview.current.bounds.size != bounds.size { resetBackPreview() }
         renderRoot?.frame = bounds
         synchronizeSize()
     }
@@ -115,6 +192,7 @@ import UIKit
     public func destroy() {
         guard !isDestroyed else { return }
         isDestroyed = true
+        resetBackPreview()
         retireAllPages()
         page = nil
     }

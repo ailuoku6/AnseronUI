@@ -66,7 +66,63 @@ private final class RecordingCore: IOSCoreTransport {
     func dispose() { disposed.fulfill() }
 }
 
+private final class BackDrag: UIScreenEdgePanGestureRecognizer {
+    var phase: UIGestureRecognizer.State = .began
+    var offset: CGFloat = 0
+    override var state: UIGestureRecognizer.State {
+        get { phase }
+        set { phase = newValue }
+    }
+    override func translation(in view: UIView?) -> CGPoint { CGPoint(x: offset, y: 0) }
+    override func velocity(in view: UIView?) -> CGPoint { CGPoint(x: 100, y: 0) }
+}
+
 @MainActor final class RenderViewTests: XCTestCase {
+    func testLayoutDuringBackDragPreservesTranslationAndSurfaceSize() async throws {
+        let committed = expectation(description: "pages mounted"); committed.expectedFulfillmentCount = 2
+        let disposed = expectation(description: "pages disposed"); disposed.expectedFulfillmentCount = 2
+        let view = AnseronUIRenderView(frame: CGRect(x: 0, y: 0, width: 320, height: 480), createCore: {
+            RecordingCore(disposed: disposed, committed: committed)
+        })
+        view.load(page: "counter")
+        view.push(page: "async-form")
+        await fulfillment(of: [committed], timeout: 5)
+        let current = try XCTUnwrap(view.subviews.last)
+        let gesture = BackDrag()
+        view.perform(NSSelectorFromString("handleBackGesture:"), with: gesture)
+        gesture.phase = .changed; gesture.offset = 120
+        view.perform(NSSelectorFromString("handleBackGesture:"), with: gesture)
+        view.setNeedsLayout(); view.layoutIfNeeded()
+        XCTAssertEqual(current.transform.tx, 120, accuracy: 0.01)
+        XCTAssertEqual(current.frame.minX, 120, accuracy: 0.01)
+        XCTAssertEqual(current.bounds.size, CGSize(width: 320, height: 480))
+        XCTAssertEqual(view.routeStack, ["counter", "async-form"])
+        view.destroy()
+        await fulfillment(of: [disposed], timeout: 5)
+    }
+
+    func testAsyncBackInterceptionDoesNotBlockMainThreadWhenCoreDoesNotReply() async {
+        let committed = expectation(description: "page mounted")
+        let disposed = expectation(description: "page disposed")
+        let core = RecordingCore(disposed: disposed, committed: committed)
+        let host = IOSHost(root: UIView(), createCore: { core })
+        host.start(page: "counter", width: 320, height: 480)
+        await fulfillment(of: [committed], timeout: 5)
+        let resolved = expectation(description: "missing reply times out")
+        let start = Date()
+        host.handleBackPress { consumed in
+            XCTAssertFalse(consumed)
+            resolved.fulfill()
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.1)
+        let responsive = expectation(description: "main queue remains responsive")
+        DispatchQueue.main.async { responsive.fulfill() }
+        await fulfillment(of: [responsive], timeout: 0.2)
+        await fulfillment(of: [resolved], timeout: 2)
+        host.destroy()
+        await fulfillment(of: [disposed], timeout: 5)
+    }
+
     func testPushRetainsHostAndPopDisposesOnlyTopEntry() async throws {
         let firstDisposed = expectation(description: "root disposed at container destruction")
         let secondDisposed = expectation(description: "detail disposed on pop")
