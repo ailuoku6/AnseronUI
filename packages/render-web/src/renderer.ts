@@ -12,6 +12,7 @@ type NodeRecord = {
   inputRevision: number;
   pendingInputRevision: number;
   pendingValue: string | null;
+  props?: RenderProps;
 };
 export type RendererEvent = { type: "Tap"; nodeId: number; revision: number } |
   { type: "InputChange"; nodeId: number; revision: number; value: string; inputRevision: number } |
@@ -24,6 +25,13 @@ export class DOMRenderer {
   private disposed = false;
   private pointers = new Map<number, { target: number; owner: number; clientX: number; clientY: number }>();
   private readonly pointerListeners: [string, EventListener][] = [];
+  private readonly appearance?: MediaQueryList;
+  private readonly appearanceChanged = () => {
+    for (const record of this.records.values()) if (record.props) {
+      this.setProps(record, record.props, this.revision, true);
+      record.animation.commit();
+    }
+  };
 
   private sendPointer(name: "touchDown" | "touchMove" | "touchUp" | "touchCancel", event: PointerEvent): void {
     if (name === "touchDown") {
@@ -66,6 +74,8 @@ export class DOMRenderer {
   }
 
   constructor(readonly root: HTMLElement, private readonly onEvent: (event: RendererEvent) => void, private readonly components: Record<string, NativeViewFactory> = {}) {
+    this.appearance = root.ownerDocument.defaultView?.matchMedia?.('(prefers-color-scheme: dark)');
+    this.appearance?.addEventListener('change', this.appearanceChanged);
     for (const [native, name] of [["pointerdown", "touchDown"], ["pointermove", "touchMove"], ["pointerup", "touchUp"], ["pointercancel", "touchCancel"], ["lostpointercapture", "touchCancel"]] as const) {
       const listener: EventListener = event => this.sendPointer(name, event as PointerEvent);
       this.pointerListeners.push([native, listener]);
@@ -73,6 +83,8 @@ export class DOMRenderer {
     }
     root.style.position = "relative";
     root.style.overflow = "hidden";
+    root.style.colorScheme = "light dark";
+    root.style.color = "CanvasText";
     if (!root.ownerDocument.querySelector("style[data-anseronui-placeholder]")) {
       const style = root.ownerDocument.createElement("style");
       style.dataset.anseronuiPlaceholder = "true";
@@ -101,7 +113,7 @@ export class DOMRenderer {
     this.records.clear();
     this.revision = 0;
   }
-  dispose(): void { if (!this.disposed) { this.clear(); for (const [name, listener] of this.pointerListeners) this.root.removeEventListener(name, listener, true); this.disposed = true; } }
+  dispose(): void { if (!this.disposed) { this.clear(); this.appearance?.removeEventListener('change', this.appearanceChanged); for (const [name, listener] of this.pointerListeners) this.root.removeEventListener(name, listener, true); this.disposed = true; } }
   getNode(nodeId: number): HTMLElement | undefined { return this.records.get(nodeId)?.element; }
 
   async invoke(nodeId: number, method: string, args: any): Promise<unknown> {
@@ -290,18 +302,26 @@ export class DOMRenderer {
     }
   }
 
-  private setProps(record: NodeRecord, props: RenderProps, revision: number): void {
-    record.native?.setProps(JSON.parse(String(props.nativeProps ?? "{}")));
+  private setProps(record: NodeRecord, raw: RenderProps, revision: number, appearanceOnly = false): void {
+    record.props = raw;
+    const props = { ...raw };
+    const dark = this.appearance?.matches === true;
+    if (dark) for (const key of ['backgroundColor', 'color', 'borderColor', 'shadowColor', 'placeholderTextColor']) {
+      const value = raw['dm' + key[0].toUpperCase() + key.slice(1)];
+      if (value !== undefined) props[key] = value;
+    }
+    if (!appearanceOnly) record.native?.setProps(JSON.parse(String(props.nativeProps ?? "{}")));
     const element = record.element;
     if (typeof props.testID === "string") element.dataset.testid = props.testID;
     if (typeof props.accessibilityLabel === "string") element.setAttribute("aria-label", props.accessibilityLabel);
     if (record.kind === "Text") element.textContent = String(props.text ?? "");
     if (record.kind === "RichText") {
-      const spans = JSON.parse(String(props.spans ?? "[]")) as { text?: string; color?: string; fontSize?: number; fontWeight?: string; fontStyle?: string; textDecorationLine?: string }[];
+      const spans = JSON.parse(String(props.spans ?? "[]")) as { text?: string; color?: string; dmColor?: string; fontSize?: number; fontWeight?: string; fontStyle?: string; textDecorationLine?: string }[];
       element.replaceChildren(...spans.map((item, index) => {
         const span = element.ownerDocument.createElement("span");
         span.textContent = String(item.text ?? ""); span.dataset.tsnSpan = String(index);
-        if (item.color) span.style.color = item.color;
+        const color = dark ? item.dmColor ?? item.color : item.color;
+        if (color !== undefined) span.style.color = color;
         if (item.fontSize !== undefined) span.style.fontSize = item.fontSize + "px";
         if (item.fontWeight) span.style.fontWeight = item.fontWeight;
         if (item.fontStyle) span.style.fontStyle = item.fontStyle;
@@ -314,7 +334,7 @@ export class DOMRenderer {
       element.textContent = String(props.title ?? "");
       (element as HTMLButtonElement).disabled = props.disabled === true;
     }
-    if (record.kind === "TextInput") {
+    if (record.kind === "TextInput" && !appearanceOnly) {
       const input = element as HTMLInputElement;
       input.placeholder = String(props.placeholder ?? "");
       const nextValue = String(props.value ?? "");
@@ -324,7 +344,7 @@ export class DOMRenderer {
         else { if (input.value !== nextValue) input.value = nextValue; record.pendingValue = null; }
       }
     }
-    if (record.kind === "Image") {
+    if (record.kind === "Image" && !appearanceOnly) {
       const image = element as HTMLImageElement;
       image.alt = String(props.accessibilityLabel ?? "");
       image.style.objectFit = props.resizeMode === "stretch" ? "fill" : String(props.resizeMode ?? "cover");
@@ -336,7 +356,7 @@ export class DOMRenderer {
         image.src = source.startsWith("asset://") ? "/assets/" + source.slice(8) : source;
       }
     }
-    if (record.kind === "Video") {
+    if (record.kind === "Video" && !appearanceOnly) {
       const video = element as HTMLVideoElement;
       video.controls = props.controls !== false;
       video.autoplay = props.autoplay === true;
@@ -367,6 +387,12 @@ export class DOMRenderer {
     element.style.borderWidth = props.borderWidth === undefined ? "" : props.borderWidth + "px";
     element.style.borderStyle = props.borderWidth ? "solid" : "";
     element.style.borderColor = String(props.borderColor ?? "");
+    const shadow = colorValues(String(props.shadowColor ?? '#000000'));
+    const opacity = Number(props.shadowOpacity ?? 0);
+    // CALayer's radius approximates a Gaussian sigma; CSS blur is about twice that.
+    element.style.boxShadow = opacity > 0
+      ? `${Number(props.shadowOffsetX ?? 0)}px ${Number(props.shadowOffsetY ?? 0)}px ${2 * Number(props.shadowRadius ?? 0)}px rgba(${shadow.r},${shadow.g},${shadow.b},${shadow.a * opacity})`
+      : 'none';
     element.style.overflow = String(props.overflow ?? (record.kind === "ScrollView" ? "auto" : ""));
     element.style.visibility = String(props.visibility ?? "");
     element.style.touchAction = String(props.touchAction ?? "");
@@ -379,13 +405,15 @@ export class DOMRenderer {
     }
     if (record.kind === "TextInput") {
       const input = element as HTMLInputElement;
-      input.disabled = props.editable === false;
-      input.type = props.secureTextEntry === true ? "password" : "text";
-      input.maxLength = Number(props.maxLength ?? 524288);
-      input.autocapitalize = String(props.autoCapitalize ?? "none");
-      input.autocomplete = props.autoCorrect === false ? "off" : "on";
-      input.inputMode = ({ numeric: "numeric", "decimal-pad": "decimal", "phone-pad": "tel", "email-address": "email", url: "url" } as Record<string, string>)[String(props.keyboardType)] ?? "text";
-      input.placeholder = String(props.placeholder ?? "");
+      if (!appearanceOnly) {
+        input.disabled = props.editable === false;
+        input.type = props.secureTextEntry === true ? "password" : "text";
+        input.maxLength = Number(props.maxLength ?? 524288);
+        input.autocapitalize = String(props.autoCapitalize ?? "none");
+        input.autocomplete = props.autoCorrect === false ? "off" : "on";
+        input.inputMode = ({ numeric: "numeric", "decimal-pad": "decimal", "phone-pad": "tel", "email-address": "email", url: "url" } as Record<string, string>)[String(props.keyboardType)] ?? "text";
+        input.placeholder = String(props.placeholder ?? "");
+      }
       if (props.placeholderTextColor !== undefined) input.style.setProperty("--placeholder-color", String(props.placeholderTextColor));
       else input.style.removeProperty("--placeholder-color");
       input.style.setProperty("color-scheme", "light dark");

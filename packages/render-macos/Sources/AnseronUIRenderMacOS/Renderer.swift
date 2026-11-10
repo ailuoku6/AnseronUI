@@ -4,6 +4,7 @@ import AVKit
 /// Core frames use a top-left origin and logical points.
 @MainActor public class FlippedView: NSView {
     public override var isFlipped: Bool { true }
+    public override var wantsDefaultClipping: Bool { false }
     public override init(frame: NSRect) { super.init(frame:frame); autoresizesSubviews = false }
     public required init?(coder:NSCoder) { super.init(coder:coder); autoresizesSubviews = false }
 }
@@ -14,6 +15,7 @@ private final class DesktopScrollView: NSScrollView {
 }
 
 @MainActor private final class NodeRecord {
+    var declaredProps: RenderProps?
     let view: FlippedView
     var widget: NSView
     var content: NSView
@@ -111,6 +113,28 @@ private final class DesktopScrollView: NSScrollView {
             onPageBackgroundColor?(nodes.values.first { $0.view === root.subviews.first }?.background ?? .clear)
         } catch { clear(); throw error }
     }
+    public func appearanceChanged() {
+        let dark = root.effectiveAppearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua
+        for r in nodes.values {
+            guard let raw = r.declaredProps else { continue }
+            let p = raw.themed(dark)
+            r.background = parseColor(p.backgroundColor) ?? .clear
+            let c = r.background.usingColorSpace(.sRGB) ?? .clear
+            r.animation.stage(["r":c.redComponent*255,"g":c.greenComponent*255,"b":c.blueComponent*255,"a":c.alphaComponent]); r.animation.commit()
+            r.view.layer?.borderColor = parseColor(p.borderColor)?.cgColor
+            r.view.layer?.shadowColor = (parseColor(p.shadowColor) ?? .black).cgColor
+            if let label = r.widget as? NSTextField, r.kind == "Text" || r.kind == "RichText" {
+                label.attributedStringValue = attributed(text:p.text ?? "", font:textFont(size:p.fontSize ?? 14,weight:p.fontWeight,style:p.fontStyle),props:p)
+            }
+            if let button = r.widget as? NSButton { button.contentTintColor = parseColor(p.color) }
+            if let field = r.widget as? NSTextField, r.kind == "TextInput" {
+                field.textColor = parseColor(p.color) ?? .labelColor
+                field.placeholderAttributedString = p.placeholder.map { NSAttributedString(string:$0,attributes:[.foregroundColor:parseColor(p.placeholderTextColor) ?? .placeholderTextColor]) }
+            }
+        }
+        onPageBackgroundColor?(nodes.values.first { $0.view === root.subviews.first }?.background ?? .clear)
+    }
+
     public func clear() {
         for record in nodes.values { release(record) }
         pointer = nil; nodes.removeAll(); root.subviews.forEach { $0.removeFromSuperview() }; revision = 0
@@ -266,7 +290,9 @@ private final class DesktopScrollView: NSScrollView {
             press.view?.removeGestureRecognizer(press); r.pressRecognizer = nil
         }
     }
-    private func setProps(_ r: NodeRecord, _ p: RenderProps) throws {
+    private func setProps(_ r: NodeRecord, _ raw: RenderProps) throws {
+        r.declaredProps = raw
+        let p = raw.themed(root.effectiveAppearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua)
         r.touchAction = p.touchAction ?? "auto"
         r.background = parseColor(p.backgroundColor) ?? .clear
         if let config = p.animation { guard let options = try decodeNativeJSON(config) as? [String:Any] else { throw NativeExtensionError.invalidArguments }; r.animation.options = try TSAnimationOptions(options) }
@@ -274,7 +300,12 @@ private final class DesktopScrollView: NSScrollView {
         let color = r.background.usingColorSpace(.sRGB) ?? .clear
         r.animation.stage(["opacity":p.opacity ?? 1,"translateX":p.translateX ?? 0,"translateY":p.translateY ?? 0,"scaleX":p.scaleX ?? 1,"scaleY":p.scaleY ?? 1,"rotate":p.rotate ?? 0,"borderRadius":p.borderRadius ?? 0,"r":color.redComponent*255,"g":color.greenComponent*255,"b":color.blueComponent*255,"a":color.alphaComponent])
         r.view.layer?.borderWidth = p.borderWidth ?? 0; r.view.layer?.borderColor = parseColor(p.borderColor)?.cgColor
-        r.view.layer?.masksToBounds = p.overflow == "hidden" || p.borderRadius != nil || r.kind == "ScrollView"
+        r.view.clipsToBounds = p.overflow == "hidden" || r.kind == "ScrollView"
+        r.view.layer?.masksToBounds = r.view.clipsToBounds
+        r.view.layer?.shadowColor = (parseColor(p.shadowColor) ?? .black).cgColor
+        r.view.layer?.shadowOpacity = Float(p.shadowOpacity ?? 0)
+        r.view.layer?.shadowRadius = CGFloat(p.shadowRadius ?? 0)
+        r.view.layer?.shadowOffset = CGSize(width:p.shadowOffsetX ?? 0, height:p.shadowOffsetY ?? 0)
         r.view.isHidden = p.visibility == "hidden"
         if r.kind == "TextInput", let field = r.widget as? NSTextField, (field is NSSecureTextField) != (p.secureTextEntry == true) {
             let wasEditing = field.currentEditor() != nil

@@ -25,7 +25,11 @@ AnseronUI 现在使用 **Framework Core + Business Bundle** 两份独立编译�
 
 ## 版本化消息与生命周期
 
-内部 ABI 当前为 `CORE_ABI_VERSION = 1`，定义在 [contracts.ts](../packages/core/src/contracts.ts)。渲染请求包含 surface/generation/revision/round、纯数据节点树、上次提交树、文本测量缓存和请求编号；回复包含 frame、测量查询和渲染命令。
+内部 ABI 当前为 `CORE_ABI_VERSION = 2`，定义在 [contracts.ts](../packages/core/src/contracts.ts)。`Render` 请求包含 surface/generation/revision/round、纯数据节点树、上次提交树、文本测量缓存和请求编号；`RenderResult` 回复包含 frame、测量查询和渲染命令。Framework Core 按 surface 保留布局树，根据节点 ID 增量同步，而业务侧仍发送完整描述树。
+
+`ReleaseSurface` / `SurfaceReleased` 消息释放指定 surface/generation 的持久化布局状态；旧 generation 的释放不会删除较新布局树。Framework 额外导出 `dispose()`，由 Native 组合适配器和 Wasm adapter 在实例关闭时调用。ReferenceRuntime 为每个实例持有独立 LayoutKernel；单次探针函数 `render()` 保持计算后释放的行为。
+
+ABI 1 与 ABI 2 不能混用，升级后需要重新构建 Framework Core 和 Business Bundle。外部宿主协议仍为 major 1 / minor 0，C transport 接口保持不变。
 
 - 两份产物启动时核对 ABI 版本；不兼容时拒绝启动。
 - 请求和结果按宿主循环串行交换，进入另一库前前一调用已经返回，不通过同步 Hook 回调重入库。

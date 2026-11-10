@@ -1,17 +1,18 @@
 import {
   ALIGN_AUTO, ALIGN_CENTER, ALIGN_FLEX_END, ALIGN_FLEX_START, ALIGN_STRETCH,
-  EDGE_TOP, EDGE_RIGHT, EDGE_BOTTOM, EDGE_LEFT, EDGE_HORIZONTAL, EDGE_VERTICAL,
+  EDGE_TOP, EDGE_RIGHT, EDGE_BOTTOM, EDGE_LEFT,
   GUTTER_ROW, GUTTER_COLUMN, POSITION_TYPE_ABSOLUTE, POSITION_TYPE_RELATIVE, WRAP_WRAP, WRAP_NO_WRAP,
   JUSTIFY_SPACE_AROUND, JUSTIFY_SPACE_EVENLY,
-  EDGE_ALL, FLEX_DIRECTION_COLUMN, FLEX_DIRECTION_ROW, GUTTER_ALL,
+  FLEX_DIRECTION_COLUMN, FLEX_DIRECTION_ROW,
   JUSTIFY_CENTER, JUSTIFY_FLEX_END, JUSTIFY_FLEX_START, JUSTIFY_SPACE_BETWEEN,
-  LayoutEngine, MEASURE_MODE_UNDEFINED, OVERFLOW_HIDDEN, OVERFLOW_SCROLL,
+  LayoutEngine, MEASURE_MODE_UNDEFINED, OVERFLOW_HIDDEN, OVERFLOW_SCROLL, OVERFLOW_VISIBLE,
+  UNIT_AUTO, UNIT_UNDEFINED,
 } from "@anseronui/layout";
 import type { Node } from "@anseronui/layout";
 import { isU32 } from "@anseronui/protocol";
 import type { Frame, NodeKind, EventKind, RenderProps, RenderCommand } from "@anseronui/protocol";
 import { CORE_ABI_VERSION } from "./contracts.js";
-import type { RenderNode, RenderRequest, RenderResult, MeasureQuery } from "./contracts.js";
+import type { RenderNode, RenderRequest, RenderResult, MeasureQuery, CoreRequest, CoreResult } from "./contracts.js";
 const EVENT_NAMES: EventKind[] = ["nativeComponent", "tap", "changeText", "longPress", "backPress", "focus", "blur", "submit", "scroll", "scrollEnd", "layout", "touchDown", "touchMove", "touchUp", "touchCancel", "spanClick", "loadSuccess", "loadFailure", "playStateDidChanged", "playTimeDidChanged", "firstFrameDidDisplay"];
 function sameFrame(a: Frame, b: Frame): boolean {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
@@ -26,94 +27,239 @@ function flatten(tree: RenderNode[]): RenderNode[] {
   const append = (node: RenderNode): void => { result.push(node); node.children.forEach(append); };
   tree.forEach(append); return result;
 }
-export function render(request: RenderRequest): RenderResult {
-  if (request.abi !== CORE_ABI_VERSION) throw new Error("CORE_ABI_MISMATCH");
-  if (!finiteDimension(request.width) || !finiteDimension(request.height)) throw new Error("INVALID_SURFACE_SIZE");
-  const cache = new Map(request.measureCache.map(item => [item.key, item]));
-  let nextRequestId = request.nextRequestId;
-    const engine = new LayoutEngine("css");
-    const root = engine.createNode();
-    root.setWidth(request.width); root.setHeight(request.height); root.setFlexDirection(FLEX_DIRECTION_COLUMN);
-    const nodeMap = new Map<number, Node>();
-    const queries = new Map<string, MeasureQuery>();
-    const attach = (host: RenderNode, parent: Node, index: number): void => {
-      const node = engine.createNode();
-      nodeMap.set(host.id, node);
-      const style = host.style;
-      // A scroll viewport must shrink to the available space while its content
-      // keeps its natural size. CSS auto minimums otherwise expand the entire
-      // page to the height of the scroll content, leaving nothing to scroll.
-      if (host.kind === "ScrollView") node.setOverflow(OVERFLOW_SCROLL);
-      else if (style.overflow === "hidden") node.setOverflow(OVERFLOW_HIDDEN);
-      if (style.width !== undefined) node.setWidth(style.width);
-      if (style.height !== undefined) node.setHeight(style.height);
-      if (style.maxWidth !== undefined) node.setMaxWidth(style.maxWidth);
-      if (style.maxHeight !== undefined) node.setMaxHeight(style.maxHeight);
-      if (style.flexBasis !== undefined) node.setFlexBasis(style.flexBasis);
-      if (style.flexWrap !== undefined) node.setFlexWrap(style.flexWrap === "wrap" ? WRAP_WRAP : WRAP_NO_WRAP);
-      if (style.position !== undefined) node.setPositionType(style.position === "absolute" ? POSITION_TYPE_ABSOLUTE : POSITION_TYPE_RELATIVE);
-      if (style.alignSelf !== undefined) node.setAlignSelf(({ auto: ALIGN_AUTO, start: ALIGN_FLEX_START, center: ALIGN_CENTER, end: ALIGN_FLEX_END, stretch: ALIGN_STRETCH })[style.alignSelf]);
-      for (const [name, edge] of [["top", EDGE_TOP], ["right", EDGE_RIGHT], ["bottom", EDGE_BOTTOM], ["left", EDGE_LEFT]] as const) {
-        if (style[name] !== undefined) node.setPosition(edge, style[name]!);
-      }
-      if (style.minWidth !== undefined) node.setMinWidth(style.minWidth);
-      if (style.minHeight !== undefined) node.setMinHeight(style.minHeight);
-      if (style.flexDirection !== undefined) node.setFlexDirection(style.flexDirection === "row" ? FLEX_DIRECTION_ROW : FLEX_DIRECTION_COLUMN);
-      if (style.flexGrow !== undefined) node.setFlexGrow(style.flexGrow);
-      if (style.flexShrink !== undefined) node.setFlexShrink(style.flexShrink);
-      if (style.gap !== undefined) node.setGap(GUTTER_ALL, style.gap);
-      if (style.padding !== undefined) node.setPadding(EDGE_ALL, style.padding);
-      if (style.margin !== undefined) node.setMargin(EDGE_ALL, style.margin);
-      if (style.rowGap !== undefined) node.setGap(GUTTER_ROW, style.rowGap);
-      if (style.columnGap !== undefined) node.setGap(GUTTER_COLUMN, style.columnGap);
-      for (const [name, edge] of [["paddingHorizontal", EDGE_HORIZONTAL], ["paddingVertical", EDGE_VERTICAL], ["paddingTop", EDGE_TOP], ["paddingRight", EDGE_RIGHT], ["paddingBottom", EDGE_BOTTOM], ["paddingLeft", EDGE_LEFT]] as const) {
-        if (style[name] !== undefined) node.setPadding(edge, style[name]!);
-      }
-      for (const [name, edge] of [["marginHorizontal", EDGE_HORIZONTAL], ["marginVertical", EDGE_VERTICAL], ["marginTop", EDGE_TOP], ["marginRight", EDGE_RIGHT], ["marginBottom", EDGE_BOTTOM], ["marginLeft", EDGE_LEFT]] as const) {
-        if (style[name] !== undefined) node.setMargin(edge, style[name]!);
-      }
-      if (style.alignItems !== undefined) node.setAlignItems(({ start: ALIGN_FLEX_START, center: ALIGN_CENTER, end: ALIGN_FLEX_END, stretch: ALIGN_STRETCH })[style.alignItems]);
-      if (style.justifyContent !== undefined) node.setJustifyContent(({ start: JUSTIFY_FLEX_START, center: JUSTIFY_CENTER, end: JUSTIFY_FLEX_END, "space-between": JUSTIFY_SPACE_BETWEEN, "space-around": JUSTIFY_SPACE_AROUND, "space-evenly": JUSTIFY_SPACE_EVENLY })[style.justifyContent]);
-      if (host.kind === "Text" || host.kind === "RichText" || host.kind === "Button" || host.kind === "TextInput") {
-        const content = host.kind === "TextInput"
-          ? String(host.props.value || host.props.placeholder || "")
-          : host.kind === "RichText" ? ((JSON.parse(String(host.props.spans ?? "[]")) as { text?: string }[]).map(span => span.text ?? "").join(""))
-          : String(host.props.text ?? host.props.title ?? "");
-        const fontSize = style.fontSize ?? 16;
-        node.setMeasureFunc((width, mode) => {
-          const maxWidth = mode === MEASURE_MODE_UNDEFINED || !Number.isFinite(width) ? request.width : Math.max(0, width);
-          const key = measureKey(host.id, host.kind, content, fontSize, maxWidth, host.props);
-          const cached = cache.get(key);
-          if (cached) return { width: cached.width, height: cached.height };
-          if (!queries.has(key)) {
-            const requestId = nextRequestId++;
-            if (!isU32(requestId)) throw new Error("REQUEST_ID_OVERFLOW");
-            queries.set(key, { requestId, nodeId: host.id, kind: host.kind as MeasureQuery["kind"], text: content, fontSize, maxWidth, props: host.props, key });
-          }
-          return { width: 0, height: 0 };
-        });
-      }
-      parent.insertChild(node, index);
-      host.children.forEach((child, childIndex) => attach(child, node, childIndex));
-    };
-    try {
-      request.tree.forEach((host, index) => attach(host, root, index));
-      engine.calculateLayout(root, request.width, request.height);
-      for (const host of flatten(request.tree)) {
-        const node = nodeMap.get(host.id)!;
-        host.frame = { x: node.getComputedLeft(), y: node.getComputedTop(), width: node.getComputedWidth(), height: node.getComputedHeight() };
-      }
-    } finally { engine.dispose(); }
+type Measurement = { key: string; value: string };
+type LayoutRecord = { node: Node; host: RenderNode; layoutSignature: string; measureSignature: string; measurements: Measurement[] };
+type MeasureValue = RenderRequest["measureCache"][number];
 
-  const frames = flatten(request.tree).map(node => ({ nodeId: node.id, frame: node.frame }));
-  for (const item of frames) {
-    if (!Number.isFinite(item.frame.x) || !Number.isFinite(item.frame.y) || !finiteDimension(item.frame.width) || !finiteDimension(item.frame.height)) throw new Error("INVALID_LAYOUT_FRAME");
+/** Owned by one Core instance, called only on that instance's owner thread. */
+class SurfaceLayout {
+  readonly engine = new LayoutEngine("css");
+  readonly root = this.engine.createNode();
+  readonly nodes = new Map<number, LayoutRecord>();
+  private cache = new Map<string, MeasureValue>();
+  private queries = new Map<string, MeasureQuery>();
+  private nextRequestId = 1;
+  private width = -1;
+
+  constructor(readonly generation: number) {
+    this.root.setFlexDirection(FLEX_DIRECTION_COLUMN);
   }
-  return { abi: CORE_ABI_VERSION, surfaceId: request.surfaceId, generation: request.generation,
-    revision: request.revision, round: request.round, frames, measures: [...queries.values()], nextRequestId,
-    commands: queries.size === 0 ? diff(request.previous, request.tree) : [] };
+
+  render(request: RenderRequest): RenderResult {
+    this.cache = new Map(request.measureCache.map(item => [item.key, item]));
+    this.queries.clear();
+    this.nextRequestId = request.nextRequestId;
+    const widthChanged = this.width !== request.width;
+    this.width = request.width;
+    this.root.setWidth(request.width);
+    this.root.setHeight(request.height);
+    const hosts = flatten(request.tree);
+    const wanted = new Set<number>();
+    const retired: LayoutRecord[] = [];
+    for (const host of hosts) {
+      if (!isU32(host.id) || wanted.has(host.id)) throw new Error("INVALID_LAYOUT_NODE_ID");
+      wanted.add(host.id);
+      let record = this.nodes.get(host.id);
+      if (record && (record.host.kind !== host.kind || record.host.nativeName !== host.nativeName)) {
+        retired.push(record);
+        this.nodes.delete(host.id);
+        record = undefined;
+      }
+      if (!record) {
+        record = { node: this.engine.createNode(), host, layoutSignature: "", measureSignature: "", measurements: [] };
+        this.nodes.set(host.id, record);
+        if (isMeasured(host.kind)) {
+          const measured = record;
+          record.node.setMeasureFunc((width, mode) => this.measure(measured, width, mode));
+        }
+      }
+      record.host = host;
+      const layoutSignature = layoutKey(host);
+      if (layoutSignature !== record.layoutSignature) {
+        updateStyle(record.node, host);
+        record.layoutSignature = layoutSignature;
+      }
+      if (isMeasured(host.kind)) {
+        const signature = measureKey(host.id, host.kind, textContent(host), host.style.fontSize ?? 16, 0, host.props);
+        // Missing measurements used placeholder sizes; never keep those numeric
+        // caches across rounds. Also invalidate when a host cache entry changes.
+        if (widthChanged || signature !== record.measureSignature || record.measurements.some(item =>
+          item.value === "missing" || item.value !== measurementValue(this.cache.get(item.key)))) {
+          record.node.markDirty();
+          record.measurements = [];
+        }
+        record.measureSignature = signature;
+      }
+    }
+    for (const [id, record] of [...this.nodes]) if (!wanted.has(id)) {
+      retired.push(record);
+      this.nodes.delete(id);
+    }
+    // Unlink retired parents before moving survivors, so reparenting can never
+    // accidentally free a retained descendant (including ancestor reversals).
+    for (const record of retired) record.node.getParent()?.removeChild(record.node);
+    const syncChildren = (children: RenderNode[], parent: Node): void => {
+      children.forEach((host, index) => {
+        const node = this.nodes.get(host.id)!.node;
+        if (parent.getChild(index) !== node) parent.insertChild(node, index);
+        syncChildren(host.children, node);
+      });
+    };
+    // Detach moved survivors first: a new parent may have been their descendant.
+    const detachMoved = (children: RenderNode[], parent: Node): void => {
+      for (const host of children) {
+        const node = this.nodes.get(host.id)!.node;
+        if (node.getParent() !== parent) node.getParent()?.removeChild(node);
+        detachMoved(host.children, node);
+      }
+    };
+    detachMoved(request.tree, this.root);
+    syncChildren(request.tree, this.root);
+    for (const record of retired) {
+      if (record.node.getChildCount() !== 0) throw new Error("RETIRED_LAYOUT_HAS_CHILDREN:" + record.host.id);
+      this.engine.releaseSubtree(record.node);
+    }
+    try {
+      this.engine.calculateLayout(this.root, request.width, request.height);
+      const frames = hosts.map(host => {
+        const node = this.nodes.get(host.id)!.node;
+        host.frame = { x: node.getComputedLeft(), y: node.getComputedTop(), width: node.getComputedWidth(), height: node.getComputedHeight() };
+        if (!Number.isFinite(host.frame.x) || !Number.isFinite(host.frame.y) || !finiteDimension(host.frame.width) || !finiteDimension(host.frame.height)) throw new Error("INVALID_LAYOUT_FRAME");
+        return { nodeId: host.id, frame: host.frame };
+      });
+      return { type: "RenderResult", abi: CORE_ABI_VERSION, surfaceId: request.surfaceId, generation: request.generation,
+        revision: request.revision, round: request.round, frames, measures: [...this.queries.values()], nextRequestId: this.nextRequestId,
+        commands: this.queries.size === 0 ? diff(request.previous, request.tree) : [] };
+    } finally {
+      // Measure callbacks read current-round data only; don't retain message caches.
+      this.cache.clear();
+      this.queries.clear();
+    }
+  }
+
+  private measure(record: LayoutRecord, width: number, mode: number): { width: number; height: number } {
+    const host = record.host;
+    const maxWidth = mode === MEASURE_MODE_UNDEFINED || !Number.isFinite(width) ? this.width : Math.max(0, width);
+    const text = textContent(host);
+    const fontSize = host.style.fontSize ?? 16;
+    const key = measureKey(host.id, host.kind, text, fontSize, maxWidth, host.props);
+    const cached = this.cache.get(key);
+    const value = measurementValue(cached);
+    const held = record.measurements.find(item => item.key === key);
+    if (held) held.value = value;
+    else record.measurements.push({ key, value });
+    if (cached) return { width: cached.width, height: cached.height };
+    if (!this.queries.has(key)) {
+      const requestId = this.nextRequestId++;
+      if (!isU32(requestId)) throw new Error("REQUEST_ID_OVERFLOW");
+      this.queries.set(key, { requestId, nodeId: host.id, kind: host.kind as MeasureQuery["kind"], text, fontSize, maxWidth, props: host.props, key });
+    }
+    return { width: 0, height: 0 };
+  }
+
+  dispose(): void { this.engine.dispose(); this.nodes.clear(); this.cache.clear(); this.queries.clear(); }
 }
-export function execute(input: string): string { return JSON.stringify(render(JSON.parse(input) as RenderRequest)); }
+
+function isMeasured(kind: NodeKind): boolean {
+  return kind === "Text" || kind === "RichText" || kind === "Button" || kind === "TextInput";
+}
+function textContent(host: RenderNode): string {
+  return host.kind === "TextInput" ? String(host.props.value || host.props.placeholder || "")
+    : host.kind === "RichText" ? (JSON.parse(String(host.props.spans ?? "[]")) as { text?: string }[]).map(span => span.text ?? "").join("")
+    : String(host.props.text ?? host.props.title ?? "");
+}
+function measurementValue(value: MeasureValue | undefined): string {
+  return value ? JSON.stringify([value.width, value.height, value.baseline]) : "missing";
+}
+
+function layoutKey(host: RenderNode): string {
+  const s = host.style;
+  return JSON.stringify([host.kind, s.width, s.height, s.minWidth, s.minHeight, s.maxWidth, s.maxHeight,
+    s.flexDirection, s.flexGrow, s.flexShrink, s.flexBasis, s.flexWrap, s.gap, s.rowGap, s.columnGap,
+    s.alignItems, s.alignSelf, s.justifyContent, s.position, s.top, s.right, s.bottom, s.left, s.overflow,
+    s.padding, s.paddingHorizontal, s.paddingVertical, s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft,
+    s.margin, s.marginHorizontal, s.marginVertical, s.marginTop, s.marginRight, s.marginBottom, s.marginLeft]);
+}
+
+/** Set effective values, including defaults for removed styles. Flexily setters
+ * compare values before dirtying, so unchanged nodes keep their layout caches. */
+function updateStyle(node: Node, host: RenderNode): void {
+  const style = host.style;
+  node.setOverflow(host.kind === "ScrollView" ? OVERFLOW_SCROLL : style.overflow === "hidden" ? OVERFLOW_HIDDEN : OVERFLOW_VISIBLE);
+  node.setWidth(style.width ?? NaN);
+  node.setHeight(style.height ?? NaN);
+  node.setMinWidth(style.minWidth ?? { value: 0, unit: UNIT_AUTO });
+  node.setMinHeight(style.minHeight ?? { value: 0, unit: UNIT_AUTO });
+  node.setMaxWidth(style.maxWidth ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setMaxHeight(style.maxHeight ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setFlexBasis(style.flexBasis ?? { value: 0, unit: UNIT_AUTO });
+  node.setFlexWrap(style.flexWrap === "wrap" ? WRAP_WRAP : WRAP_NO_WRAP);
+  node.setPositionType(style.position === "absolute" ? POSITION_TYPE_ABSOLUTE : POSITION_TYPE_RELATIVE);
+  node.setAlignSelf(({ auto: ALIGN_AUTO, start: ALIGN_FLEX_START, center: ALIGN_CENTER, end: ALIGN_FLEX_END, stretch: ALIGN_STRETCH })[style.alignSelf ?? "auto"]);
+  node.setPosition(EDGE_TOP, style.top ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setPosition(EDGE_RIGHT, style.right ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setPosition(EDGE_BOTTOM, style.bottom ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setPosition(EDGE_LEFT, style.left ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setFlexDirection(style.flexDirection === "column" ? FLEX_DIRECTION_COLUMN : FLEX_DIRECTION_ROW);
+  node.setFlexGrow(style.flexGrow ?? 0);
+  node.setFlexShrink(style.flexShrink ?? 1);
+  node.setGap(GUTTER_ROW, style.rowGap ?? style.gap ?? 0);
+  node.setGap(GUTTER_COLUMN, style.columnGap ?? style.gap ?? 0);
+  node.setPadding(EDGE_TOP, style.paddingTop ?? style.paddingVertical ?? style.padding ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setPadding(EDGE_RIGHT, style.paddingRight ?? style.paddingHorizontal ?? style.padding ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setPadding(EDGE_BOTTOM, style.paddingBottom ?? style.paddingVertical ?? style.padding ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setPadding(EDGE_LEFT, style.paddingLeft ?? style.paddingHorizontal ?? style.padding ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setMargin(EDGE_TOP, style.marginTop ?? style.marginVertical ?? style.margin ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setMargin(EDGE_RIGHT, style.marginRight ?? style.marginHorizontal ?? style.margin ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setMargin(EDGE_BOTTOM, style.marginBottom ?? style.marginVertical ?? style.margin ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setMargin(EDGE_LEFT, style.marginLeft ?? style.marginHorizontal ?? style.margin ?? { value: 0, unit: UNIT_UNDEFINED });
+  node.setAlignItems(({ start: ALIGN_FLEX_START, center: ALIGN_CENTER, end: ALIGN_FLEX_END, stretch: ALIGN_STRETCH })[style.alignItems ?? "stretch"]);
+  node.setJustifyContent(({ start: JUSTIFY_FLEX_START, center: JUSTIFY_CENTER, end: JUSTIFY_FLEX_END, "space-between": JUSTIFY_SPACE_BETWEEN, "space-around": JUSTIFY_SPACE_AROUND, "space-evenly": JUSTIFY_SPACE_EVENLY })[style.justifyContent ?? "start"]);
+}
+
+export class LayoutKernel {
+  private surfaces = new Map<number, SurfaceLayout>();
+
+  execute(request: CoreRequest): CoreResult {
+    if (request.abi !== CORE_ABI_VERSION) throw new Error("CORE_ABI_MISMATCH");
+    if (request.type === "ReleaseSurface") {
+      const surface = this.surfaces.get(request.surfaceId);
+      if (surface?.generation === request.generation) {
+        surface.dispose();
+        this.surfaces.delete(request.surfaceId);
+      }
+      return { type: "SurfaceReleased", abi: CORE_ABI_VERSION, surfaceId: request.surfaceId, generation: request.generation };
+    }
+    return this.render(request);
+  }
+
+  render(request: RenderRequest): RenderResult {
+    if (request.abi !== CORE_ABI_VERSION) throw new Error("CORE_ABI_MISMATCH");
+    if (!finiteDimension(request.width) || !finiteDimension(request.height)) throw new Error("INVALID_SURFACE_SIZE");
+    let surface = this.surfaces.get(request.surfaceId);
+    if (surface && surface.generation > request.generation) throw new Error("STALE_SURFACE_GENERATION");
+    if (surface && surface.generation !== request.generation) {
+      surface.dispose();
+      this.surfaces.delete(request.surfaceId);
+      surface = undefined;
+    }
+    if (!surface) { surface = new SurfaceLayout(request.generation); this.surfaces.set(request.surfaceId, surface); }
+    try { return surface.render(request); }
+    catch (error) { surface.dispose(); this.surfaces.delete(request.surfaceId); throw error; }
+  }
+
+  dispose(): void { for (const surface of this.surfaces.values()) surface.dispose(); this.surfaces.clear(); }
+}
+
+// Stateless compatibility helper for isolated layout probes. Runtime compositions
+// own a LayoutKernel; the compiled framework entry owns one per native/Wasm instance.
+export function render(request: RenderRequest): RenderResult {
+  const kernel = new LayoutKernel();
+  try { return kernel.render(request); } finally { kernel.dispose(); }
+}
+const kernel = new LayoutKernel();
+export function execute(input: string): string { return JSON.stringify(kernel.execute(JSON.parse(input) as CoreRequest)); }
+export function dispose(): void { kernel.dispose(); }
 export function version(): number { return CORE_ABI_VERSION; }
 
 function diff(oldTree: RenderNode[], nextTree: RenderNode[]): RenderCommand[] {

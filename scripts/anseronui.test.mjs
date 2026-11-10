@@ -38,6 +38,8 @@ test("CLI creates and checks a new app, and scaffolds existing app integration",
 import { mkdtempSync, writeFileSync, chmodSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { selectIOS, selectAndroid } from './standalone-app.mjs';
+import { validateIconConfig, generateAppIcons } from './app-icons.mjs';
+import { PNG } from 'pngjs';
 
 const cli = join(root, 'scripts/anseronui.mjs');
 function fixture() {
@@ -92,6 +94,15 @@ test('create supports an external directory with spaces, keeps its identity and 
     const config = JSON.parse(readFileSync(f.config, 'utf8'));
     assert.equal(config.app.name, 'MyApp'); assert.equal(config.app.applicationId, 'com.example.myapp');
     assert.equal(resolve(realpathSync(f.app), config.app.framework), root);
+    const icons = validateIconConfig(f.app, config);
+    assert.ok(icons.ios.dark && icons.ios.tinted && icons.android.adaptive.monochrome && icons.web && icons.macos);
+    assert.deepEqual(readFileSync(join(f.app, config.app.icon.default)), readFileSync(join(root, 'assets/icons/app.png')));
+    for (const target of ['ios', 'android', 'web', 'macos']) {
+      const generated = generateAppIcons(f.app, config, target);
+      assert.ok(generated.enabled);
+      assert.ok(existsSync(generated.path ?? generated.res));
+    }
+    assert.equal(PNG.sync.read(readFileSync(join(f.app, '.anseronui/icons/web/anseronui-icon.png'))).width, 256);
     assert.ok(existsSync(resolve(root, config.pages[0].source)));
     assert.ok(existsSync(join(f.app, 'platforms/android/gradle/wrapper/gradle-wrapper.jar')));
     assert.ok(existsSync(join(f.app, 'platforms/ios/App.swift')));

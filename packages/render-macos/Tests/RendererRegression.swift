@@ -46,6 +46,7 @@ import AVKit
         return image
     }
     static func run() throws {
+        try darkStyles()
         try text()
         try images()
         try input()
@@ -55,6 +56,34 @@ import AVKit
         try animation()
         try media()
         print("PASS: renderer regressions (text layout/hits, image scaling, IME, input, mouse cancellation, animations, video lifecycle)")
+    }
+    static func darkStyles() throws {
+        let f = Fixture(); defer { f.close() }
+        f.root.appearance = NSAppearance(named:.aqua)
+        try f.create(1,"View",["testID":"card","backgroundColor":"#ffffff","dmBackgroundColor":"#111111","borderColor":"#123456","dmBorderColor":"#abcdef","borderRadius":12,"shadowColor":"#000000","dmShadowColor":"#ffffff","shadowOpacity":0.4,"shadowRadius":8,"shadowOffsetX":-2,"shadowOffsetY":4],NSRect(x:20,y:20,width:200,height:100))
+        try f.create(2,"TextInput",["testID":"input","value":"declared","color":"#000000","dmColor":"#ffffff","placeholder":"Hint","placeholderTextColor":"#666666","dmPlaceholderTextColor":"#aaaaaa"],NSRect(x:0,y:0,width:150,height:30),parent:1)
+        try f.create(3,"RichText",["testID":"rich","spans":"[{\"text\":\"span\",\"color\":\"#123456\",\"dmColor\":\"#abcdef\"}]"],NSRect(x:0,y:40,width:150,height:30),parent:1)
+        let card = f.root.subviews.first!, input = f.widget("input") as! NSTextField, rich = f.widget("rich") as! NSTextField
+        input.stringValue = "local unsent"
+        let frame = card.frame
+        Integration.check(card.layer?.masksToBounds == false && card.layer?.shadowRadius == 8 && card.layer?.shadowOffset == CGSize(width:-2,height:4),"outer shadow geometry and radius without clipping: mask=\(String(describing:card.layer?.masksToBounds)) radius=\(String(describing:card.layer?.shadowRadius)) offset=\(String(describing:card.layer?.shadowOffset))")
+        f.root.appearance = NSAppearance(named:.darkAqua); f.renderer.appearanceChanged()
+        func rgb(_ color:NSColor?) -> NSColor { color!.usingColorSpace(.sRGB)! }
+        Integration.check(abs(rgb(NSColor(cgColor:card.layer!.backgroundColor!)).redComponent - 17.0/255) < 0.001,"dark background")
+        Integration.check(rgb(NSColor(cgColor:card.layer!.shadowColor!)).redComponent > 0.99,"dark shadow color")
+        Integration.check(input.stringValue == "local unsent" && rgb(input.textColor).redComponent > 0.99,"appearance preserves input and updates text")
+        Integration.check(abs(rgb(input.placeholderAttributedString!.attribute(.foregroundColor,at:0,effectiveRange:nil) as? NSColor).redComponent - 170.0/255) < 0.001,"dark placeholder")
+        Integration.check(abs(rgb(rich.attributedStringValue.attribute(.foregroundColor,at:0,effectiveRange:nil) as? NSColor).redComponent - 171.0/255) < 0.001 && card.frame == frame,"dark rich span preserves frame")
+        f.root.appearance = NSAppearance(named:.aqua); f.renderer.appearanceChanged()
+        Integration.check(rgb(input.textColor).redComponent < 0.01,"return to light")
+        try f.apply([["type":"SetProps","nodeId":1,"props":["backgroundColor":"#eeeeee"]]])
+        f.root.appearance = NSAppearance(named:.darkAqua); f.renderer.appearanceChanged()
+        Integration.check(abs(rgb(NSColor(cgColor:card.layer!.backgroundColor!)).redComponent - 238.0/255) < 0.001 && card.layer?.shadowOpacity == 0,"removed dark override and shadow reset")
+        try f.apply([["type":"SetProps","nodeId":1,"props":["borderRadius":12,"overflow":"hidden"]]])
+        Integration.check(card.layer?.masksToBounds == true,"explicit overflow still clips rounded content")
+        try f.apply([["type":"SetProps","nodeId":1,"props":["borderRadius":12,"overflow":"visible"]]])
+        Integration.check(card.layer?.masksToBounds == false && card.layer?.shadowPath?.boundingBox == card.bounds,"visible overflow and rounded shadow path survive animation paint")
+        print("PASS: macOS dark colors, shadow geometry, span/placeholder fallback and retained input")
     }
     static func text() throws {
         let f = Fixture(); defer { f.close() }

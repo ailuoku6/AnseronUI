@@ -78,6 +78,61 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
 }
 
 @MainActor final class RenderViewTests: XCTestCase {
+    func testDarkStylesAndOuterShadowRepaintWithoutChangingInput() throws {
+        let root = UIView(frame:CGRect(x:0,y:0,width:320,height:480))
+        let window = UIWindow(frame:root.frame)
+        window.addSubview(root); window.isHidden = false
+        defer { window.isHidden = true }
+        func checkColor(_ actual:UIColor?, _ expected:UIColor, file:StaticString = #filePath, line:UInt = #line) {
+            var r:CGFloat = 0, g:CGFloat = 0, b:CGFloat = 0, a:CGFloat = 0
+            var er:CGFloat = 0, eg:CGFloat = 0, eb:CGFloat = 0, ea:CGFloat = 0
+            XCTAssertNotNil(actual,file:file,line:line)
+            actual?.getRed(&r,green:&g,blue:&b,alpha:&a); expected.getRed(&er,green:&eg,blue:&eb,alpha:&ea)
+            XCTAssertEqual(r,er,accuracy:0.001,file:file,line:line); XCTAssertEqual(g,eg,accuracy:0.001,file:file,line:line)
+            XCTAssertEqual(b,eb,accuracy:0.001,file:file,line:line); XCTAssertEqual(a,ea,accuracy:0.001,file:file,line:line)
+        }
+        root.overrideUserInterfaceStyle = .light
+        let renderer = IOSRenderer(root:root)
+        func commit(_ revision:Int, _ commands:[[String:Any]]) throws {
+            try renderer.applyJSON(JSONSerialization.data(withJSONObject:["type":"Commit","revision":revision,"commands":commands]))
+        }
+        try commit(1, [
+            ["type":"CreateNode","nodeId":1,"kind":"View"],
+            ["type":"CreateNode","nodeId":2,"kind":"TextInput"],
+            ["type":"CreateNode","nodeId":3,"kind":"RichText"],
+            ["type":"InsertChild","nodeId":1,"parentId":0,"index":0],
+            ["type":"InsertChild","nodeId":2,"parentId":1,"index":0],
+            ["type":"InsertChild","nodeId":3,"parentId":1,"index":1],
+            ["type":"SetProps","nodeId":1,"props":["backgroundColor":"#ffffff","dmBackgroundColor":"#111111","borderColor":"#123456","dmBorderColor":"#abcdef","borderRadius":12,"shadowColor":"#000000","dmShadowColor":"#ffffff","shadowOpacity":0.4,"shadowRadius":8,"shadowOffsetX":-2,"shadowOffsetY":4]],
+            ["type":"SetFrame","nodeId":1,"frame":["x":20,"y":20,"width":200,"height":100]],
+            ["type":"SetProps","nodeId":2,"props":["value":"declared","color":"#000000","dmColor":"#ffffff","placeholder":"Hint","placeholderTextColor":"#666666","dmPlaceholderTextColor":"#aaaaaa"]],
+            ["type":"SetProps","nodeId":3,"props":["spans":"[{\"text\":\"span\",\"color\":\"#123456\",\"dmColor\":\"#abcdef\"}]"]]
+        ])
+        let card = try XCTUnwrap(renderer.view(for:1)), input = try XCTUnwrap(renderer.view(for:2) as? UITextField), rich = try XCTUnwrap(renderer.view(for:3) as? UILabel)
+        XCTAssertFalse(card.clipsToBounds); XCTAssertEqual(card.layer.shadowRadius,8); XCTAssertEqual(card.layer.shadowOffset,CGSize(width:-2,height:4)); XCTAssertEqual(card.layer.shadowOpacity,0.4)
+        XCTAssertEqual(card.layer.shadowPath?.boundingBox,card.bounds)
+        input.text = "local unsent"
+        let frame = card.frame
+        root.overrideUserInterfaceStyle = .dark
+        renderer.appearanceChanged()
+        XCTAssertEqual(root.traitCollection.userInterfaceStyle,.dark)
+        checkColor(card.backgroundColor,UIColor(white:17.0/255,alpha:1))
+        checkColor(card.layer.shadowColor.map { UIColor(cgColor:$0) },.white)
+        XCTAssertEqual(input.text,"local unsent"); checkColor(input.textColor,.white)
+        checkColor(input.attributedPlaceholder?.attribute(.foregroundColor,at:0,effectiveRange:nil) as? UIColor,UIColor(white:170.0/255,alpha:1))
+        checkColor(rich.attributedText?.attribute(.foregroundColor,at:0,effectiveRange:nil) as? UIColor,UIColor(red:171.0/255,green:205.0/255,blue:239.0/255,alpha:1))
+        XCTAssertEqual(card.frame,frame)
+        root.overrideUserInterfaceStyle = .light
+        renderer.appearanceChanged()
+        checkColor(card.backgroundColor,.white); checkColor(input.textColor,.black)
+        try commit(2,[["type":"SetProps","nodeId":1,"props":["backgroundColor":"#eeeeee"]]])
+        root.overrideUserInterfaceStyle = .dark
+        renderer.appearanceChanged()
+        checkColor(card.backgroundColor,UIColor(white:238.0/255,alpha:1)); XCTAssertEqual(card.layer.shadowOpacity,0)
+        try commit(3,[["type":"SetProps","nodeId":1,"props":["borderRadius":12,"overflow":"hidden"]]])
+        XCTAssertTrue(card.clipsToBounds)
+        renderer.clear()
+    }
     func testLayoutDuringBackDragPreservesTranslationAndSurfaceSize() async throws {
         let committed = expectation(description: "pages mounted"); committed.expectedFulfillmentCount = 2
         let disposed = expectation(description: "pages disposed"); disposed.expectedFulfillmentCount = 2
@@ -97,6 +152,32 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
         XCTAssertEqual(current.frame.minX, 120, accuracy: 0.01)
         XCTAssertEqual(current.bounds.size, CGSize(width: 320, height: 480))
         XCTAssertEqual(view.routeStack, ["counter", "async-form"])
+        view.destroy()
+        await fulfillment(of: [disposed], timeout: 5)
+    }
+
+    func testBackGestureSettlesImmediatelyWhileCoreInterceptionIsPending() async throws {
+        let committed = expectation(description: "pages mounted"); committed.expectedFulfillmentCount = 2
+        let disposed = expectation(description: "pages disposed"); disposed.expectedFulfillmentCount = 2
+        let view = AnseronUIRenderView(frame: CGRect(x: 0, y: 0, width: 320, height: 480), createCore: {
+            RecordingCore(disposed: disposed, committed: committed)
+        })
+        view.load(page: "counter")
+        view.push(page: "async-form")
+        await fulfillment(of: [committed], timeout: 5)
+        let gesture = BackDrag()
+        view.perform(NSSelectorFromString("handleBackGesture:"), with: gesture)
+        gesture.phase = .changed; gesture.offset = 180
+        view.perform(NSSelectorFromString("handleBackGesture:"), with: gesture)
+        gesture.phase = .ended
+        let start = Date()
+        view.perform(NSSelectorFromString("handleBackGesture:"), with: gesture)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.1, "Ending the edge gesture must not wait for Core")
+        XCTAssertEqual(view.routeStack, ["counter", "async-form"], "Navigation waits for async back interception")
+        let settled = expectation(description: "interception timeout and transition completed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { settled.fulfill() }
+        await fulfillment(of: [settled], timeout: 3)
+        XCTAssertEqual(view.routeStack, ["counter"])
         view.destroy()
         await fulfillment(of: [disposed], timeout: 5)
     }

@@ -1,6 +1,7 @@
 package org.anseronui.render
 
 import android.content.Context
+import android.content.res.Configuration
 import android.os.Looper
 import android.util.AttributeSet
 import android.widget.FrameLayout
@@ -87,6 +88,7 @@ class AnseronUIRenderView @JvmOverloads constructor(
         page = entry.page
         val root = entry.root ?: FrameLayout(context).also { entry.root = it }
         if (root.parent == null) addView(root, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        host?.renderer?.appearanceChanged()
         entry.color?.let { onPageBackgroundColor(it) }
         requestLayout()
     }
@@ -94,6 +96,16 @@ class AnseronUIRenderView @JvmOverloads constructor(
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
         synchronizeSize()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        routes.forEach { it.host?.renderer?.appearanceChanged() }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        routes.forEach { it.host?.renderer?.appearanceChanged() }
     }
 
     /** Terminal and idempotent. Create another container to load pages after destruction. */

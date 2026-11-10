@@ -16,3 +16,7 @@ android {
     sourceSets.main.assets.srcDirs += rootProject.file('../../components/assets')
 }
 dependencies { implementation project(':render'); androidTestImplementation 'androidx.test:runner:1.6.2'; androidTestImplementation 'androidx.test.ext:junit:1.2.1' }
+
+// AnseronUI app icon integration
+def appIconConfig = rootProject.file('../../../.anseronui/icons/android.gradle')
+if (appIconConfig.exists()) apply from: appIconConfig

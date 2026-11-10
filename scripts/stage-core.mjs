@@ -68,9 +68,9 @@ async function copy(path, outputPath = stagedPath(path)) {
 const sourceFingerprint = coreFingerprint(root, configPath);
 for(const dir of coreSourceDirs(mode === 'framework' ? { sourceDirs: [] } : config)) await copy(dir);
 const imports = config.pages.map((page, i) => `import { ${page.export} as page${i} } from './${stagedPath(page.source).replace(/\.tsx$/, '.js')}';`).join('\n');
-const entry = mode === 'framework' ? `export { version, execute } from './packages/core/src/kernel.js';\n` : `import { BusinessRuntime } from './packages/core/src/business-runtime.js';
+const entry = mode === 'framework' ? `export { version, execute, dispose } from './packages/core/src/kernel.js';\n` : `import { BusinessRuntime } from './packages/core/src/business-runtime.js';
 import { CORE_ABI_VERSION } from './packages/core/src/contracts.js';
-import type { RenderResult } from './packages/core/src/contracts.js';
+import type { CoreResult } from './packages/core/src/contracts.js';
 import type { Envelope, InputPayload, OutputPayload } from './packages/protocol/src/index.js';
 ${imports}
 let runtime: BusinessRuntime | null = null;
@@ -81,7 +81,7 @@ export function post(input: string): void { if (runtime === null) throw new Erro
 export function advance(): void { outputs.push(...(runtime?.step(1) ?? [])); }
 export function step(): string { outputs.push(...(runtime?.takeOutputs() ?? [])); const result = JSON.stringify(outputs); outputs = []; return result; }
 export function coreRequest(): string { const request = runtime?.takeCoreRequest(); return request ? JSON.stringify(request) : ''; }
-export function coreResult(result: string): void { runtime?.acceptCoreResult(JSON.parse(result) as RenderResult); }
+export function coreResult(result: string): void { runtime?.acceptCoreResult(JSON.parse(result) as CoreResult); }
 export function pending(): boolean { return runtime?.hasPendingWork() ?? false; }
 export function dispose(): void { runtime?.dispose(); runtime=null; }
 `;
@@ -92,4 +92,4 @@ console.log(stage);
 profile.abi.instance_per_thread = false;
 profile.abi.localize_runtime = false; // Wasm instances already isolate symbols and memory.
 await writeFile(join(stage, 'profile-wasm.json'), JSON.stringify(profile, null, 2) + '\n');
-await writeFile(join(stage, 'manifest.json'), JSON.stringify({buildId:config.buildId, protocolMajor:1, runtimeEpoch:1, pages:config.pages.map(page => ({ ...page, name: page.name ?? page.source.split('/').slice(-2, -1)[0] })), configPath, sourceFingerprint, abiVersion: 1, frameworkFingerprint: frameworkFingerprint(root), businessFingerprint: businessFingerprint(root, configPath)}, null, 2) + '\n');
+await writeFile(join(stage, 'manifest.json'), JSON.stringify({buildId:config.buildId, protocolMajor:1, runtimeEpoch:1, pages:config.pages.map(page => ({ ...page, name: page.name ?? page.source.split('/').slice(-2, -1)[0] })), configPath, sourceFingerprint, abiVersion: 2, frameworkFingerprint: frameworkFingerprint(root), businessFingerprint: businessFingerprint(root, configPath)}, null, 2) + '\n');

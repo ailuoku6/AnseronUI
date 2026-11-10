@@ -120,7 +120,7 @@ export class WasmRuntime implements BrowserRuntimeAdapter {
       WasmModule.load(frameworkSource, 'anseronui_framework_'),
     ]);
     framework.call('init'); business.call('init');
-    if (framework.call('version') !== 1 || business.call('version') !== 1) {
+    if (framework.call('version') !== 2 || business.call('version') !== 2) {
       business.call('shutdown'); framework.call('shutdown');
       throw new Error('CORE_ABI_MISMATCH');
     }
@@ -153,6 +153,7 @@ export class WasmRuntime implements BrowserRuntimeAdapter {
   dispose(): void {
     if (this.disposed) return;
     this.business.call('dispose');
+    this.framework.call('dispose');
     for (let i=0; i<100 && this.business.call('async_pending'); i++) this.business.call('async_step', 1024);
     this.disposed = true;
     const stopped = this.business.call('shutdown');

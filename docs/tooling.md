@@ -86,6 +86,8 @@ npm run android -- --dry-run
 
 ## 只构建与 Web 开发
 
+新建 App 已附带 `assets/icons/` 默认图标和对应配置，第一次构建即可显示。应用图标在 `app.icon` 配置：支持单张 PNG、iOS 浅色／深色／着色及 Icon Composer、Android 自适应／单色主题和 night 资源。配置示例、平台限制和旧工程兼容方式见[应用图标](app-icons.md)。修改图标后重新构建，`--no-build` 仍使用上次产物。
+
 ```sh
 npm run build:ios
 npm run build:ios-device

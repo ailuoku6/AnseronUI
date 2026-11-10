@@ -43,6 +43,31 @@ function createdNode(commands: RenderCommand[], kind: string): number {
 }
 
 describe("reference Core", () => {
+  it("transports dark color declarations, span colors and shadows and removes overrides on update", () => {
+    let toggle = (_:boolean) => {};
+    const page = definePage('dark-styles', () => {
+      const [dark, setDark] = useState(true); toggle = setDark;
+      return <View style={{ backgroundColor:'#ffffff', dmBackgroundColor:dark ? '#111111' : undefined, borderColor:'#333333', dmBorderColor:'#dddddd', shadowColor:'#000000', dmShadowColor:'#ffffff', shadowOpacity:0.25, shadowRadius:8, shadowOffsetX:-2, shadowOffsetY:4 }}>
+        <TextInput value="typed" onChangeText={() => {}} style={{ color:'#000000', dmColor:'#eeeeee', placeholderTextColor:'#666666', dmPlaceholderTextColor:'#aaaaaa' }} />
+        <RichText spans={[{ text:'span', color:'#112233', dmColor:'#ddeeff' }]} />
+      </View>;
+    });
+    const h = harness(page);
+    h.send({ type:'CreateSurface', page:'dark-styles', width:320, height:480 });
+    const outputs = h.drain();
+    const commit = outputs.find(item => item.type === 'Commit');
+    if (!commit || commit.type !== 'Commit') throw new Error('Missing commit');
+    const props = commit.commands.filter(command => command.type === 'SetProps');
+    expect(props[0]).toMatchObject({ props:{ dmBackgroundColor:'#111111', dmBorderColor:'#dddddd', dmShadowColor:'#ffffff', shadowOpacity:0.25, shadowRadius:8, shadowOffsetX:-2, shadowOffsetY:4 } });
+    expect(props[1]).toMatchObject({ props:{ dmColor:'#eeeeee', placeholderTextColor:'#666666', dmPlaceholderTextColor:'#aaaaaa' } });
+    expect(JSON.parse(String(props[2].props.spans))[0]).toMatchObject({ color:'#112233', dmColor:'#ddeeff' });
+    toggle(false);
+    const update = h.drain().find(item => item.type === 'Commit');
+    if (!update || update.type !== 'Commit') throw new Error('Missing update');
+    const next = update.commands.find(command => command.type === 'SetProps');
+    expect(next?.type === 'SetProps' && next.props.dmBackgroundColor).toBeUndefined();
+    h.runtime.dispose();
+  });
   it("constrains a nested scroll viewport without shrinking its content", () => {
     const page = definePage("scroll-layout", () => <View style={{ flexDirection: "column", flexGrow: 1 }}>
       <View style={{ height: 80, flexShrink: 0 }} />

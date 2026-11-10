@@ -23,3 +23,7 @@ The scriptc LLVM helper uses Apache-2.0 with the LLVM exception and includes its
 ## Android Gradle wrapper
 
 The Android template includes the Gradle wrapper under Apache-2.0. A copy of the license is included at `scripts/templates/app/platforms/android/LICENSE-Gradle`, and the original license headers remain in the launcher scripts. Gradle is downloaded by the wrapper and retains its own notices.
+
+## pngjs
+
+App icon tooling uses the installed npm dependency pngjs 7.0.0 under MIT, copyright (c) 2015 Luke Page & Original Contributors, derived work copyright (c) 2012 Kuba Niegowski. Its license is shipped in the dependency's `LICENSE` file; preserve it when redistributing the dependency. pngjs is used at build time and is not embedded in native application binaries.

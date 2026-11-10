@@ -25,6 +25,8 @@ import UIKit
     private var routes: [Route] = []
     private var backPreview: (current: UIView, previous: UIView)?
     private var backTransitionID: UUID?
+    private var backAnimationCompleted = false
+    private var backInterception: Bool?
     private lazy var backGesture: UIScreenEdgePanGestureRecognizer = {
         let gesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleBackGesture(_:)))
         gesture.edges = .left
@@ -128,20 +130,51 @@ import UIKit
             let velocity = gesture.velocity(in: self).x
             let shouldPop = gesture.state == .ended && velocity >= 0
                 && (distance > bounds.width / 3 || velocity > 500)
-            let consumed = shouldPop && handleBackPress()
-            let finish = shouldPop && !consumed
             let transitionID = UUID()
             backTransitionID = transitionID
-            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-                preview.current.transform = finish ? CGAffineTransform(translationX: self.bounds.width, y: 0) : .identity
-                preview.previous.transform = finish ? .identity : CGAffineTransform(translationX: -self.bounds.width * 0.25, y: 0)
-            }, completion: { [weak self] _ in
+            backAnimationCompleted = false
+            backInterception = nil
+            animateBackPreview(preview, finishing: shouldPop, transitionID: transitionID) { [weak self] in
                 guard let self, self.backTransitionID == transitionID else { return }
-                self.resetBackPreview()
-                if finish { _ = self.pop() }
-            })
+                if !shouldPop { self.resetBackPreview(); return }
+                self.backAnimationCompleted = true
+                if self.backInterception == false { self.finishBackTransition(transitionID) }
+            }
+            if shouldPop {
+                host?.handleBackPress { [weak self] consumed in
+                    guard let self, self.backTransitionID == transitionID,
+                          let preview = self.backPreview else { return }
+                    self.backInterception = consumed
+                    if consumed {
+                        self.backAnimationCompleted = false
+                        self.animateBackPreview(preview, finishing: false, transitionID: transitionID) { [weak self] in
+                            guard let self, self.backTransitionID == transitionID else { return }
+                            self.resetBackPreview()
+                        }
+                    } else if self.backAnimationCompleted {
+                        self.finishBackTransition(transitionID)
+                    }
+                }
+            }
         default: break
         }
+    }
+
+    private func animateBackPreview(_ preview: (current: UIView, previous: UIView), finishing: Bool,
+                                    transitionID: UUID, completion: @escaping () -> Void) {
+        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            preview.current.transform = finishing ? CGAffineTransform(translationX: self.bounds.width, y: 0) : .identity
+            preview.previous.transform = finishing ? .identity : CGAffineTransform(translationX: -self.bounds.width * 0.25, y: 0)
+        }, completion: { [weak self] _ in
+            guard let self, self.backTransitionID == transitionID else { return }
+            completion()
+        })
+    }
+
+    private func finishBackTransition(_ transitionID: UUID) {
+        guard backTransitionID == transitionID else { return }
+        resetBackPreview()
+        _ = pop()
     }
 
     private func updateBackPreview(translation: CGFloat) {
@@ -153,6 +186,8 @@ import UIKit
 
     private func resetBackPreview() {
         backTransitionID = nil
+        backAnimationCompleted = false
+        backInterception = nil
         guard let preview = backPreview else { return }
         backPreview = nil
         preview.current.layer.removeAllAnimations()
@@ -173,18 +208,25 @@ import UIKit
         if let root = entry.root { root.frame = bounds; addSubview(root) }
         if let color = entry.color { onPageBackgroundColor?(color) }
         synchronizeSize()
+        host?.environmentChanged()
         setNeedsLayout()
     }
 
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        host?.environmentChanged()
+        // Descendant render roots receive the new traits after their parent callback.
+        DispatchQueue.main.async { [weak self] in
+            self?.routes.forEach { $0.host?.environmentChanged() }
+        }
     }
 
     public override func layoutSubviews() {
         super.layoutSubviews()
         if let preview = backPreview, preview.current.bounds.size != bounds.size { resetBackPreview() }
-        renderRoot?.frame = bounds
+        // UIView.frame is undefined with a nonidentity transform. Assigning it
+        // during an edge drag moves the view's center back under the finger.
+        renderRoot?.bounds = CGRect(origin: .zero, size: bounds.size)
+        renderRoot?.center = CGPoint(x: bounds.midX, y: bounds.midY)
         synchronizeSize()
     }
 

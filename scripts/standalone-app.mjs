@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { copySDK, sdkFingerprint, toolchainHost, sdkAliases } from './sdk-files.mjs';
 import { buildMacOS, requireMacOS, validateMacOSBuild } from './macos-app.mjs';
 import { discoverNativePlugins, generateNativePlugins, pluginBuildConfig } from './native-plugins.mjs';
+import { validateIconConfig, generateAppIcons, integrateAndroidIcons, integrateIOSIcons } from './app-icons.mjs';
 
 const framework = fileURLToPath(new URL('../', import.meta.url));
 const templates = fileURLToPath(new URL('./templates/app/', import.meta.url));
@@ -37,6 +38,7 @@ function appContext(configPath) {
   if (config.schemaVersion !== 2 && realpathSync(resolve(app, config.app.framework)) !== realpathSync(framework)) throw new Error('App points to a different framework. Use its configured framework CLI.');
   if (!/^[a-z][a-z0-9_-]{0,123}$/.test(config.buildId)) throw new Error('Invalid buildId');
   if (!/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(config.app.applicationId)) throw new Error('Invalid applicationId');
+  validateIconConfig(app, config);
   return { app, config, file };
 }
 
@@ -58,7 +60,14 @@ export function createStandalone(targetPath, { name, applicationId, force = fals
   const config = {
     ...(!localFramework ? { schemaVersion: 2 } : {}),
     buildId: `${packageName}-app`,
-    app: { name: displayName, applicationId: identifier, framework: localFramework ? posix(relative(target, framework)) || '.' : '.anseronui/sdk' },
+    app: { name: displayName, applicationId: identifier, framework: localFramework ? posix(relative(target, framework)) || '.' : '.anseronui/sdk', icon: {
+      default: 'assets/icons/app.png',
+      ios: { light: 'assets/icons/app.png', dark: 'assets/icons/app-dark.png', tinted: 'assets/icons/app-tinted.png' },
+      android: {
+        adaptive: { foreground: 'assets/icons/android-foreground.xml', background: { color: '#3559DC' }, monochrome: 'assets/icons/android-monochrome.xml' },
+        night: { legacy: 'assets/icons/app-dark.png', background: { color: '#111D35' } },
+      },
+    } },
     sourceDirs: [`${rel}/src`],
     pages: ['home', 'details'].map(page => ({ name: page, source: `${rel}/src/pages/${page}.tsx`, export: `${page}Page` })),
     web: { viteConfig: `${rel}/web/vite.config.ts`, publicDir: `${rel}/web/public` },
@@ -72,7 +81,7 @@ export function createStandalone(targetPath, { name, applicationId, force = fals
   for (const source of tree(templates)) {
     const path = join(target, relative(templates, source).replace(/(^|[/\\])gitignore$/, '$1.gitignore'));
     mkdirSync(dirname(path), { recursive: true });
-    if (source.endsWith('.jar')) copyFileSync(source, path);
+    if (/\.(jar|png)$/.test(source)) copyFileSync(source, path);
     else {
       let contents = readFileSync(source, 'utf8').replace(/__APP_NAME__|__APPLICATION_ID__|__BUILD_ID__/g, token => values[token]);
       if (!localFramework) contents = contents.replaceAll('@anseronui/', 'anseronui/');
@@ -111,7 +120,7 @@ export function createStandalone(targetPath, { name, applicationId, force = fals
   write(join(target, 'platforms/android/settings.gradle'), `pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\nrootProject.name = '${displayName}'\ninclude ':app', ':render'\n`);
   const renderer = posix(relative(join(target, 'platforms/android'), resolve(target, config.app.framework, 'packages/render-android')));
   write(join(target, 'platforms/android/render/build.gradle'), `plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }\nandroid {\n namespace 'org.anseronui.render'\n compileSdk 35\n defaultConfig { minSdk 26 }\n compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }\n kotlinOptions { jvmTarget = '17' }\n sourceSets.main {\n  java.srcDirs = [rootProject.file(${JSON.stringify(renderer + '/src/main/java')})]\n  manifest.srcFile rootProject.file(${JSON.stringify(renderer + '/src/main/AndroidManifest.xml')})\n  jniLibs.srcDirs = [rootProject.file('../../.verification/android-jni')]\n }\n}\n`);
-  write(join(target, 'README.md'), `# ${displayName}\n\nAnseronUI 跨平台应用，应用标识 \`${identifier}\`。\n\n\`npm install\` → \`npm run setup\` → \`npm run ios\` / \`npm run android\` / \`npm run macos\`。\n\nsetup 使用 npm 包内的固定版本编译器源码构建工具链，无需 Git。iOS 需要 macOS、Xcode、模拟器 runtime 和 Python 3。macOS AppKit 需要 Apple Silicon、macOS 15+ 构建主机与 Xcode。Android 需要 SDK 35、NDK、JDK 17–22 及 arm64-v8a 设备或模拟器。\n\n指定设备：\`npm run ios -- --device <UUID或名称>\`、\`npm run android -- --device <serial>\`，或 \`npm run android -- --avd <AVD名称>\`。\`--no-build\` 复用已有产物，\`--dry-run\` 预览操作。\n\n\`npm run check\` 检查配置；\`npm run typecheck\` 检查 TSX。\`npm run build:ios\` / \`npm run build:android\` / \`npm run build:macos\` 只构建；\`build:ios-device\` 生成未签名真机产物，需自行配置 Xcode 签名。\n\nWeb：\`npm run build:web\`，然后 \`npm run dev:web\`。修改 TSX 后需重新编译 Wasm。\n\n页面位于 \`src/pages\`；页面清单位于 \`anseronui.config.json\`。${localFramework ? '本地源码模式：页面路径相对于框架目录。' : '配置中的页面、源码及 Web 路径相对于本工程，可整体移动工程。npm 依赖固定版本，提交 package-lock.json 以锁定依赖。SDK 与编译器缓存位于 .anseronui/，构建产物位于 .verification/、platforms/android/app/build/ 和 dist/web/。无需框架源码仓库。'}\n\n四端使用共享 TSX 页面；iOS、Android 与 Web 支持范围见框架文档，macOS 使用原生 AppKit Renderer。\n\n原生插件：使用 \`npm install <插件包>\` 安装到生产依赖，\`npm run check\` 查看已发现插件，再重新构建目标平台。构建自动接入包内的原生源码和注册表；生成文件位于 \`.anseronui/plugins/\`，请勿手动修改。插件发布协议见 AnseronUI 框架 README。\n`);
+  write(join(target, 'README.md'), `# ${displayName}\n\nAnseronUI 跨平台应用，应用标识 \`${identifier}\`。\n\n\`npm install\` → \`npm run setup\` → \`npm run ios\` / \`npm run android\` / \`npm run macos\`。\n\nsetup 使用 npm 包内的固定版本编译器源码构建工具链，无需 Git。iOS 需要 macOS、Xcode、模拟器 runtime 和 Python 3。macOS AppKit 需要 Apple Silicon、macOS 15+ 构建主机与 Xcode。Android 需要 SDK 35、NDK、JDK 17–22 及 arm64-v8a 设备或模拟器。\n\n指定设备：\`npm run ios -- --device <UUID或名称>\`、\`npm run android -- --device <serial>\`，或 \`npm run android -- --avd <AVD名称>\`。\`--no-build\` 复用已有产物，\`--dry-run\` 预览操作。\n\n\`npm run check\` 检查配置；\`npm run typecheck\` 检查 TSX。\`npm run build:ios\` / \`npm run build:android\` / \`npm run build:macos\` 只构建；\`build:ios-device\` 生成未签名真机产物，需自行配置 Xcode 签名。\n\nWeb：\`npm run build:web\`，然后 \`npm run dev:web\`。修改 TSX 后需重新编译 Wasm。\n\n页面位于 \`src/pages\`；页面清单位于 \`anseronui.config.json\`。${localFramework ? '本地源码模式：页面路径相对于框架目录。' : '配置中的页面、源码及 Web 路径相对于本工程，可整体移动工程。npm 依赖固定版本，提交 package-lock.json 以锁定依赖。SDK 与编译器缓存位于 .anseronui/，构建产物位于 .verification/、platforms/android/app/build/ 和 dist/web/。无需框架源码仓库。'}\n\n应用图标：已附带默认图标及浅色／深色／着色、自适应和单色资源，位于 \`assets/icons/\`。替换图片，或在 \`anseronui.config.json\` 的 \`app.icon\` 配置 1024 × 1024 不透明 PNG，或按平台指定 iOS 浅色／深色／着色及 Icon Composer、Android 自适应／单色／night 资源。运行 \`npm run check\` 后重新构建。完整说明见[应用图标文档](node_modules/anseronui/dist/sdk/docs/app-icons.md)，本地源码模式可查看框架 \`docs/app-icons.md\`。\n\n四端使用共享 TSX 页面；iOS、Android 与 Web 支持范围见框架文档，macOS 使用原生 AppKit Renderer。\n\n原生插件：使用 \`npm install <插件包>\` 安装到生产依赖，\`npm run check\` 查看已发现插件，再重新构建目标平台。构建自动接入包内的原生源码和注册表；生成文件位于 \`.anseronui/plugins/\`，请勿手动修改。插件发布协议见 AnseronUI 框架 README。\n`);
   generateNativePlugins(target, []);
   console.log(`Created independent AnseronUI app: ${target}\nApplication ID: ${identifier}\nNext: cd ${JSON.stringify(target)}${localFramework ? '' : ' && npm install'} && npm run setup && npm run ios\nAndroid: npm run android\nmacOS: npm run macos`);
 }
@@ -152,7 +161,7 @@ export function setupStandalone(configPath, { prepareCompiler = false } = {}) {
     throw new Error(`Missing dependency ${name}; reinstall app dependencies with optional dependencies enabled.`);
   }
   // Resolve actual dependency locations, including nested node_modules trees.
-  const dependencyPaths = ['typescript', 'tsx', 'vite', 'scriptc', 'pnpm', '@types/node',
+  const dependencyPaths = ['typescript', 'tsx', 'vite', 'scriptc', 'pnpm', 'pngjs', '@types/node',
     `@scriptc/llvm-${toolchainHost}`, `@scriptc/runtime-${toolchainHost}`, '@scriptc/runtime-wasm32-wasi']
     .flatMap(name => {
       try { return [[name, dependencyDirectory(name)]]; }
@@ -229,6 +238,8 @@ export function buildStandalone(configPath, target) {
   }
   writeFileSync(fd, JSON.stringify({ pid: process.pid, config: file }));
   try {
+    const icons = target === 'web' || target === 'macos' ? undefined : generateAppIcons(app, config, target);
+    if (target === 'android' && config.app.icon !== undefined) integrateAndroidIcons(app);
     const coreTarget = { web: 'wasm', ios: 'ios-simulator', 'ios-device': 'ios-device', android: 'android', macos: 'macos-arm64' }[target];
     run(process.execPath, ['scripts/build-core.mjs', coreTarget, file], { env, cwd: framework });
     const core = join(framework, '.verification/core-' + coreTarget);
@@ -240,7 +251,7 @@ export function buildStandalone(configPath, target) {
     manifest.localArtifactSha256 = createHash('sha256').update(readFileSync(join(localCore, localArtifact))).digest('hex');
     write(join(localCore, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
     if (target === 'macos') buildMacOS({framework,app,config,core:localCore,standalone:true});
-    else if (target === 'web') run(process.execPath, ['node_modules/vite/bin/vite.js', 'build', '--config', resolve(framework, config.web.viteConfig)], { cwd: framework });
+    else if (target === 'web') run(process.execPath, [join(framework, 'scripts/web-app.mjs'), 'build', resolve(framework, config.web.viteConfig), app, configPath], { cwd: framework });
     else if (target === 'android') {
       const native = join(app, 'platforms/android');
       write(join(native, 'app/src/main/assets/core.manifest.json'), readFileSync(join(core, 'manifest.json')));
@@ -251,6 +262,7 @@ export function buildStandalone(configPath, target) {
       const ios = join(app, 'platforms/ios');
       write(join(ios, 'core.manifest.json'), readFileSync(join(core, 'manifest.json')));
       run('python3', [join(app, 'scripts/generate-ios-project.py')]);
+      integrateIOSIcons(app, icons);
       run('xcodebuild', ['-project', join(ios, 'App.xcodeproj'), '-scheme', 'App', '-configuration', 'Debug', '-sdk', target === 'ios' ? 'iphonesimulator' : 'iphoneos', '-derivedDataPath', join(app, '.verification/' + target), ...(target === 'ios' ? ['CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-'] : ['CODE_SIGNING_ALLOWED=NO']), 'ARCHS=arm64', 'build']);
     }
   } finally { closeSync(fd); rmSync(lock); }
@@ -262,7 +274,7 @@ export function typecheckStandalone(configPath) {
 export function devStandalone(configPath) {
   const { app, config, framework } = setupStandalone(configPath);
   if (!existsSync(resolve(framework, config.web.publicDir, 'core.wasm'))) throw new Error('Run npm run build:web first; TSX changes require an AOT rebuild.');
-  run(process.execPath, [join(framework, 'node_modules/vite/bin/vite.js'), '--config', resolve(framework, config.web.viteConfig)], { cwd: app });
+  run(process.execPath, [join(framework, 'scripts/web-app.mjs'), 'dev', resolve(framework, config.web.viteConfig), app, configPath], { cwd: app });
 }
 export function selectIOS(devices, requested) {
   const available = Object.values(devices).flat().filter(device => device.isAvailable);

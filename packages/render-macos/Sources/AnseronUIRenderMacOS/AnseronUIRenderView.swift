@@ -98,6 +98,7 @@ import AppKit
         if let root = entry.root { root.frame = bounds; addSubview(root) }
         if let color = entry.color { onPageBackgroundColor?(color) }
         synchronizeSize()
+        host?.environmentChanged()
         needsLayout = true
     }
 
@@ -107,7 +108,7 @@ import AppKit
         synchronizeSize()
     }
 
-    public override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); host?.environmentChanged() }
+    public override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); routes.forEach { $0.host?.environmentChanged() } }
     public override func layout() {
         super.layout()
         renderRoot?.frame = bounds

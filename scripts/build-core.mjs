@@ -62,7 +62,7 @@ for (const kind of (frameworkOnly ? ['framework'] : ['framework', 'business'])) 
   let cached = false;
   try {
     const manifest = JSON.parse(readFileSync(stamp, 'utf8'));
-    cached = JSON.stringify(manifest.targetIdentity ?? null) === JSON.stringify(targetIdentity) && manifest.kind === kind && manifest.target === target && manifest.abiVersion === 1 &&
+    cached = JSON.stringify(manifest.targetIdentity ?? null) === JSON.stringify(targetIdentity) && manifest.kind === kind && manifest.target === target && manifest.abiVersion === 2 &&
       manifest.sourceFingerprint === fingerprints[kind] && manifest.artifactSha256 === digest(artifact);
   } catch {}
   if (cached) console.log(`Reusing ${kind}: ${artifact}`);
@@ -75,7 +75,7 @@ for (const kind of (frameworkOnly ? ['framework'] : ['framework', 'business'])) 
     run(process.execPath, ['internal/toolchain/build-library.mjs', `.verification/source-${target}/${kind}/profile${target==='wasm'?'-wasm':''}.json`, directory], env);
     const after = kind === 'framework' ? frameworkFingerprint(root) : businessFingerprint(root, configuration);
     if (after !== fingerprints[kind]) throw new Error(`${kind} sources changed during compilation`);
-    writeFileSync(stamp, JSON.stringify({kind,target,targetIdentity,abiVersion:1,sourceFingerprint:after,artifactSha256:digest(artifact)},null,2)+'\n');
+    writeFileSync(stamp, JSON.stringify({kind,target,targetIdentity,abiVersion:2,sourceFingerprint:after,artifactSha256:digest(artifact)},null,2)+'\n');
   }
   artifacts[kind] = artifact;
 }
@@ -112,7 +112,7 @@ if (target === 'wasm') {
 }
 if (sourceFingerprint !== coreFingerprint(root, configuration)) throw new Error('Sources changed during build; rebuild');
 const config = JSON.parse(readFileSync(configuration,'utf8'));
-const manifest = {buildId:config.buildId,target,targetIdentity,protocolMajor:1,runtimeEpoch:1,abiVersion:1,format:'split-v1',
+const manifest = {buildId:config.buildId,target,targetIdentity,protocolMajor:1,runtimeEpoch:1,abiVersion:2,format:'split-v1',
   pages:config.pages.map(page=>({...page,name:page.name??page.source.split('/').slice(-2,-1)[0]})),
   configPath:configuration,sourceFingerprint,frameworkFingerprint:fingerprints.framework,businessFingerprint:fingerprints.business,
   frameworkSha256:digest(artifacts.framework),businessSha256:digest(artifacts.business)};

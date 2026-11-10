@@ -139,7 +139,11 @@ Core 生成批量命令：
 
 ### 布局和文本测量
 
-Core 使用 `@anseronui/layout` 创建与描述树对应的布局节点。Flexily 计算出逻辑单位下的 frame；文本、按钮、输入框和富文本的尺寸通过 `MeasureRequest` 交给平台真实文本引擎，结果通过 `MeasureResult` 返回并进入缓存。
+Framework Core 的 `LayoutKernel` 按 surface 持有 Flexily 布局树，用稳定 node ID 复用布局节点。每次渲染对齐当前描述树，只创建新增节点、释放删除节点、调整变化的父子关系；布局样式变化时更新有效值，删除的样式恢复 CSS preset 默认值。未变化节点保留 Flexily 的脏状态与布局缓存；容器尺寸变化仍会重新计算受影响布局。
+
+Flexily 计算出逻辑单位下的 frame；文本、按钮、输入框和富文本的尺寸通过 `MeasureRequest` 交给平台真实文本引擎，结果通过 `MeasureResult` 返回并进入缓存。持久化测量回调读取当前轮数据；占位尺寸、文本/字体/约束变化和已使用测量结果变化会使相关节点变脏，避免复用旧测量。多轮测量复用同一棵布局树。
+
+内部 `ReleaseSurface` 消息释放对应 generation 的布局状态，迟到的旧 generation 释放不影响新 surface。实例关闭时显式释放剩余全部布局树。Business 与 Framework 之间仍传递完整 JSON 描述树、已提交树和测量缓存，本阶段的增量更新发生在布局树内部；宿主 Commit 差分和 ACK 语义沿用现有实现。
 
 Framework Core 只拥有布局计算语义；平台负责字体、字形、系统控件内边距和最终单位转换。这样可以避免 iOS、Android、Web 各自维护一套近似布局算法。
 

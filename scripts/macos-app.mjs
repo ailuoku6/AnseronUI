@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFi
 import { join, resolve, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { coreFingerprint } from './core-inputs.mjs';
+import { generateAppIcons } from './app-icons.mjs';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
@@ -43,6 +44,7 @@ export function buildMacOS({ framework, app, config, core, standalone = false })
   const registry = standalone ? [join(pluginDirectory,'GeneratedMacOSPlugins.swift')] : [];
   const frameworks = [...new Set(['AppKit','AVFoundation','AVKit','QuartzCore',...plugins.frameworks])];
   try {
+    const icon = generateAppIcons(app, config, 'macos');
     run('xcrun', ['swiftc','-swift-version','5','-target','arm64-apple-macosx14.0','-sdk',sdk,'-module-cache-path',cache,
       '-I',join(framework,'packages/render-macos/Sources/AnseronUICoreC'),'-parse-as-library',...sources,...plugins.sources,...registry,...hostSources,
       object,join(core,'entry.lib.a'),...frameworks.flatMap(name => ['-framework',name]),'-o',executable]);
@@ -53,9 +55,11 @@ export function buildMacOS({ framework, app, config, core, standalone = false })
       LSMinimumSystemVersion:'14.0', NSHighResolutionCapable:true, NSPrincipalClass:'NSApplication', NSBluetoothAlwaysUsageDescription: "连接蓝牙设备并读取设备数据",
       ...(!standalone ? { NSLocationWhenInUseUsageDescription: "演示读取当前位置", NSLocationUsageDescription: "演示读取当前位置", NSCameraUsageDescription: "演示申请相机权限", NSMicrophoneUsageDescription: "演示申请麦克风权限", NSPhotoLibraryUsageDescription: "演示申请照片权限" } : {}),
       ...plugins.infoPlist,
+      ...(icon.enabled ? { CFBundleIconFile: 'AppIcon.icns' } : {}),
     };
     const plist = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n' + Object.entries(info).map(([key,value]) => `<key>${xml(key)}</key>${typeof value === 'boolean' ? `<${value ? 'true' : 'false'}/>` : `<string>${xml(value)}</string>`}`).join('\n') + '\n</dict></plist>\n';
     writeFileSync(join(bundle,'Contents/Info.plist'),plist);
+    if (icon.enabled) copyFileSync(icon.path, join(resources, 'AppIcon.icns'));
     copyFileSync(join(core,'manifest.json'),join(resources,'core.manifest.json'));
     const assets = join(app,standalone ? 'assets' : 'examples/components/assets');
     if (existsSync(assets)) cpSync(assets,join(resources,'assets'),{recursive:true});
@@ -63,7 +67,7 @@ export function buildMacOS({ framework, app, config, core, standalone = false })
     run('xcrun',['--sdk','macosx','swiftc','-print-target-info'],{stdio:'ignore'});
     const build = { buildId:config.buildId, platform:'macos', arch:'arm64', sourceFingerprint:manifest.sourceFingerprint,
       executableSha256:digest(executable), coreSha256:digest(join(core,'entry.lib.a')), framework, configPath:manifest.configPath,
-      inputs:[...sources,...plugins.sources,...registry,...hostSources,join(native,'transport.c'),join(native,'include/anseronui_transport.h'),join(framework,'scripts/macos-app.mjs')].map(path => ({path,sha256:digest(path)})) };
+      inputs:[...sources,...plugins.sources,...registry,...hostSources,...icon.inputs,...(icon.enabled ? [join(resources,'AppIcon.icns')] : []),join(native,'transport.c'),join(native,'include/anseronui_transport.h'),join(framework,'scripts/macos-app.mjs'),join(framework,'scripts/app-icons.mjs')].map(path => ({path,sha256:digest(path)})) };
     writeFileSync(join(destination,'build.json'),JSON.stringify(build,null,2)+'\n');
     console.log(`Built macOS application: ${bundle}`);
     return bundle;

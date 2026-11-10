@@ -11,14 +11,24 @@ public struct RenderFrame: Decodable {
 
 public struct RenderProps: Decodable {
     public let text: String?
-    public let spans: String?
+    public var spans: String?
     public let title: String?
     public let inputRevision: UInt32?
     public let value: String?
     public let placeholder: String?
     public let disabled: Bool?
-    public let backgroundColor: String?
-    public let color: String?
+    public let dmBackgroundColor: String?
+    public let dmColor: String?
+    public let dmBorderColor: String?
+    public let dmPlaceholderTextColor: String?
+    public var shadowColor: String?
+    public let dmShadowColor: String?
+    public let shadowOpacity: Double?
+    public let shadowRadius: Double?
+    public let shadowOffsetX: Double?
+    public let shadowOffsetY: Double?
+    public var backgroundColor: String?
+    public var color: String?
     public let animation: String?
     public let translateX: Double?
     public let translateY: Double?
@@ -30,7 +40,7 @@ public struct RenderProps: Decodable {
     public let fontWeight: String?
     public let fontStyle: String?
     public let textAlign: String?
-    public let borderColor: String?
+    public var borderColor: String?
     public let borderWidth: Double?
     public let borderRadius: Double?
     public let overflow: String?
@@ -44,7 +54,7 @@ public struct RenderProps: Decodable {
     public let returnKeyType: String?
     public let autoCapitalize: String?
     public let autoCorrect: Bool?
-    public let placeholderTextColor: String?
+    public var placeholderTextColor: String?
     public let accessibilityLabel: String?
     public let textDecorationLine: String?
     public let scrollEnabled: Bool?
@@ -61,6 +71,21 @@ public struct RenderProps: Decodable {
     public let playControl: String?
     public let touchAction: String?
     public let nativeProps: String?
+
+    func themed(_ dark: Bool) -> RenderProps {
+        guard dark else { return self }
+        var p = self
+        p.backgroundColor = dmBackgroundColor ?? backgroundColor
+        p.color = dmColor ?? color
+        p.borderColor = dmBorderColor ?? borderColor
+        p.placeholderTextColor = dmPlaceholderTextColor ?? placeholderTextColor
+        p.shadowColor = dmShadowColor ?? shadowColor
+        if let spans, let data = spans.data(using: .utf8), var items = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
+            for index in items.indices { if let color = items[index]["dmColor"] as? String { items[index]["color"] = color } }
+            if let data = try? JSONSerialization.data(withJSONObject: items) { p.spans = String(data: data, encoding: .utf8) }
+        }
+        return p
+    }
 }
 
 public struct RenderCommand: Decodable {
@@ -121,6 +146,7 @@ public enum RenderError: Error {
 }
 
 private final class NodeRecord {
+    var declaredProps: RenderProps?
     var pageBackgroundColor = UIColor.clear
     let view: UIView
     let content: UIView
@@ -279,6 +305,33 @@ private final class TouchSession {
             scroll.setContentOffset(CGPoint(x: x, y: y), animated: args["animated"] as? Bool ?? false)
         } else { throw NativeExtensionError.unsupportedMethod(method) }
         completion(.success(NSNull())); return nil
+    }
+
+    /// Repaint stored declarations without re-entering Core or changing layout.
+    public func appearanceChanged() {
+        if #available(iOS 18.0, *) { root.updateTraitsIfNeeded() }
+        for record in nodes.values {
+            guard let raw = record.declaredProps else { continue }
+            let p = raw.themed(root.traitCollection.userInterfaceStyle == .dark)
+            let color = parseColor(p.backgroundColor) ?? .clear
+            record.pageBackgroundColor = color
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            color.getRed(&r, green: &g, blue: &b, alpha: &a)
+            record.animation.stage(["r":Double(r)*255,"g":Double(g)*255,"b":Double(b)*255,"a":Double(a)])
+            record.animation.commit()
+            record.view.layer.borderColor = parseColor(p.borderColor)?.cgColor
+            record.view.layer.shadowColor = (parseColor(p.shadowColor) ?? .black).cgColor
+            if let label = record.view as? UILabel { configureLabel(label, text:p.text ?? "", fontSize:CGFloat(p.fontSize ?? 14), props:p) }
+            if let button = record.view as? UIButton {
+                button.setTitleColor(parseColor(p.color) ?? .tintColor, for:.normal)
+                button.setTitleColor(parseColor(p.color)?.withAlphaComponent(0.4) ?? .secondaryLabel, for:.disabled)
+            }
+            if let field = record.view as? UITextField {
+                field.textColor = parseColor(p.color) ?? .label
+                field.attributedPlaceholder = p.placeholder.map { NSAttributedString(string:$0, attributes:[.foregroundColor:parseColor(p.placeholderTextColor) ?? .placeholderText]) }
+            }
+        }
+        onPageBackgroundColor?(nodes.values.first { $0.view === root.subviews.first }?.pageBackgroundColor ?? .clear)
     }
 
     public func view(for nodeId: UInt32) -> UIView? { nodes[nodeId]?.view }
@@ -458,7 +511,9 @@ private final class TouchSession {
         }
     }
 
-    private func setProps(_ record: NodeRecord, _ props: RenderProps) throws {
+    private func setProps(_ record: NodeRecord, _ raw: RenderProps) throws {
+        record.declaredProps = raw
+        let props = raw.themed(root.traitCollection.userInterfaceStyle == .dark)
         let view = record.view
         // Missing backgrounds are transparent, including when a prior color is removed.
         // An opaque UILabel with a nil background can draw a black backing surface.
@@ -475,7 +530,11 @@ private final class TouchSession {
             "r":Double(r)*255,"g":Double(g)*255,"b":Double(b)*255,"a":Double(a)])
         view.layer.borderWidth = CGFloat(props.borderWidth ?? 0)
         view.layer.borderColor = parseColor(props.borderColor)?.cgColor
-        view.clipsToBounds = view is UIScrollView || props.overflow == "hidden" || props.borderRadius != nil
+        view.clipsToBounds = view is UIScrollView || props.overflow == "hidden"
+        view.layer.shadowColor = (parseColor(props.shadowColor) ?? .black).cgColor
+        view.layer.shadowOpacity = Float(props.shadowOpacity ?? 0)
+        view.layer.shadowRadius = CGFloat(props.shadowRadius ?? 0)
+        view.layer.shadowOffset = CGSize(width: props.shadowOffsetX ?? 0, height: props.shadowOffsetY ?? 0)
         view.isHidden = props.visibility == "hidden"
         view.accessibilityIdentifier = props.testID
         record.touchAction = props.touchAction ?? "auto"

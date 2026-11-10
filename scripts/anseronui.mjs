@@ -8,6 +8,7 @@ import { parseArgs } from "node:util";
 import { createStandalone, buildStandalone, runStandalone, setupStandalone, typecheckStandalone, devStandalone } from "./standalone-app.mjs";
 
 import { discoverNativePlugins } from "./native-plugins.mjs";
+import { validateIconConfig } from "./app-icons.mjs";
 
 const frameworkRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const requestedCommand = process.argv[2] ?? "help";
@@ -69,6 +70,7 @@ function checkApp() {
   const configPath = resolve(process.cwd(), valueAfter("--config", "anseronui.config.json"));
   if (!existsSync(configPath)) throw new Error(`Config not found: ${configPath}`);
   const config = json(configPath);
+  validateIconConfig(dirname(configPath), config);
   if (!/^[a-z][a-z0-9_-]*$/.test(config.buildId ?? "")) throw new Error("buildId must start with a lowercase letter");
   if (!Array.isArray(config.pages) || config.pages.length === 0) throw new Error("pages must contain at least one page");
   const names = new Set();

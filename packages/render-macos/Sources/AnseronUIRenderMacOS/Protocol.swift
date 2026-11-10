@@ -11,14 +11,24 @@ public struct RenderFrame: Decodable, Sendable {
 
 public struct RenderProps: Decodable, Sendable {
     public let text: String?
-    public let spans: String?
+    public var spans: String?
     public let title: String?
     public let inputRevision: UInt32?
     public let value: String?
     public let placeholder: String?
     public let disabled: Bool?
-    public let backgroundColor: String?
-    public let color: String?
+    public let dmBackgroundColor: String?
+    public let dmColor: String?
+    public let dmBorderColor: String?
+    public let dmPlaceholderTextColor: String?
+    public var shadowColor: String?
+    public let dmShadowColor: String?
+    public let shadowOpacity: Double?
+    public let shadowRadius: Double?
+    public let shadowOffsetX: Double?
+    public let shadowOffsetY: Double?
+    public var backgroundColor: String?
+    public var color: String?
     public let animation: String?
     public let translateX: Double?
     public let translateY: Double?
@@ -30,7 +40,7 @@ public struct RenderProps: Decodable, Sendable {
     public let fontWeight: String?
     public let fontStyle: String?
     public let textAlign: String?
-    public let borderColor: String?
+    public var borderColor: String?
     public let borderWidth: Double?
     public let borderRadius: Double?
     public let overflow: String?
@@ -44,7 +54,7 @@ public struct RenderProps: Decodable, Sendable {
     public let returnKeyType: String?
     public let autoCapitalize: String?
     public let autoCorrect: Bool?
-    public let placeholderTextColor: String?
+    public var placeholderTextColor: String?
     public let accessibilityLabel: String?
     public let textDecorationLine: String?
     public let scrollEnabled: Bool?
@@ -61,6 +71,21 @@ public struct RenderProps: Decodable, Sendable {
     public let playControl: String?
     public let touchAction: String?
     public let nativeProps: String?
+
+    func themed(_ dark: Bool) -> RenderProps {
+        guard dark else { return self }
+        var p = self
+        p.backgroundColor = dmBackgroundColor ?? backgroundColor
+        p.color = dmColor ?? color
+        p.borderColor = dmBorderColor ?? borderColor
+        p.placeholderTextColor = dmPlaceholderTextColor ?? placeholderTextColor
+        p.shadowColor = dmShadowColor ?? shadowColor
+        if let spans, let data = spans.data(using: .utf8), var items = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
+            for index in items.indices { if let color = items[index]["dmColor"] as? String { items[index]["color"] = color } }
+            if let data = try? JSONSerialization.data(withJSONObject: items) { p.spans = String(data: data, encoding: .utf8) }
+        }
+        return p
+    }
 }
 
 public struct RenderCommand: Decodable, Sendable {

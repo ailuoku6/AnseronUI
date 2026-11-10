@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { decodeEnvelope, encodeEnvelope, PROTOCOL_MAJOR, PROTOCOL_MINOR } from "../src/index.js";
+import { decodeEnvelope, encodeEnvelope, PROTOCOL_MAJOR, PROTOCOL_MINOR, validProps } from "../src/index.js";
 import type { Envelope, InputPayload } from "../src/index.js";
 
 describe("protocol envelope", () => {
+  it("accepts dark colors and shadows but rejects invalid shadow geometry and opacity", () => {
+    expect(validProps({ dmBackgroundColor:'#111111', dmColor:'#ffffff', dmBorderColor:'#222222', dmShadowColor:'#ffffff', dmPlaceholderTextColor:'#aaaaaa', shadowColor:'#000000', shadowOffsetX:-4, shadowOffsetY:8, shadowRadius:12, shadowOpacity:0.3 })).toBe(true);
+    for (const props of [{ shadowOpacity:1.1 }, { shadowOpacity:-0.1 }, { shadowRadius:-1 }, { shadowOffsetX:NaN }, { shadowOffsetY:Infinity }, { dmColor:123 }]) expect(validProps(props)).toBe(false);
+  });
   const envelope: Envelope<InputPayload> = {
     protocolMajor: PROTOCOL_MAJOR, protocolMinor: PROTOCOL_MINOR,
     bundleBuildId: "test", runtimeEpoch: 1, surfaceId: 2,

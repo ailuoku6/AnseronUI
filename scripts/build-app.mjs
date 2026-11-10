@@ -4,12 +4,14 @@ import { readFileSync } from 'node:fs';
 import { buildMacOS, requireMacOS } from './macos-app.mjs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { generateAppIcons, integrateIOSIcons, integrateAndroidIcons } from './app-icons.mjs';
 process.chdir(fileURLToPath(new URL('../', import.meta.url)));
 function run(command,args,env=process.env) { const r=spawnSync(command,args,{stdio:'inherit',env}); if(r.error)throw r.error; if(r.status!==0)process.exit(r.status??1); }
 const target = process.argv[2];
 const config = process.env.ANSERONUI_CONFIG;
 const coreArgs = config ? [config] : [];
 const appConfig = config ? JSON.parse(readFileSync(config, 'utf8')) : null;
+const iconConfig = appConfig ?? JSON.parse(readFileSync('anseronui.config.json', 'utf8'));
 if (target === 'macos') {
   requireMacOS();
   run(process.execPath,['scripts/build-core.mjs','macos-arm64',...coreArgs]);
@@ -17,9 +19,14 @@ if (target === 'macos') {
 } else if (target === 'ios' || target === 'ios-device') {
   run(process.execPath,['scripts/build-core.mjs',target==='ios'?'ios-simulator':'ios-device', ...coreArgs]);
   run('python3',['scripts/generate-ios-project.py']);
+  integrateIOSIcons(process.cwd(), generateAppIcons(process.cwd(), iconConfig, target), {
+    projectFile: 'examples/native/ios/AnseronUIDemo.xcodeproj/project.pbxproj', targetName: 'AnseronUIDemo',
+  });
   run('xcodebuild',['-project','examples/native/ios/AnseronUIDemo.xcodeproj','-scheme','AnseronUIDemo','-configuration','Debug','-sdk',target==='ios'?'iphonesimulator':'iphoneos','-derivedDataPath',`.verification/${target==='ios'?'ios-app':'ios-device-app'}`,...(target === 'ios' ? ['CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-'] : ['CODE_SIGNING_ALLOWED=NO']),'ARCHS=arm64','build']);
 } else if (target === 'android') {
   run(process.execPath,['scripts/build-core.mjs','android', ...coreArgs]);
+  generateAppIcons(process.cwd(), iconConfig, 'android', { androidProjectDir: 'examples/native/android' });
+  integrateAndroidIcons(process.cwd(), { projectDir: 'examples/native/android' });
   const env={...process.env};
   env.ANDROID_HOME ??= env.ANDROID_SDK_ROOT ?? join(homedir(),process.platform==='darwin'?'Library/Android/sdk':'Android/Sdk');
   if (!env.JAVA_HOME && process.platform==='darwin') {

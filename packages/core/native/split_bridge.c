@@ -14,6 +14,7 @@ typedef void (*PanicSink)(void *, const uint8_t *, size_t, uint64_t);
   double prefix##version(void);
 DECLARE_RUNTIME(anseronui_framework_)
 DECLARE_RUNTIME(anseronui_business_)
+void anseronui_framework_dispose(void);
 void anseronui_framework_execute(const uint8_t *, uint64_t, const uint8_t **, uint64_t *);
 void anseronui_business_create(void);
 void anseronui_business_post(const uint8_t *, uint64_t);
@@ -37,7 +38,7 @@ void anseronui_core_sink(PanicSink fn, void *context) {
 }
 void anseronui_core_init(void) {
   anseronui_framework_init(); anseronui_business_init();
-  if (anseronui_framework_version() != 1 || anseronui_business_version() != 1) fail("CORE_ABI_MISMATCH");
+  if (anseronui_framework_version() != 2 || anseronui_business_version() != 2) fail("CORE_ABI_MISMATCH");
 }
 void anseronui_core_create(void) { anseronui_business_create(); }
 void anseronui_core_post(const uint8_t *input, uint64_t length) { anseronui_business_post(input, length); }
@@ -59,7 +60,7 @@ void anseronui_core_step(const uint8_t **output, uint64_t *length) {
 uint8_t anseronui_core_pending(void) { return anseronui_business_pending(); }
 int32_t anseronui_core_async_step(uint32_t budget) { return anseronui_business_async_step(budget); }
 int32_t anseronui_core_async_pending(void) { return anseronui_business_async_pending(); }
-void anseronui_core_dispose(void) { anseronui_business_dispose(); }
+void anseronui_core_dispose(void) { anseronui_business_dispose(); anseronui_framework_dispose(); }
 void anseronui_core_reset(void) { anseronui_business_reset(); anseronui_framework_reset(); }
 void anseronui_core_collect(void) { anseronui_business_collect(); anseronui_framework_collect(); }
 int32_t anseronui_core_shutdown(void) {

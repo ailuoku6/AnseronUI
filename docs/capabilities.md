@@ -31,9 +31,9 @@
 | 组件 | 属性 | 专属回调 |
 | --- | --- | --- |
 | `Text` | `numberOfLines`、`ellipsizeMode`（`tail` / `clip`） | 通用点击、触摸等 |
-| `RichText` | `spans`、`numberOfLines`；每个 span 可设置 `text`、`color`、`fontSize`、`fontWeight`、`fontStyle`、`textDecorationLine` | span 的 `onClick()`、整段的 `onSpanClick(index)` |
+| `RichText` | `spans`、`numberOfLines`；每个 span 可设置 `text`、`color`、`dmColor`、`fontSize`、`fontWeight`、`fontStyle`、`textDecorationLine` | span 的 `onClick()`、整段的 `onSpanClick(index)` |
 | `Button` | 必填 `title`、可选 `disabled` | 通用 `onClick`、`onLongPress` |
-| `TextInput` | 必填 `value`、`onChangeText`；`placeholder`、`editable`、`secureTextEntry`、`maxLength`、`keyboardType`、`returnKeyType`、`autoCapitalize`、`autoCorrect`、`placeholderTextColor` | `onChangeText(value)`、`onFocus()`、`onBlur()`、`onSubmitEditing(value)` |
+| `TextInput` | 必填 `value`、`onChangeText`；`placeholder`、`editable`、`secureTextEntry`、`maxLength`、`keyboardType`、`returnKeyType`、`autoCapitalize`、`autoCorrect`、`placeholderTextColor`、`dmPlaceholderTextColor` | `onChangeText(value)`、`onFocus()`、`onBlur()`、`onSubmitEditing(value)` |
 | `ScrollView` | `scrollEnabled`、`showsVerticalScrollIndicator` | `onScroll(offset, event)`、`onScrollEnd(event)` |
 | `Image` | 必填 `src`；`placeholderSrc`、`resizeMode` | `onLoad(source)`、`onError(source, errorCode)` |
 | `Video` | 必填 `src`；`resizeMode`、`controls`、`autoplay`、`loop`、`muted`、`rate`、`playControl`（`play` / `pause` / `stop`） | `onPlaybackStateChange(state)`、`onTimeUpdate(currentTime, duration)`、`onFirstFrame()`、`onError(source, errorCode)` |
@@ -51,11 +51,15 @@
 - 对齐：`alignItems`、`alignSelf`、`justifyContent`；
 - 定位：`position`、`top`、`right`、`bottom`、`left`；
 - 外观：`backgroundColor`、`color`、`opacity`、`borderColor`、`borderWidth`、`borderRadius`；
+- 夜间颜色：`dmBackgroundColor`、`dmColor`、`dmBorderColor`、`dmShadowColor`、`dmPlaceholderTextColor`；
+- 外阴影：`shadowColor`、`shadowOpacity`、`shadowRadius`、`shadowOffsetX`、`shadowOffsetY`；
 - 变换：`translateX/translateY`、`scaleX/scaleY`、`rotate`；
 - 文本：`fontSize`、`fontWeight`、`fontStyle`、`textAlign`、`textDecorationLine`；
 - 裁剪和可见性：`overflow`、`visibility`。
 
 布局在 Core 中计算成节点 frame，再由各平台应用到真实 View、UIView 或 DOM。尺寸和间距使用数值逻辑单位，TSX 的 `Style` 不接受任意 CSS 字符串；底层 Flexily 能力不等于全部暴露到 TSX。布局默认方向为 `row`，纵向容器请显式设置 `flexDirection: "column"`。业务不应在每个平台重新实现一套布局算法。
+
+夜间颜色自动跟随宿主外观，缺少 `dm` 值时回退到普通颜色。阴影默认透明度为 `0`，需显式开启。完整示例、圆角裁剪与平台差异见[颜色、夜间模式与阴影](styles.md)。
 
 ## 事件模型
 

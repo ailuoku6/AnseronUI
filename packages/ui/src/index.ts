@@ -49,6 +49,12 @@ export interface Style extends AnimationStyle {
   position?: "relative" | "absolute";
   top?: number; right?: number; bottom?: number; left?: number;
   backgroundColor?: string; color?: string; opacity?: number;
+  /** System dark appearance overrides. Missing values fall back to the ordinary color. */
+  dmBackgroundColor?: string; dmColor?: string; dmBorderColor?: string;
+  placeholderTextColor?: string; dmPlaceholderTextColor?: string;
+  /** Outer box shadow, in layout units. Defaults: black, opacity 0, radius 0, offset 0/0. */
+  shadowColor?: string; dmShadowColor?: string; shadowOpacity?: number;
+  shadowRadius?: number; shadowOffsetX?: number; shadowOffsetY?: number;
   borderColor?: string; borderWidth?: number; borderRadius?: number;
   overflow?: "visible" | "hidden";
   visibility?: "visible" | "hidden";
@@ -98,7 +104,7 @@ export interface TextProps extends CommonProps {
   ellipsizeMode?: "tail" | "clip";
 }
 export interface RichTextSpan {
-  text: string; color?: string; fontSize?: number; fontWeight?: "normal" | "bold";
+  text: string; color?: string; dmColor?: string; fontSize?: number; fontWeight?: "normal" | "bold";
   fontStyle?: "normal" | "italic"; textDecorationLine?: "none" | "underline" | "line-through";
   onClick?: () => void;
 }
@@ -112,7 +118,7 @@ export interface TextInputProps extends CommonProps {
   keyboardType?: "default" | "email-address" | "numeric" | "decimal-pad" | "phone-pad" | "url";
   returnKeyType?: "default" | "done" | "go" | "next" | "search" | "send";
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
-  autoCorrect?: boolean; placeholderTextColor?: string;
+  autoCorrect?: boolean; placeholderTextColor?: string; dmPlaceholderTextColor?: string;
   onFocus?: () => void; onBlur?: () => void;
   onSubmitEditing?: (value: string) => void;
 }

@@ -46,6 +46,11 @@ final class DemoController: UIViewController {
         pages = readPages()
         for page in pages { selector.insertSegment(withTitle: pageTitle(page), at: selector.numberOfSegments, animated: false) }
         selector.selectedSegmentIndex = min(selector.numberOfSegments - 1, 0)
+        let arguments = ProcessInfo.processInfo.arguments
+        if let flag = arguments.firstIndex(of: "--page"), arguments.indices.contains(flag + 1),
+           let index = pages.firstIndex(of: arguments[flag + 1]) {
+            selector.selectedSegmentIndex = index
+        }
         selector.addTarget(self, action: #selector(selectPage), for: .valueChanged)
         selector.accessibilityIdentifier = "page-selector"
         status.font = .systemFont(ofSize: 12)
@@ -76,7 +81,7 @@ final class DemoController: UIViewController {
         let result = values.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
         return result.isEmpty ? ["counter", "async-form", "components", "extensions"] : result
     }
-    private func pageTitle(_ page: String) -> String { ["counter": "Counter", "async-form": "Async form", "components": "组件", "extensions": "扩展"][page] ?? page }
+    private func pageTitle(_ page: String) -> String { ["appearance": "外观", "counter": "Counter", "async-form": "Async form", "components": "组件", "extensions": "扩展"][page] ?? page }
 }
 
 @MainActor private func demoExtensions() -> IOSPlatformExtensions {

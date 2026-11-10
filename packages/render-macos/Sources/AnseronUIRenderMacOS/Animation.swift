@@ -102,6 +102,9 @@ final class AnseronUINodeAnimation: NSObject {
     }
     private func paint() {
         guard let view else { cancel(); return }
+        // AppKit enables clipping when cornerRadius is assigned. Preserve the
+        // declared overflow so rounded containers can still cast outer shadows.
+        let clipsContent = view.clipsToBounds
         let v = current
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if let x = v["x"], let y = v["y"], let width = v["width"], let height = v["height"] {
@@ -135,7 +138,10 @@ final class AnseronUINodeAnimation: NSObject {
         view.wantsLayer = true
         view.alphaValue = max(0,min(1,v["opacity"]!))
         view.layer?.cornerRadius = max(0,v["borderRadius"]!)
+        let radius = CGFloat(max(0,v["borderRadius"]!))
+        view.layer?.shadowPath = CGPath(roundedRect:view.bounds,cornerWidth:radius,cornerHeight:radius,transform:nil)
         view.layer?.backgroundColor = NSColor(srgbRed:max(0,min(255,v["r"]!))/255, green:max(0,min(255,v["g"]!))/255, blue:max(0,min(255,v["b"]!))/255, alpha:max(0,min(1,v["a"]!))).cgColor
+        view.layer?.masksToBounds = clipsContent
         CATransaction.commit()
     }
 }

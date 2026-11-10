@@ -1,6 +1,13 @@
 package org.anseronui.render
 
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.content.res.ColorStateList
 import android.util.TypedValue
@@ -51,6 +58,11 @@ data class TextSize(val width: Float, val height: Float, val baseline: Float)
 data class TouchPoint(val x: Double, val y: Double, val pageX: Double, val pageY: Double, val pointerId: Long)
 
 private class NodeRecord(val view: View, val content: ViewGroup?, val kind: String) {
+    var declaredProps: JSONObject? = null
+    var resolvedProps: JSONObject? = null
+    var shadowKey = ""
+    var shadowBitmap: Bitmap? = null
+    var shadowPadding = 0
     var pageBackgroundColor = Color.TRANSPARENT
     val animation = NodeAnimation(view)
     val events = mutableSetOf<String>()
@@ -73,7 +85,14 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     private data class TouchSession(val target: Long, val owner: Long?, val startX: Float, val startY: Float,
         val allowX: Boolean, val allowY: Boolean, var x: Float, var y: Float, var axis: String? = null, var cancelled: Boolean = false)
     private val sessions = mutableMapOf<Int, TouchSession>()
-    private val surface = object : FrameLayout(root.context) {
+    private inner open class ShadowLayout : FrameLayout(root.context) {
+        init { clipChildren = false; clipToPadding = false }
+        override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
+            nodes.values.firstOrNull { it.view === child }?.let { drawShadow(canvas, it) }
+            return super.drawChild(canvas, child, drawingTime)
+        }
+    }
+    private val surface = object : ShadowLayout() {
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
             receiveTouch(event)
             val handled = super.dispatchTouchEvent(event)
@@ -82,6 +101,65 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         }
     }
     init { root.addView(surface, FrameLayout.LayoutParams(-1, -1)) }
+
+    private fun isDark() = root.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+    private fun themed(raw: JSONObject): JSONObject {
+        val props = JSONObject(raw.toString())
+        if (!isDark()) return props
+        for (key in listOf("backgroundColor", "color", "borderColor", "shadowColor", "placeholderTextColor")) {
+            val dm = "dm" + key.replaceFirstChar { it.uppercaseChar() }
+            if (raw.has(dm)) props.put(key, raw.get(dm))
+        }
+        if (raw.has("spans")) {
+            val spans = richTextSpans(raw)
+            for (i in 0 until spans.length()) spans.optJSONObject(i)?.let { if (it.has("dmColor")) it.put("color", it.get("dmColor")) }
+            props.put("spans", spans.toString())
+        }
+        return props
+    }
+
+    /** Reapply only visual declarations: never replay media/native commands or controlled input. */
+    fun appearanceChanged() {
+        nodes.values.forEach { record -> record.declaredProps?.let { setProps(record, it, true); record.animation.commit() } }
+        val page = surface.getChildAt(0)
+        onPageBackgroundColor?.invoke(nodes.values.firstOrNull { it.view === page }?.pageBackgroundColor ?: Color.TRANSPARENT)
+        surface.invalidate()
+    }
+
+    // Rasterize only the outer shadow on a software bitmap, then composite with the normal
+    // hardware view tree. Drawing in the parent avoids clipping a view's own outer shadow.
+    private fun drawShadow(canvas: Canvas, record: NodeRecord) {
+        val view = record.view
+        val props = record.resolvedProps ?: return
+        val opacity = props.optDouble("shadowOpacity", 0.0).coerceIn(0.0, 1.0)
+        if (opacity == 0.0 || view.visibility != View.VISIBLE || view.width <= 0 || view.height <= 0) return
+        val radius = (props.optDouble("shadowRadius", 0.0) * density).toFloat().coerceAtLeast(0f)
+        val dx = (props.optDouble("shadowOffsetX", 0.0) * density).toFloat()
+        val dy = (props.optDouble("shadowOffsetY", 0.0) * density).toFloat()
+        val corner = (record.animation.current["borderRadius"] ?: 0.0).toFloat() * density
+        val color = parseColor(props.optString("shadowColor", "#000000"), Color.BLACK)
+        val tint = Color.argb((Color.alpha(color) * opacity).roundToInt(), Color.red(color), Color.green(color), Color.blue(color))
+        val key = "${view.width}/${view.height}/$radius/$dx/$dy/$corner/$tint"
+        if (record.shadowKey != key) {
+            val padding = kotlin.math.ceil(radius * 3 + max(kotlin.math.abs(dx), kotlin.math.abs(dy)) + 1).toInt()
+            val width = view.width.toLong() + padding * 2L; val height = view.height.toLong() + padding * 2L
+            // Avoid unbounded allocations for pathological values or very large surfaces.
+            if (width > 8192 || height > 8192 || width * height > 16_777_216) return
+            val bitmap = Bitmap.createBitmap(width.toInt(), height.toInt(), Bitmap.Config.ARGB_8888)
+            val output = Canvas(bitmap)
+            val rect = RectF(padding.toFloat(), padding.toFloat(), padding + view.width.toFloat(), padding + view.height.toFloat())
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = Color.BLACK; setShadowLayer(max(0.001f, radius), dx, dy, tint) }
+            output.drawRoundRect(rect, corner, corner, paint)
+            paint.clearShadowLayer(); paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+            output.drawRoundRect(rect, corner, corner, paint)
+            record.shadowBitmap = bitmap; record.shadowPadding = padding; record.shadowKey = key
+        }
+        val bitmap = record.shadowBitmap ?: return
+        val saved = canvas.save()
+        canvas.translate(view.left.toFloat(), view.top.toFloat()); canvas.concat(view.matrix)
+        canvas.drawBitmap(bitmap, -record.shadowPadding.toFloat(), -record.shadowPadding.toFloat(), Paint().apply { alpha = (255 * view.alpha).roundToInt() })
+        canvas.restoreToCount(saved)
+    }
 
     private inner class TouchScrollView : ScrollView(root.context) {
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -295,14 +373,14 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             val content: ViewGroup?
             var native: AndroidNativeComponent? = null
             when (kind) {
-                "View" -> { view = FrameLayout(root.context); content = view }
+                "View" -> { view = ShadowLayout(); content = view }
                 "Text" -> { view = TextView(root.context); content = null }
                 "RichText" -> { view = TextView(root.context); content = null }
                 "Button" -> { view = systemButton(); content = null }
                 "TextInput" -> { view = EditText(root.context); content = null }
                 "ScrollView" -> {
                     val scroll = TouchScrollView().apply { isFillViewport = true }
-                    val inner = FrameLayout(root.context)
+                    val inner = ShadowLayout()
                     scroll.addView(inner)
                     view = scroll; content = inner
                 }
@@ -441,8 +519,11 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         }
     }
 
-    private fun setProps(record: NodeRecord, props: JSONObject) {
-        record.native?.setProps(JSONObject(props.optString("nativeProps", "{}")))
+    private fun setProps(record: NodeRecord, raw: JSONObject, appearanceOnly: Boolean = false) {
+        record.declaredProps = JSONObject(raw.toString())
+        val props = themed(raw)
+        record.resolvedProps = props
+        if (!appearanceOnly) record.native?.setProps(JSONObject(props.optString("nativeProps", "{}")))
         record.touchAction = props.optString("touchAction", "auto")
         val view = record.view
         record.animation.options = if (props.has("animation")) AnimationOptions(JSONObject(props.getString("animation"))) else null
@@ -458,6 +539,9 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         view.visibility = if (props.optString("visibility") == "hidden") View.INVISIBLE else View.VISIBLE
         val background = view.background as? GradientDrawable ?: GradientDrawable().also { view.background = it }
         background.setStroke((props.optDouble("borderWidth", 0.0) * density).roundToInt(), parseColor(props.optString("borderColor", ""), Color.TRANSPARENT))
+        view.clipToOutline = props.optString("overflow") == "hidden"
+        if (view is ShadowLayout) view.clipChildren = props.optString("overflow") == "hidden"
+        (view.parent as? View)?.invalidate()
         if (view is TextView) {
             view.textSize = props.optDouble("fontSize", 16.0).toFloat()
             view.setTextColor(parseColor(props.optString("color", ""), if (record.kind == "Button") Color.rgb(0, 122, 255) else themeColor(android.R.attr.textColorPrimary, Color.BLACK)))
@@ -520,26 +604,27 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 }
                 "TextInput" -> {
                     val input = view as EditText
-                    input.background = null
                     input.setPadding(0, 0, 0, 0)
                     input.hint = props.optString("placeholder", "")
                     input.setHintTextColor(parseColor(props.optString("placeholderTextColor", ""), themeColor(android.R.attr.textColorHint, Color.GRAY)))
-                    input.isEnabled = props.optBoolean("editable", true)
-                    input.isSingleLine = true
-                    input.inputType = if (props.optBoolean("secureTextEntry")) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD else when (props.optString("keyboardType")) {
-                        "numeric" -> android.text.InputType.TYPE_CLASS_NUMBER
-                        "decimal-pad" -> android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-                        "phone-pad" -> android.text.InputType.TYPE_CLASS_PHONE
-                        "email-address" -> android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-                        else -> android.text.InputType.TYPE_CLASS_TEXT
-                    }
-                    input.imeOptions = when (props.optString("returnKeyType")) { "done" -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE; "go" -> android.view.inputmethod.EditorInfo.IME_ACTION_GO; "next" -> android.view.inputmethod.EditorInfo.IME_ACTION_NEXT; "search" -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; "send" -> android.view.inputmethod.EditorInfo.IME_ACTION_SEND; else -> android.view.inputmethod.EditorInfo.IME_ACTION_UNSPECIFIED }
-                    val value = props.optString("value", "")
-                    if (props.optLong("inputRevision", 0) >= record.inputRevision && input.text.toString() != value && !hasComposition(input)) {
-                        record.applyingValue = true
-                        input.setText(value)
-                        input.setSelection(value.length)
-                        record.applyingValue = false
+                    if (!appearanceOnly) {
+                        input.isEnabled = props.optBoolean("editable", true)
+                        input.isSingleLine = true
+                        input.inputType = if (props.optBoolean("secureTextEntry")) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD else when (props.optString("keyboardType")) {
+                            "numeric" -> android.text.InputType.TYPE_CLASS_NUMBER
+                            "decimal-pad" -> android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                            "phone-pad" -> android.text.InputType.TYPE_CLASS_PHONE
+                            "email-address" -> android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                            else -> android.text.InputType.TYPE_CLASS_TEXT
+                        }
+                        input.imeOptions = when (props.optString("returnKeyType")) { "done" -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE; "go" -> android.view.inputmethod.EditorInfo.IME_ACTION_GO; "next" -> android.view.inputmethod.EditorInfo.IME_ACTION_NEXT; "search" -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; "send" -> android.view.inputmethod.EditorInfo.IME_ACTION_SEND; else -> android.view.inputmethod.EditorInfo.IME_ACTION_UNSPECIFIED }
+                        val value = props.optString("value", "")
+                        if (props.optLong("inputRevision", 0) >= record.inputRevision && input.text.toString() != value && !hasComposition(input)) {
+                            record.applyingValue = true
+                            input.setText(value)
+                            input.setSelection(value.length)
+                            record.applyingValue = false
+                        }
                     }
                 }
             }
@@ -548,7 +633,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             view.isEnabled = props.optBoolean("scrollEnabled", true)
             view.isVerticalScrollBarEnabled = props.optBoolean("showsVerticalScrollIndicator", true)
         }
-        if (view is ImageView) {
+        if (view is ImageView && !appearanceOnly) {
             view.contentDescription = props.optString("accessibilityLabel").takeIf { it.isNotEmpty() }
             view.scaleType = when (props.optString("resizeMode")) {
                 "contain" -> ImageView.ScaleType.FIT_CENTER
@@ -571,7 +656,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 }
             }
         }
-        if (view is AndroidVideoView) {
+        if (view is AndroidVideoView && !appearanceOnly) {
             val previous = view.props
             view.props = JSONObject(props.toString())
             view.resizeMode = props.optString("resizeMode", "cover")
@@ -649,6 +734,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     }
 
     private fun releaseNode(record: NodeRecord) {
+        record.shadowBitmap = null
         record.animation.cancel()
         record.mediaGeneration.incrementAndGet()
         record.timePoll?.let { root.removeCallbacks(it) }; record.timePoll = null

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -23,8 +23,10 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(paths.includes('LICENSE'));
     assert.ok(paths.includes('THIRD_PARTY_NOTICES.md'));
     assert.ok(!paths.some(path => path.endsWith('/.DS_Store')));
-    for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'scripts/anseronui.mjs', 'scripts/templates/app/gitignore',
-      'scripts/native-plugins.mjs', 'scripts/macos-app.mjs', 'scripts/templates/app/platforms/macos/App.swift',
+    for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'docs/app-icons.md', 'docs/styles.md', 'scripts/anseronui.mjs', 'scripts/templates/app/gitignore',
+      'scripts/native-plugins.mjs', 'scripts/macos-app.mjs', 'scripts/app-icons.mjs', 'scripts/web-app.mjs', 'scripts/templates/app/platforms/macos/App.swift',
+      'scripts/templates/app/assets/icons/app.png', 'scripts/templates/app/assets/icons/app-dark.png',
+      'scripts/templates/app/assets/icons/app-tinted.png', 'scripts/templates/app/assets/icons/android-monochrome.xml',
       'packages/render-macos/Sources/AnseronUIRenderMacOS/Renderer.swift', 'packages/render-macos/Sources/AnseronUICoreC/module.modulemap',
       'scripts/templates/app/platforms/android/gradle/wrapper/gradle-wrapper.jar',
       'scripts/templates/app/platforms/android/LICENSE-Gradle',
@@ -42,6 +44,10 @@ test('packed SDK creates a portable app with all native templates and no private
     run('tar', ['-xzf', join(directory, pack.filename), '-C', directory]);
     const manifest = JSON.parse(readFileSync(join(directory, 'package/package.json'), 'utf8'));
     assert.equal(manifest.license, 'MIT');
+    assert.equal(manifest.dependencies.pngjs, '7.0.0');
+    // This fixture extracts the tarball without npm install. Supply the declared
+    // image dependency locally, as npm would, so default icons can be checked offline.
+    cpSync(join(root, 'node_modules/pngjs'), join(directory, 'package/node_modules/pngjs'), { recursive: true });
     const vendorRoot = 'dist/sdk/internal/toolchain/scriptc/';
     const vendor = JSON.parse(readFileSync(join(directory, 'package/dist/sdk/internal/toolchain/scriptc.vendor.json'), 'utf8'));
     for (const path of vendor.sdkFiles.filter(path => /(^|\/)(LICENSE[^/]*|SCRIPTC_LICENSE|THIRD_PARTY_NOTICES[^/]*|NOTICE[^/]*)$/.test(path))) {
@@ -55,6 +61,8 @@ test('packed SDK creates a portable app with all native templates and no private
     const config = JSON.parse(readFileSync(join(app, 'anseronui.config.json'), 'utf8'));
     assert.equal(config.schemaVersion, 2);
     assert.equal(config.pages[0].source, 'src/pages/home.tsx');
+    assert.equal(config.app.icon.default, 'assets/icons/app.png');
+    assert.deepEqual(readFileSync(join(app, config.app.icon.default)), readFileSync(join(directory, 'package/dist/sdk/scripts/templates/app/assets/icons/app.png')));
     const metadata = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
     assert.equal(metadata.dependencies.anseronui, pack.version);
     assert.equal(metadata.scripts.ios, 'anseronui run ios');

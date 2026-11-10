@@ -302,7 +302,7 @@ private final class CoreWorker {
         worker.send(["type": "Resize", "width": width, "height": height])
     }
 
-    public func environmentChanged() { standardServices.changed() }
+    public func environmentChanged() { renderer.appearanceChanged(); standardServices.changed() }
     public func wake() { worker.wake() }
     /// Synchronously asks Core whether the current TSX page consumed system back.
     public func handleBackPress() -> Bool { worker.backPress() }

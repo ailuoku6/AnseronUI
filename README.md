@@ -4,7 +4,7 @@
 
 AnseronUI 提供创建工程的 CLI、组件与 Hooks、页面路由、动画和原生能力扩展。底层通过 [scriptc](https://github.com/vercel-labs/scriptc) 编译共享代码，使用 [Flexily](https://github.com/beorn/flexily) 计算布局。iOS、Android 和 macOS 的共享业务 Core 不依赖嵌入 JavaScript 引擎。
 
-[创建并运行 App](#创建并运行独立-app) · [编写页面](#编写共享页面) · [能力清单](docs/capabilities.md) · [TS/TSX 限制](docs/typescript-limitations.md) · [完整文档](docs/README.md)
+[创建并运行 App](#创建并运行独立-app) · [编写页面](#编写共享页面) · [能力清单](docs/capabilities.md) · [TS/TSX 限制](docs/typescript-limitations.md) · [夜间样式与阴影](docs/styles.md) · [完整文档](docs/README.md)
 
 ## 开始前准备
 
@@ -32,6 +32,8 @@ npm run setup
 npm run ios
 npm run android
 ```
+
+新建应用已附带默认图标及 iOS 深色／着色、Android 自适应／主题图层；可替换 `assets/icons/` 中的资源，配置方式见[应用图标](docs/app-icons.md)。
 
 目标目录需要为空。`--application-id` 同时设置 iOS Bundle ID、Android applicationId 和 macOS bundle identifier；`--name` 可指定应用显示名称。生成的 App 固定依赖 AnseronUI 版本，可独立移动和维护；请提交应用的 `package-lock.json`。
 
@@ -96,6 +98,8 @@ awesomeAnseron/
 ```
 
 日常开发主要修改 `src/` 和 `anseronui.config.json`；需要扩展原生能力时再修改平台宿主。图片、视频等资源的打包与引用规则见[能力清单](docs/capabilities.md)。
+
+应用图标通过 `app.icon` 配置，支持单张 PNG 用于四端、iOS 浅色／深色／着色与 Icon Composer、Android 自适应／单色主题／night 资源。完整示例和旧工程接入见[应用图标](docs/app-icons.md)。
 
 各平台容器直接展示共享 TSX 页面。设置页面根节点的 `backgroundColor`，移动端系统栏背景会跟随页面主题。SDK 和构建缓存位于 `.anseronui/`，应用构建产物位于 `.verification/`、Android `build/` 和 `dist/web/`；这些目录不应提交到业务仓库。
 

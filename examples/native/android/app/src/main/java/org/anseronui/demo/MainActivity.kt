@@ -14,6 +14,8 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private val availablePages: List<String> by lazy { readPages() }
     override fun onCreate(state: Bundle?) {
+        val dark = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        setTheme(if (dark) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(state)
         AnseronUILinks.receive(intent); AnseronUINotifications.receiveIntent(this, intent)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -33,7 +35,7 @@ class MainActivity : Activity() {
         }
         layout.addView(pages); layout.addView(status); layout.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(layout)
-        showPage(availablePages.firstOrNull() ?: "counter")
+        showPage(intent.getStringExtra("page")?.takeIf { it in availablePages } ?: availablePages.firstOrNull() ?: "counter")
     }
     private fun showPage(page: String) {
         content.load(page)
@@ -52,7 +54,7 @@ class MainActivity : Activity() {
         val pages = json.getJSONArray("pages")
         (0 until pages.length()).map { pages.getJSONObject(it).optString("name") }.filter { it.isNotBlank() }
     }.getOrDefault(listOf("counter", "async-form", "components", "extensions"))
-    private fun pageTitle(page: String): String = mapOf("counter" to "Counter", "async-form" to "Async form", "components" to "组件", "extensions" to "扩展")[page] ?: page
+    private fun pageTitle(page: String): String = mapOf("appearance" to "外观", "counter" to "Counter", "async-form" to "Async form", "components" to "组件", "extensions" to "扩展")[page] ?: page
 }
 
 private fun demoExtensions() = AndroidPlatformExtensions(

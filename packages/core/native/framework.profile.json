@@ -30,6 +30,12 @@
         "string"
       ],
       "returns": "string"
+    },
+    {
+      "export": "dispose",
+      "symbol": "anseronui_framework_dispose",
+      "params": [],
+      "returns": "void"
     }
   ]
 }

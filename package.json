@@ -21,7 +21,7 @@
     "typecheck:framework": "tsc --noEmit -p tsconfig.framework.json",
     "test:framework": "vitest run --config scripts/framework.vitest.config.ts",
     "test:build": "node --test scripts/core-inputs.test.mjs scripts/lower-timers.test.mjs scripts/compiler-sdk.test.mjs",
-    "test:tooling": "node --test scripts/anseronui.test.mjs scripts/native-plugins.test.mjs",
+    "test:tooling": "node --test scripts/anseronui.test.mjs scripts/native-plugins.test.mjs scripts/app-icons.test.mjs",
     "lower:counter": "node --import tsx scripts/lower-tsx.mjs examples/counter/page.tsx .verification/framework/counter.ts",
     "dev:counter": "vite --config examples/counter/vite.config.ts",
     "build:counter:web": "vite build --config examples/counter/vite.config.ts",
@@ -43,6 +43,7 @@
     "test:core:wasm": "node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs async-form && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs components && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs extensions && node scripts/test-native-core.mjs packages/core/native/test/wasm-stdio.mjs timers",
     "build:framework": "node scripts/build-core.mjs --framework-only",
     "build:business": "node scripts/build-core.mjs --business-only",
+    "test:browser:styles": "node scripts/test-web-extensions.mjs styles",
     "test:browser:split": "node scripts/test-web-extensions.mjs split",
     "prepack": "node scripts/pack-sdk.mjs",
     "test:package": "node --test scripts/npm-package.test.mjs",
@@ -63,7 +64,7 @@
     "@scriptc/runtime-darwin-arm64": "0.4.8",
     "@scriptc/runtime-wasm32-wasi": "0.4.8"
   },
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Create and build AnseronUI apps for iOS, Android, macOS and Web from shared TSX pages",
   "license": "MIT",
   "repository": {
@@ -87,6 +88,7 @@
   },
   "dependencies": {
     "@types/node": "24.10.0",
+    "pngjs": "7.0.0",
     "pnpm": "11.21.0",
     "scriptc": "0.4.8",
     "tsx": "4.22.4",

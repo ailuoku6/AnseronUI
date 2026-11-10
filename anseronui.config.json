@@ -9,6 +9,11 @@
   ],
   "pages": [
     {
+      "name": "appearance",
+      "source": "examples/components/appearance-showcase.tsx",
+      "export": "appearancePage"
+    },
+    {
       "name": "counter",
       "source": "examples/counter/page.tsx",
       "export": "counterPage"
@@ -33,5 +38,31 @@
       "source": "examples/timers/page.tsx",
       "export": "timersPage"
     }
-  ]
+  ],
+  "app": {
+    "name": "AnseronUI",
+    "icon": {
+      "default": "assets/icons/app.png",
+      "ios": {
+        "light": "assets/icons/app.png",
+        "dark": "assets/icons/app-dark.png",
+        "tinted": "assets/icons/app-tinted.png"
+      },
+      "android": {
+        "adaptive": {
+          "foreground": "assets/icons/android-foreground.xml",
+          "background": {
+            "color": "#3559DC"
+          },
+          "monochrome": "assets/icons/android-monochrome.xml"
+        },
+        "night": {
+          "legacy": "assets/icons/app-dark.png",
+          "background": {
+            "color": "#111D35"
+          }
+        }
+      }
+    }
+  }
 }

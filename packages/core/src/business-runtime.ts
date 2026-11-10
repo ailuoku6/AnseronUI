@@ -1,7 +1,7 @@
 import { registerTimerScope, unregisterTimerScope, withTimerScope, timeoutInScope, clearTimeout, forgetTimeout } from "../../ui/src/timers.js";
 import type { TimerScope } from "../../ui/src/timers.js";
 import { CORE_ABI_VERSION } from "./contracts.js";
-import type { RenderNode, RenderRequest, RenderResult } from "./contracts.js";
+import type { RenderNode, RenderRequest, CoreRequest, CoreResult } from "./contracts.js";
 import {
   PROTOCOL_MAJOR, PROTOCOL_MINOR, isU32, validateEnvelope, validateAnimationOptions, validateAnimationStyle,
 } from "@anseronui/protocol";
@@ -70,7 +70,7 @@ type Surface = {
   inputRevisions: Map<number, number>;
 };
 
-export interface RuntimeOptions { renderCore?: (request: RenderRequest) => RenderResult; bundleBuildId: string; pages: Page<any>[]; runtimeEpoch?: number; onWake?: () => void }
+export interface RuntimeOptions { renderCore?: (request: CoreRequest) => CoreResult; bundleBuildId: string; pages: Page<any>[]; runtimeEpoch?: number; onWake?: () => void }
 
 function sameDeps(a: readonly unknown[] | undefined, b: readonly unknown[] | undefined): boolean {
   if (a === undefined || b === undefined || a.length !== b.length) return false;
@@ -103,8 +103,8 @@ export class BusinessRuntime {
   private nextComponentType = 1;
   private disposed = false;
   private readonly onWake?: () => void;
-  private readonly renderCore?: (request: RenderRequest) => RenderResult;
-  private coreRequests: RenderRequest[] = [];
+  private readonly renderCore?: (request: CoreRequest) => CoreResult;
+  private coreRequests: CoreRequest[] = [];
 
   constructor(options: RuntimeOptions) {
     if (!options.bundleBuildId || options.bundleBuildId.length > 128) throw new Error("Invalid build ID");
@@ -162,7 +162,7 @@ export class BusinessRuntime {
   }
 
   takeOutputs(): Envelope<OutputPayload>[] { const result = this.outgoing; this.outgoing = []; return result; }
-  takeCoreRequest(): RenderRequest | null { return this.coreRequests.shift() ?? null; }
+  takeCoreRequest(): CoreRequest | null { return this.coreRequests.shift() ?? null; }
 
   hasPendingWork(): boolean {
     return this.coreRequests.length > 0 || this.incoming.length > 0 || this.outgoing.length > 0 || [...this.surfaces.values()].some(s => s.dirty && !s.pending);
@@ -538,7 +538,7 @@ export class BusinessRuntime {
     if (element.tag === "RichText") {
       const allSpansClickable = typeof props.onSpanClick === "function";
       outputProps.spans = JSON.stringify(((props.spans ?? []) as import("@anseronui/ui").RichTextSpan[]).map(span => ({
-        text: span.text, color: span.color, fontSize: span.fontSize, fontWeight: span.fontWeight,
+        text: span.text, color: span.color, dmColor: span.dmColor, fontSize: span.fontSize, fontWeight: span.fontWeight,
         fontStyle: span.fontStyle, textDecorationLine: span.textDecorationLine,
         clickable: allSpansClickable || typeof span.onClick === "function",
       })));
@@ -564,11 +564,11 @@ export class BusinessRuntime {
     }
     if (props.animation !== undefined) { validateAnimationOptions(props.animation); outputProps.animation = JSON.stringify(props.animation); }
     if (typeof props.disabled === "boolean") outputProps.disabled = props.disabled;
-    for (const key of ["translateX", "translateY", "scaleX", "scaleY", "rotate", "backgroundColor", "color", "opacity", "fontSize", "borderWidth", "borderColor", "borderRadius", "overflow", "visibility", "fontWeight", "fontStyle", "textAlign", "textDecorationLine"] as const) {
+    for (const key of ["translateX", "translateY", "scaleX", "scaleY", "rotate", "backgroundColor", "color", "dmBackgroundColor", "dmColor", "dmBorderColor", "shadowColor", "dmShadowColor", "shadowOpacity", "shadowRadius", "shadowOffsetX", "shadowOffsetY", "placeholderTextColor", "dmPlaceholderTextColor", "opacity", "fontSize", "borderWidth", "borderColor", "borderRadius", "overflow", "visibility", "fontWeight", "fontStyle", "textAlign", "textDecorationLine"] as const) {
       const value = style[key];
       if (value !== undefined) outputProps[key] = value;
     }
-    for (const key of ["testID", "accessibilityLabel", "numberOfLines", "ellipsizeMode", "editable", "secureTextEntry", "maxLength", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "placeholderTextColor", "scrollEnabled", "showsVerticalScrollIndicator"]) {
+    for (const key of ["testID", "accessibilityLabel", "numberOfLines", "ellipsizeMode", "editable", "secureTextEntry", "maxLength", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "placeholderTextColor", "dmPlaceholderTextColor", "scrollEnabled", "showsVerticalScrollIndicator"]) {
       const value = props[key];
       if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") outputProps[key] = value;
     }
@@ -727,15 +727,16 @@ export class BusinessRuntime {
     draft.measureRound++;
     draft.corePending = true;
     draft.measures.clear();
-    const request: RenderRequest = { abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation,
+    const request: RenderRequest = { type: "Render", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation,
       revision: draft.revision, round: draft.measureRound, width: surface.width, height: surface.height,
       tree: this.renderNodes(draft.tree), previous: this.renderNodes(surface.tree), nextRequestId: surface.nextRequestId,
       measureCache: [...surface.measureCache].map(([key, value]) => ({key, ...value})) };
     if (this.renderCore) this.acceptCoreResult(this.renderCore(request));
     else this.coreRequests.push(request);
   }
-  acceptCoreResult(result: RenderResult): void {
+  acceptCoreResult(result: CoreResult): void {
     if (result.abi !== CORE_ABI_VERSION) throw new Error("CORE_ABI_MISMATCH");
+    if (result.type === "SurfaceReleased") return;
     const surface = this.surfaces.get(result.surfaceId);
     const draft = surface?.pending;
     if (!surface || surface.generation !== result.generation || !draft || !draft.corePending || draft.revision !== result.revision || draft.measureRound !== result.round) return;
@@ -916,6 +917,10 @@ export class BusinessRuntime {
     }
   }
   private disposeSurface(surface: Surface): void {
+    this.coreRequests = this.coreRequests.filter(request => request.surfaceId !== surface.id || request.generation !== surface.generation);
+    const release: CoreRequest = { type: "ReleaseSurface", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation };
+    if (this.renderCore) this.renderCore(release);
+    else this.coreRequests.push(release);
     unregisterTimerScope(surface.timerScope);
     for (const node of this.flatten(surface.tree)) { this.assignRef(surface, node.ref, null); this.retireHandle(surface, node.id); }
     for (const frame of [...surface.frames.values()].sort((a, b) => b.depth - a.depth)) this.cleanupFrame(surface, frame);

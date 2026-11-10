@@ -108,6 +108,7 @@ final class AnseronUINodeAnimation: NSObject {
         }
         view.transform = CGAffineTransform(translationX:v["translateX"]!, y:v["translateY"]!).rotated(by:v["rotate"]! * .pi / 180).scaledBy(x:v["scaleX"]!, y:v["scaleY"]!)
         view.alpha = max(0,min(1,v["opacity"]!)); view.layer.cornerRadius = max(0,v["borderRadius"]!)
+        view.layer.shadowPath = UIBezierPath(roundedRect:view.bounds,cornerRadius:view.layer.cornerRadius).cgPath
         view.backgroundColor = UIColor(red:max(0,min(255,v["r"]!))/255, green:max(0,min(255,v["g"]!))/255, blue:max(0,min(255,v["b"]!))/255, alpha:max(0,min(1,v["a"]!)))
         view.isOpaque = v["a"]! >= 1
     }

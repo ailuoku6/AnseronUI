@@ -23,6 +23,54 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class RenderViewTest {
+    @Test fun darkStylesShadowPixelsAndInputSurviveAppearanceChanges() = ui {
+        val configuration = android.content.res.Configuration(instrumentation.targetContext.resources.configuration)
+        configuration.uiMode = (configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or android.content.res.Configuration.UI_MODE_NIGHT_NO
+        val context = instrumentation.targetContext.createConfigurationContext(configuration)
+        val root = FrameLayout(context)
+        val renderer = AndroidRenderer(root)
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+          {"type":"CreateNode","nodeId":1,"kind":"View"},
+          {"type":"CreateNode","nodeId":2,"kind":"TextInput"},
+          {"type":"CreateNode","nodeId":3,"kind":"RichText"},
+          {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+          {"type":"InsertChild","nodeId":2,"parentId":1,"index":0},
+          {"type":"InsertChild","nodeId":3,"parentId":1,"index":1},
+          {"type":"SetProps","nodeId":1,"props":{"backgroundColor":"#ffffff","dmBackgroundColor":"#111111","shadowColor":"#ff0000","dmShadowColor":"#00ff00","shadowOpacity":1,"shadowRadius":3,"shadowOffsetX":0,"shadowOffsetY":5,"borderRadius":8}},
+          {"type":"SetFrame","nodeId":1,"frame":{"x":30,"y":30,"width":100,"height":100}},
+          {"type":"SetProps","nodeId":2,"props":{"value":"declared","placeholder":"Hint","color":"#000000","dmColor":"#ffffff","placeholderTextColor":"#666666","dmPlaceholderTextColor":"#aaaaaa"}},
+          {"type":"SetProps","nodeId":3,"props":{"spans":"[{\"text\":\"span\",\"color\":\"#123456\",\"dmColor\":\"#abcdef\"}]"}}
+        ]}""")
+        val density = context.resources.displayMetrics.density
+        layout(root,(240*density).toInt(),(240*density).toInt())
+        val card = renderer.viewFor(1)!!
+        val input = renderer.viewFor(2) as android.widget.EditText
+        input.setText("local unsent")
+        val frame = card.left
+        fun bitmap():android.graphics.Bitmap {
+            val image = android.graphics.Bitmap.createBitmap(root.width,root.height,android.graphics.Bitmap.Config.ARGB_8888)
+            root.draw(android.graphics.Canvas(image)); return image
+        }
+        val light = bitmap()
+        assertEquals(android.graphics.Color.WHITE, light.getPixel((80*density).toInt(),(80*density).toInt()))
+        val x=(80*density).toInt(); val y=(134*density).toInt()
+        assertTrue("outer shadow must extend below card",android.graphics.Color.alpha(light.getPixel(x,y))>0)
+        assertTrue(android.graphics.Color.red(light.getPixel(x,y))>android.graphics.Color.green(light.getPixel(x,y)))
+        val dark = android.content.res.Configuration(configuration)
+        dark.uiMode = (dark.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or android.content.res.Configuration.UI_MODE_NIGHT_YES
+        @Suppress("DEPRECATION") context.resources.updateConfiguration(dark,context.resources.displayMetrics)
+        renderer.appearanceChanged()
+        val night=bitmap()
+        assertEquals(android.graphics.Color.rgb(17,17,17), night.getPixel((80*density).toInt(),(80*density).toInt()))
+        assertTrue(android.graphics.Color.green(night.getPixel(x,y))>android.graphics.Color.red(night.getPixel(x,y)))
+        assertEquals("local unsent",input.text.toString()); assertEquals(android.graphics.Color.WHITE,input.currentTextColor)
+        assertEquals(android.graphics.Color.rgb(170,170,170),input.currentHintTextColor); assertEquals(frame,card.left)
+        val rich=(renderer.viewFor(3) as TextView).text as android.text.Spanned
+        assertEquals(android.graphics.Color.rgb(171,205,239),rich.getSpans(0,4,android.text.style.ForegroundColorSpan::class.java)[0].foregroundColor)
+        @Suppress("DEPRECATION") context.resources.updateConfiguration(configuration,context.resources.displayMetrics)
+        renderer.appearanceChanged(); assertEquals(android.graphics.Color.BLACK,input.currentTextColor)
+        renderer.clear()
+    }
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private fun ui(block: () -> Unit) = instrumentation.runOnMainSync(block)
     private fun layout(view: View, width: Int, height: Int) {

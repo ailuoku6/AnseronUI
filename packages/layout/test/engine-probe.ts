@@ -1,4 +1,5 @@
 import { LayoutEngine, FLEX_DIRECTION_ROW, EDGE_ALL, GUTTER_ALL, DIRECTION_LTR, DIRECTION_RTL, MEASURE_MODE_UNDEFINED } from "@anseronui/layout";
+import type { Node } from "@anseronui/layout";
 
 /** Shared entry for Node, native executable, native library and Wasm checks. */
 export function layoutProbe(width: number, height: number, direction: number): string {
@@ -47,6 +48,15 @@ export function layoutProbe(width: number, height: number, direction: number): s
   if (removed.getChildCount() !== 0 || removedChild.getParent() !== null || removedChild.measureFunc !== null || removedChild.baselineFunc !== null || removedChild.cqResolve !== null || engine.getNodeCount() !== 2) {
     throw new Error("Subtree release left nodes or callbacks");
   }
+  // Persistent surfaces can retire hundreds of nodes in one update. Keep this
+  // in the shared native/Wasm probe: ownership must survive repeated deletion.
+  const retired: Node[] = [];
+  for (let i = 0; i < 256; i++) retired.push(engine.createNode());
+  for (let i = 0; i < retired.length; i++) {
+    engine.releaseSubtree(retired[i]!);
+    if (engine.getNodeCount() !== 2 + retired.length - i - 1) throw new Error("Bulk release lost node ownership");
+  }
+  engine.calculateLayout(root, width, height, direction);
   const other = new LayoutEngine();
   const foreignRoot = other.createNode();
   let foreignRejected: boolean = false;

@@ -1,6 +1,6 @@
 /** The reference wire contract. IDs and counters are nonzero u32 values. */
 export const PROTOCOL_MAJOR = 1;
-export const PROTOCOL_MINOR = 3;
+export const PROTOCOL_MINOR = 4;
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
 export const MAX_COMMANDS = 4096;
 
@@ -116,7 +116,7 @@ export function validateAnimationStyle(value: unknown): void {
 }
 export function validProps(value: unknown): boolean {
   if (!record(value)) return false;
-  const strings = ["text", "title", "value", "placeholder", "backgroundColor", "color", "borderColor", "placeholderTextColor", "testID", "accessibilityLabel", "src", "placeholderSrc", "resizeMode", "playControl", "spans", "nativeProps"];
+  const strings = ["text", "title", "value", "placeholder", "backgroundColor", "color", "borderColor", "placeholderTextColor", "shadowColor", "dmBackgroundColor", "dmColor", "dmBorderColor", "dmPlaceholderTextColor", "dmShadowColor", "testID", "accessibilityLabel", "src", "placeholderSrc", "resizeMode", "playControl", "spans", "nativeProps"];
   const booleans = ["disabled", "editable", "secureTextEntry", "autoCorrect", "scrollEnabled", "showsVerticalScrollIndicator", "controls", "autoplay", "loop", "muted"];
   const enums: Record<string, readonly string[]> = {
     fontWeight: ["normal", "bold"], fontStyle: ["normal", "italic"], textAlign: ["left", "center", "right"],
@@ -128,11 +128,11 @@ export function validProps(value: unknown): boolean {
   for (const key of Object.keys(value)) {
     const item = value[key];
     if (key === "animation") { try { if (typeof item !== "string") return false; validateAnimationOptions(JSON.parse(item)); } catch { return false; } }
-    else if (["translateX", "translateY", "scaleX", "scaleY", "rotate"].includes(key)) { if (typeof item !== "number" || !Number.isFinite(item)) return false; }
+    else if (["translateX", "translateY", "scaleX", "scaleY", "rotate", "shadowOffsetX", "shadowOffsetY"].includes(key)) { if (typeof item !== "number" || !Number.isFinite(item)) return false; }
     else if (strings.includes(key)) { if (!validString(item)) return false; }
     else if (booleans.includes(key)) { if (typeof item !== "boolean") return false; }
-    else if (key === "opacity") { if (!validSize(item) || item > 1) return false; }
-    else if (["fontSize", "borderWidth", "borderRadius", "rate"].includes(key)) { if (!validSize(item) || (key === "rate" && item === 0)) return false; }
+    else if (key === "opacity" || key === "shadowOpacity") { if (!validSize(item) || item > 1) return false; }
+    else if (["fontSize", "borderWidth", "borderRadius", "shadowRadius", "rate"].includes(key)) { if (!validSize(item) || (key === "rate" && item === 0)) return false; }
     else if (["inputRevision", "numberOfLines", "maxLength"].includes(key)) { if (!isU32(item, true)) return false; }
     else if (enums[key]) { if (typeof item !== "string" || !enums[key].includes(item)) return false; }
     else return false;

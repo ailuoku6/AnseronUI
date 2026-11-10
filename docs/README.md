@@ -12,9 +12,11 @@ AnseronUI 是一个使用 TypeScript/TSX 编写共享页面、通过 AOT Core �
 | [页面与 Core 合包](core-bundles.md) | 页面为何触发重编、实例与二进制的区别、独立编译方向 |
 | [TS/TSX 编写限制](typescript-limitations.md) | scriptc 限制、JSX/Hook 规则、Node 兼容表的适用范围 |
 | [应用创建与接入](tooling.md) | `create`、`integrate`、`check`、`build` 命令 |
+| [应用图标](app-icons.md) | 四端图标、iOS 深色／着色／Icon Composer、Android 自适应／主题／night 配置 |
 | [页面路由](routing.md) | `useRouter()`、JSON 参数与页面状态保留 |
 | [系统返回键](back-press.md) | Android、iOS、Web 的返回键消费流程 |
 | [原生扩展](native-extensions.md) | Module、原生组件、事件和 ref |
+| [颜色、夜间模式与阴影](styles.md) | `dm` 颜色覆盖、富文本与占位文字、外阴影、裁剪和主题刷新 |
 | [动画](animations.md) | 声明式动画、ref 动画、取消和平台帧时钟 |
 | [布局引擎](../packages/layout/README.md) | Flexily 适配、布局节点和测量约束 |
 | [Android Renderer](../packages/render-android/README.md) | Android 容器、生命周期和底层 Renderer |
