@@ -188,6 +188,13 @@ npm run ios
 | `npm run build:android` | 仅构建 Android Debug APK |
 | `npm run build:macos` | 构建本机 AppKit `.app` |
 | `npm run build:web` | 构建 Web/Wasm 应用，输出到 `dist/web/` |
+| `npm run build:web:release` | 构建 Web 生产资源 |
+| `npm run build:ios:release` | 构建 iOS Release `.xcarchive`；配置团队签名后导出签名 IPA |
+| `npm run build:android:release` | 构建 Android Release APK 和 AAB；配置 keystore 后签名 |
+| `npm run build:macos:release` | 构建优化的 macOS `.app` 和分发 ZIP；支持 Developer ID 签名/公证 |
+| `npm run build:ios:signed` | 导出 App Store Connect 签名 IPA（需 Apple Team 和 Xcode 证书） |
+| `npm run build:android:signed` | 构建签名 APK/AAB（需 Android keystore） |
+| `npm run build:macos:signed` | 构建 Developer ID 签名 ZIP，可配置公证 |
 | `npm run dev:web` | 启动 Web 开发服务器 |
 
 CLI 的设备选择、缓存、路径规则和常见问题见[应用创建、构建与运行](docs/tooling.md)。
@@ -200,7 +207,7 @@ AnseronUI 支持把共享页面嵌入已有宿主。iOS、Android 和 macOS 分�
 
 ## 当前使用边界
 
-当前版本尚不包含热更新、React 兼容层、路由参数、深链、页面缓存、完整无障碍支持和应用签名发布自动化。自定义原生组件需分别实现各目标平台的宿主部分。上线前应在目标设备上验证布局、文本、交互和业务所需的平台能力。
+当前版本尚不包含热更新、React 兼容层、路由参数、深链、页面缓存、完整无障碍支持和商店账号/证书托管。Release 构建已覆盖四端，但上架仍需由应用方提供平台签名与分发信息。自定义原生组件需分别实现各目标平台的宿主部分。上线前应在目标设备上验证布局、文本、交互和业务所需的平台能力。
 
 更多指南见[完整文档](docs/README.md)。需要理解编译缓存或宿主生命周期时，可阅读[编译与业务包](docs/core-bundles.md)及[架构与运行原理](docs/architecture.md)。修改框架本身的贡献者请参考[框架开发与仓库示例](docs/framework-development.md)。
 

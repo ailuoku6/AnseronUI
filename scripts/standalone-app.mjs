@@ -110,6 +110,16 @@ export function createStandalone(targetPath, { name, applicationId, force = fals
     setup: `${forward} setup`, check: `${forward} check`, typecheck: `${forward} typecheck`,
     'dev:web': `${forward} dev web`,
     ...Object.fromEntries(['web', 'ios', 'ios-device', 'android', 'macos'].map(platform => [`build:${platform}`, `${forward} build ${platform}`])),
+    'build:web:release': `${forward} build web --release`,
+    'build:ios:release': `${forward} build ios-device --release`,
+    'build:android:release': `${forward} build android --release`,
+    'build:macos:release': `${forward} build macos --release`,
+    'build:ios:signed': `${forward} build ios-device --signed`,
+    'build:android:signed': `${forward} build android --signed`,
+    'build:macos:signed': `${forward} build macos --signed`,
+    'build:ios:signed': `${forward} build ios-device --signed`,
+    'build:android:signed': `${forward} build android --signed`,
+    'build:macos:signed': `${forward} build macos --signed`,
     ios: `${forward} run ios`, android: `${forward} run android`, macos: `${forward} run macos`,
     'run:ios': `${forward} run ios`, 'run:android': `${forward} run android`, 'run:macos': `${forward} run macos`,
   };
@@ -219,8 +229,12 @@ function javaEnvironment(env) {
   if (!home) throw new Error('Set JAVA_HOME to JDK 17–22 (recommended 17); Android Studio JBR 21 is also supported.');
   return { ...env, JAVA_HOME: home };
 }
-export function buildStandalone(configPath, target) {
+export function buildStandalone(configPath, target, { release = false, signed = false } = {}) {
+  release ||= signed;
   if (!['web', 'ios', 'ios-device', 'android', 'macos'].includes(target)) throw new Error('Expected web, ios, ios-device, android, or macos');
+  if (signed && target.startsWith('ios') && !process.env.ANSERONUI_IOS_TEAM_ID) throw new Error('Set ANSERONUI_IOS_TEAM_ID to create a signed iOS distribution IPA.');
+  if (signed && target === 'android' && !['ANSERONUI_ANDROID_KEYSTORE','ANSERONUI_ANDROID_STORE_PASSWORD','ANSERONUI_ANDROID_KEY_ALIAS','ANSERONUI_ANDROID_KEY_PASSWORD'].every(name => process.env[name])) throw new Error('Set ANSERONUI_ANDROID_KEYSTORE, ANSERONUI_ANDROID_STORE_PASSWORD, ANSERONUI_ANDROID_KEY_ALIAS, and ANSERONUI_ANDROID_KEY_PASSWORD to create signed Android artifacts.');
+  if (signed && target === 'macos' && !process.env.ANSERONUI_MACOS_SIGN_IDENTITY) throw new Error('Set ANSERONUI_MACOS_SIGN_IDENTITY to a Developer ID Application certificate for signed distribution.');
   if (target === 'macos') requireMacOS();
   if (target.startsWith('ios') && process.platform !== 'darwin') throw new Error('iOS builds require macOS and Xcode.');
   const ctx = setupStandalone(configPath);
@@ -229,6 +243,10 @@ export function buildStandalone(configPath, target) {
   if (config.schemaVersion === 2 && (!existsSync(join(framework, '.compiler-fingerprint')) || readFileSync(join(framework, '.compiler-fingerprint'), 'utf8') !== readFileSync(join(framework, '.sdk-fingerprint'), 'utf8'))) throw new Error('SDK changed; run npm run setup before building.');
   if (!existsSync(join(framework, 'internal/toolchain/scriptc/packages/compiler/dist/index.js'))) throw new Error('Run npm run setup from the app first.');
   const env = target === 'android' ? javaEnvironment(androidEnvironment()) : process.env;
+  if (target === 'android' && release) {
+    const ndkDirectory = join(env.ANDROID_HOME, 'ndk');
+    env.ANDROID_NDK_ROOT ??= join(ndkDirectory, readdirSync(ndkDirectory).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}))[0]);
+  }
   mkdirSync(join(framework, '.verification'), { recursive: true });
   const lock = join(framework, '.verification/app-build.lock');
   let fd;
@@ -240,7 +258,7 @@ export function buildStandalone(configPath, target) {
   try {
     const icons = target === 'web' || target === 'macos' ? undefined : generateAppIcons(app, config, target);
     if (target === 'android' && config.app.icon !== undefined) integrateAndroidIcons(app);
-    const coreTarget = { web: 'wasm', ios: 'ios-simulator', 'ios-device': 'ios-device', android: 'android', macos: 'macos-arm64' }[target];
+    const coreTarget = { web: 'wasm', ios: release ? 'ios-device' : 'ios-simulator', 'ios-device': 'ios-device', android: 'android', macos: 'macos-arm64' }[target];
     run(process.execPath, ['scripts/build-core.mjs', coreTarget, file], { env, cwd: framework });
     const core = join(framework, '.verification/core-' + coreTarget);
     const localCore = join(app, '.verification/core-' + coreTarget);
@@ -250,20 +268,53 @@ export function buildStandalone(configPath, target) {
     const manifest = json(join(core, 'manifest.json'));
     manifest.localArtifactSha256 = createHash('sha256').update(readFileSync(join(localCore, localArtifact))).digest('hex');
     write(join(localCore, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-    if (target === 'macos') buildMacOS({framework,app,config,core:localCore,standalone:true});
+    if (target === 'macos') buildMacOS({framework,app,config,core:localCore,standalone:true,release,requireSignature:signed});
     else if (target === 'web') run(process.execPath, [join(framework, 'scripts/web-app.mjs'), 'build', resolve(framework, config.web.viteConfig), app, configPath], { cwd: framework });
     else if (target === 'android') {
+      if (signed && !['ANSERONUI_ANDROID_KEYSTORE','ANSERONUI_ANDROID_STORE_PASSWORD','ANSERONUI_ANDROID_KEY_ALIAS','ANSERONUI_ANDROID_KEY_PASSWORD'].every(name => process.env[name])) throw new Error('Set ANSERONUI_ANDROID_KEYSTORE, ANSERONUI_ANDROID_STORE_PASSWORD, ANSERONUI_ANDROID_KEY_ALIAS, and ANSERONUI_ANDROID_KEY_PASSWORD to create signed Android artifacts.');
       const native = join(app, 'platforms/android');
       write(join(native, 'app/src/main/assets/core.manifest.json'), readFileSync(join(core, 'manifest.json')));
       const jni = join(app, '.verification/android-jni/arm64-v8a'); mkdirSync(jni, { recursive: true });
-      copyFileSync(join(framework, 'packages/render-android/src/main/jniLibs/arm64-v8a/libanseronui.so'), join(jni, 'libanseronui.so'));
-      run(join(native, 'gradlew'), ['-p', native, ':app:assembleDebug', '--console=plain'], { env });
+      const library = join(jni, 'libanseronui.so');
+      copyFileSync(join(framework, 'packages/render-android/src/main/jniLibs/arm64-v8a/libanseronui.so'), library);
+      if (release) {
+        const ndk = env.ANDROID_NDK_ROOT;
+        const prebuilt = join(ndk, 'toolchains/llvm/prebuilt');
+        const host = readdirSync(prebuilt).find(name => name.startsWith(process.platform === 'darwin' ? 'darwin' : 'linux'));
+        if (!host) throw new Error(`No Android NDK toolchain found in ${prebuilt}`);
+        const objcopy = join(prebuilt, host, 'bin/llvm-objcopy');
+        const symbols = join(app, '.verification/android-symbols/arm64-v8a'); mkdirSync(symbols, { recursive: true });
+        run(objcopy, ['--only-keep-debug', library, join(symbols, 'libanseronui.so.dbg')], { env });
+        run(objcopy, ['--strip-debug', library], { env });
+        run(objcopy, ['--add-gnu-debuglink=' + join(symbols, 'libanseronui.so.dbg'), library], { env });
+      }
+      run(join(native, 'gradlew'), ['-p', native, ...(release ? [':app:assembleRelease', ':app:bundleRelease'] : [':app:assembleDebug']), '--console=plain'], { env });
     } else {
       const ios = join(app, 'platforms/ios');
       write(join(ios, 'core.manifest.json'), readFileSync(join(core, 'manifest.json')));
       run('python3', [join(app, 'scripts/generate-ios-project.py')]);
       integrateIOSIcons(app, icons);
-      run('xcodebuild', ['-project', join(ios, 'App.xcodeproj'), '-scheme', 'App', '-configuration', 'Debug', '-sdk', target === 'ios' ? 'iphonesimulator' : 'iphoneos', '-derivedDataPath', join(app, '.verification/' + target), ...(target === 'ios' ? ['CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-'] : ['CODE_SIGNING_ALLOWED=NO']), 'ARCHS=arm64', 'build']);
+      if (release) {
+        const archive = join(app, '.verification/ios-release/App.xcarchive');
+        const team = process.env.ANSERONUI_IOS_TEAM_ID;
+        if (signed && !team) throw new Error('Set ANSERONUI_IOS_TEAM_ID to create a signed iOS distribution IPA.');
+        const exportMethod = process.env.ANSERONUI_IOS_EXPORT_METHOD ?? 'app-store-connect';
+        if (!['app-store-connect', 'ad-hoc', 'development', 'enterprise'].includes(exportMethod)) throw new Error('ANSERONUI_IOS_EXPORT_METHOD must be app-store-connect, ad-hoc, development, or enterprise.');
+        const args = ['-project', join(ios, 'App.xcodeproj'), '-scheme', 'App', '-configuration', 'Release', '-sdk', 'iphoneos', '-derivedDataPath', join(app, '.verification/ios-release/DerivedData'), '-archivePath', archive, 'ARCHS=arm64'];
+        if (team) args.push(`DEVELOPMENT_TEAM=${team}`, 'CODE_SIGN_STYLE=Automatic', 'CODE_SIGNING_ALLOWED=YES', '-allowProvisioningUpdates');
+        else args.push('CODE_SIGNING_ALLOWED=NO');
+        args.push('archive');
+        run('xcodebuild', args);
+        if (team) {
+          const exportPath = join(app, '.verification/ios-release/export');
+          const exportOptions = join(app, '.verification/ios-release/ExportOptions.plist');
+          const escapedTeam = team.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+          write(exportOptions, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>method</key><string>${exportMethod}</string><key>teamID</key><string>${escapedTeam}</string><key>signingStyle</key><string>automatic</string></dict></plist>\n`);
+          run('xcodebuild', ['-exportArchive', '-archivePath', archive, '-exportPath', exportPath, '-exportOptionsPlist', exportOptions, '-allowProvisioningUpdates']);
+        }
+      } else {
+        run('xcodebuild', ['-project', join(ios, 'App.xcodeproj'), '-scheme', 'App', '-configuration', 'Debug', '-sdk', target === 'ios' ? 'iphonesimulator' : 'iphoneos', '-derivedDataPath', join(app, '.verification/' + target), ...(target === 'ios' ? ['CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-'] : ['CODE_SIGNING_ALLOWED=NO']), 'ARCHS=arm64', 'build']);
+      }
     }
   } finally { closeSync(fd); rmSync(lock); }
 }

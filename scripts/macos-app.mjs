@@ -18,9 +18,10 @@ const digest = path => createHash('sha256').update(readFileSync(path)).digest('h
 const xml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 
 /** Build a standard AppKit bundle with Apple's compiler; no project-generation dependency. */
-export function buildMacOS({ framework, app, config, core, standalone = false }) {
+export function buildMacOS({ framework, app, config, core, standalone = false, release = false, requireSignature = false }) {
   requireMacOS();
-  const destination = join(app, '.verification/macos');
+  if (requireSignature && !process.env.ANSERONUI_MACOS_SIGN_IDENTITY) throw new Error('Set ANSERONUI_MACOS_SIGN_IDENTITY to a Developer ID Application certificate for signed distribution.');
+  const destination = join(app, release ? '.verification/macos-release' : '.verification/macos');
   const bundle = join(destination, 'App.app');
   // Never leave a previous successful application runnable after a failed build.
   rmSync(bundle, { recursive: true, force: true });
@@ -45,9 +46,9 @@ export function buildMacOS({ framework, app, config, core, standalone = false })
   const frameworks = [...new Set(['AppKit','AVFoundation','AVKit','QuartzCore',...plugins.frameworks])];
   try {
     const icon = generateAppIcons(app, config, 'macos');
-    run('xcrun', ['swiftc','-swift-version','5','-target','arm64-apple-macosx14.0','-sdk',sdk,'-module-cache-path',cache,
+    run('xcrun', ['swiftc','-swift-version','5',...(release ? ['-O'] : ['-Onone']),'-target','arm64-apple-macosx14.0','-sdk',sdk,'-module-cache-path',cache,
       '-I',join(framework,'packages/render-macos/Sources/AnseronUICoreC'),'-parse-as-library',...sources,...plugins.sources,...registry,...hostSources,
-      object,join(core,'entry.lib.a'),...frameworks.flatMap(name => ['-framework',name]),'-o',executable]);
+      object,join(core,'entry.lib.a'),...frameworks.flatMap(name => ['-framework',name]),...(release ? ['-Xlinker','-S'] : []),'-o',executable]);
     const info = {
       CFBundleIdentifier: config.app?.applicationId ?? 'org.anseronui.demo.macos',
       CFBundleName: config.app?.name ?? 'AnseronUI', CFBundleDisplayName: config.app?.name ?? 'AnseronUI',
@@ -63,13 +64,29 @@ export function buildMacOS({ framework, app, config, core, standalone = false })
     copyFileSync(join(core,'manifest.json'),join(resources,'core.manifest.json'));
     const assets = join(app,standalone ? 'assets' : 'examples/components/assets');
     if (existsSync(assets)) cpSync(assets,join(resources,'assets'),{recursive:true});
-    run('codesign',['--force','--sign','-',bundle]);
+    const identity = release ? (process.env.ANSERONUI_MACOS_SIGN_IDENTITY ?? '-') : '-';
+    run('codesign',['--force','--sign',identity,...(release && identity !== '-' ? ['--options','runtime','--timestamp'] : []),bundle]);
+    if (release && identity !== '-') run('codesign',['--verify','--deep','--strict','--verbose=2',bundle]);
+    if (release) {
+      const archive = join(destination, `${config.app?.name ?? 'AnseronUI'}.zip`);
+      rmSync(archive, { force: true });
+      const notaryProfile = process.env.ANSERONUI_NOTARY_PROFILE;
+      if (notaryProfile && identity === '-') throw new Error('ANSERONUI_NOTARY_PROFILE requires ANSERONUI_MACOS_SIGN_IDENTITY to use a Developer ID signature.');
+      if (notaryProfile) {
+        run('ditto',['-c','-k','--keepParent',bundle,archive]);
+        run('xcrun',['notarytool','submit',archive,'--keychain-profile',notaryProfile,'--wait']);
+        run('xcrun',['stapler','staple',bundle]);
+      }
+      rmSync(archive, { force: true });
+      run('ditto',['-c','-k','--keepParent',bundle,archive]);
+    }
     run('xcrun',['--sdk','macosx','swiftc','-print-target-info'],{stdio:'ignore'});
-    const build = { buildId:config.buildId, platform:'macos', arch:'arm64', sourceFingerprint:manifest.sourceFingerprint,
+    const build = { buildId:config.buildId, platform:'macos', arch:'arm64', configuration:release ? 'Release' : 'Debug', sourceFingerprint:manifest.sourceFingerprint,
       executableSha256:digest(executable), coreSha256:digest(join(core,'entry.lib.a')), framework, configPath:manifest.configPath,
       inputs:[...sources,...plugins.sources,...registry,...hostSources,...icon.inputs,...(icon.enabled ? [join(resources,'AppIcon.icns')] : []),join(native,'transport.c'),join(native,'include/anseronui_transport.h'),join(framework,'scripts/macos-app.mjs'),join(framework,'scripts/app-icons.mjs')].map(path => ({path,sha256:digest(path)})) };
     writeFileSync(join(destination,'build.json'),JSON.stringify(build,null,2)+'\n');
     console.log(`Built macOS application: ${bundle}`);
+    if (release) console.log(`Built macOS distribution archive: ${join(destination, `${config.app?.name ?? 'AnseronUI'}.zip`)}`);
     return bundle;
   } catch (error) { rmSync(bundle,{recursive:true,force:true}); throw error; }
 }

@@ -219,6 +219,13 @@ test('macOS scaffolds an AppKit host and runs locally with explicit artifact val
     assert.ok(existsSync(join(f.app,'platforms/macos/App.swift')));
     const pkg = JSON.parse(readFileSync(join(f.app,'package.json'),'utf8'));
     assert.match(pkg.scripts['build:macos'],/build macos/);
+    assert.match(pkg.scripts['build:web:release'],/build web --release/);
+    assert.match(pkg.scripts['build:ios:release'],/build ios-device --release/);
+    assert.match(pkg.scripts['build:android:release'],/build android --release/);
+    assert.match(pkg.scripts['build:macos:release'],/build macos --release/);
+    assert.match(pkg.scripts['build:ios:signed'],/build ios-device --signed/);
+    assert.match(pkg.scripts['build:android:signed'],/build android --signed/);
+    assert.match(pkg.scripts['build:macos:signed'],/build macos --signed/);
     assert.match(pkg.scripts.macos,/run macos/);
     const preview = appCLI(f,['run','macos','--dry-run','--no-build']);
     assert.equal(preview.status,0,preview.stderr);

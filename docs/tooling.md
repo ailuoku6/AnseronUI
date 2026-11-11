@@ -97,6 +97,25 @@ npm run build:web
 npm run dev:web
 ```
 
+四端正式构建使用对应的 `:release` 命令：
+
+```sh
+npm run build:web:release
+npm run build:ios:release
+npm run build:android:release
+npm run build:macos:release
+```
+
+三端签名分发使用 `:signed` 命令。iOS 默认为 App Store Connect 导出方式（可用 `ANSERONUI_IOS_EXPORT_METHOD` 改成其他 Xcode 导出类型）；Android 必须配置完整 keystore；macOS 必须配置 Developer ID Application。缺少必要签名身份时命令会提前失败。
+
+```sh
+npm run build:ios:signed
+npm run build:android:signed
+npm run build:macos:signed
+```
+
+Web 产物位于 `dist/web/`。iOS 产物位于 `.verification/ios-release/`，未签名的 `:release` 命令只生成 `App.xcarchive`；`:signed` 设置 `ANSERONUI_IOS_TEAM_ID` 并使用 Xcode 自动签名证书导出签名 IPA。`ANSERONUI_IOS_EXPORT_METHOD` 可选 `app-store-connect`（默认）、`ad-hoc`、`development` 或 `enterprise`。Android 的 `:signed` 同时要求 `ANSERONUI_ANDROID_KEYSTORE`、`ANSERONUI_ANDROID_STORE_PASSWORD`、`ANSERONUI_ANDROID_KEY_ALIAS`、`ANSERONUI_ANDROID_KEY_PASSWORD`，构建签名 APK/AAB；缺少部分值或找不到 keystore 会直接报错。macOS 的 `:signed` 要求 `ANSERONUI_MACOS_SIGN_IDENTITY` 为 Developer ID Application 证书名称，构建 hardened runtime 签名 `.app` 和同目录 ZIP。配置 `ANSERONUI_NOTARY_PROFILE`（由 `xcrun notarytool store-credentials` 创建）后，构建会先公证并 staple，再生成分发 ZIP。
+
 Web 默认地址为 `http://localhost:5175`；修改 TSX 页面后重新 `build:web` 生成 AOT Wasm，再刷新页面。Vite 刷新不能代替 Core 编译。
 
 产物路径：

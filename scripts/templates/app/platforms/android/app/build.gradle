@@ -13,6 +13,25 @@ android {
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = '17' }
     sourceSets.main.assets.srcDirs += rootProject.file('../../assets')
+    signingConfigs {
+        release {
+            def signingValues = ['ANSERONUI_ANDROID_KEYSTORE', 'ANSERONUI_ANDROID_STORE_PASSWORD', 'ANSERONUI_ANDROID_KEY_ALIAS', 'ANSERONUI_ANDROID_KEY_PASSWORD'].collect { System.getenv(it) }
+            if (signingValues.any { it }) {
+                if (!signingValues.every { it }) throw new GradleException('Set all ANSERONUI_ANDROID_KEYSTORE, ANSERONUI_ANDROID_STORE_PASSWORD, ANSERONUI_ANDROID_KEY_ALIAS and ANSERONUI_ANDROID_KEY_PASSWORD values to sign the release build.')
+                if (!file(signingValues[0]).isFile()) throw new GradleException("Android keystore not found: ${signingValues[0]}")
+                storeFile file(signingValues[0])
+                storePassword signingValues[1]
+                keyAlias signingValues[2]
+                keyPassword signingValues[3]
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (System.getenv('ANSERONUI_ANDROID_KEYSTORE')) signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
 }
 dependencies { implementation project(':render') }
 

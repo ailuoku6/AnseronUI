@@ -94,15 +94,17 @@ function buildApp() {
   if (!target || !["ios", "ios-device", "android", "web", "macos"].includes(target)) throw new Error("Usage: anseronui build <ios|ios-device|android|web|macos> --config path");
   const config = resolve(process.cwd(), valueAfter("--config", "anseronui.config.json"));
   if (!existsSync(config)) throw new Error(`Config not found: ${config}`);
-  if (json(config).app) buildStandalone(config, target);
-  else run(process.execPath, ["scripts/build-app.mjs", target], { ...process.env, ANSERONUI_CONFIG: config });
+  const release = parsed.values.release ?? false;
+  const signed = parsed.values.signed ?? false;
+  if (json(config).app) buildStandalone(config, target, { release: release || signed, signed });
+  else run(process.execPath, ["scripts/build-app.mjs", target], { ...process.env, ANSERONUI_CONFIG: config, ANSERONUI_RELEASE_BUILD: release || signed ? '1' : '', ANSERONUI_SIGNED_BUILD: signed ? '1' : '' });
 }
 
 try {
   parsed = parseArgs({ args, allowPositionals: true, options: {
     name: { type: 'string' }, 'application-id': { type: 'string' }, config: { type: 'string' },
     device: { type: 'string' }, avd: { type: 'string' },
-    package: { type: 'string' }, 'local-framework': { type: 'boolean' }, force: { type: 'boolean' }, 'no-build': { type: 'boolean' }, 'dry-run': { type: 'boolean' },
+    package: { type: 'string' }, 'local-framework': { type: 'boolean' }, force: { type: 'boolean' }, 'no-build': { type: 'boolean' }, 'dry-run': { type: 'boolean' }, release: { type: 'boolean' }, signed: { type: 'boolean' },
   } });
   if (command === "version") console.log(json(join(frameworkRoot, "package.json")).version);
   else if (command === "create") createApp();
@@ -119,7 +121,7 @@ try {
 
   create <directory> [--name AppName] [--application-id com.example.app] [--package specifier] [--local-framework] [--force]
   setup | check | typecheck [--config path]
-  build <ios|ios-device|android|web|macos> [--config path]
+  build <ios|ios-device|android|web|macos> [--release|--signed] [--config path]
   run ios [--device UUID-or-name] [--no-build] [--dry-run] [--config path]
   run android [--device serial | --avd name] [--no-build] [--dry-run] [--config path]
   run macos [--no-build] [--dry-run] [--config path]
@@ -127,7 +129,7 @@ try {
   integrate <existing-project> [--name app-name] [--force]
 
 From a generated app: npm run ios / npm run android / npm run macos.
-iOS run targets simulators; iOS devices require your own signing configuration.`);
+iOS run targets simulators. Use --release for production builds; store distribution requires platform signing credentials.`);
   }
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));

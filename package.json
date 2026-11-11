@@ -35,6 +35,13 @@
     "build:core:wasm": "node scripts/build-core.mjs wasm",
     "build:ios": "node scripts/build-app.mjs ios",
     "build:ios-device": "node scripts/build-app.mjs ios-device",
+    "build:web:release": "node scripts/anseronui.mjs build web --release",
+    "build:ios:release": "node scripts/anseronui.mjs build ios --release",
+    "build:android:release": "node scripts/anseronui.mjs build android --release",
+    "build:macos:release": "node scripts/anseronui.mjs build macos --release",
+    "build:ios:signed": "node scripts/anseronui.mjs build ios-device --signed",
+    "build:android:signed": "node scripts/anseronui.mjs build android --signed",
+    "build:macos:signed": "node scripts/anseronui.mjs build macos --signed",
     "build:android": "node scripts/build-app.mjs android",
     "build:web": "node scripts/build-app.mjs web",
     "anseronui": "node scripts/anseronui.mjs",
@@ -64,7 +71,7 @@
     "@scriptc/runtime-darwin-arm64": "0.4.8",
     "@scriptc/runtime-wasm32-wasi": "0.4.8"
   },
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Create and build AnseronUI apps for iOS, Android, macOS and Web from shared TSX pages",
   "license": "MIT",
   "repository": {
