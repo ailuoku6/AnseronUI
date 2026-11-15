@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.5.0)
+project(AnseronUIHarmony LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+include(${CMAKE_CURRENT_LIST_DIR}/anseronui.cmake)
+add_library(anseronui SHARED "${ANSERONUI_ROOT}/packages/render-harmony/src/main/cpp/bridge.cpp" "${ANSERONUI_ROOT}/packages/core/native/transport.c" ${ANSERONUI_PLUGIN_SOURCES})
+target_include_directories(anseronui PRIVATE "${ANSERONUI_ROOT}/packages/core/native/include" "${ANSERONUI_ROOT}/packages/render-harmony/src/main/cpp")
+target_link_libraries(anseronui PRIVATE "${ANSERONUI_CORE}" libace_napi.z.so libace_ndk.z.so libhilog_ndk.z.so)

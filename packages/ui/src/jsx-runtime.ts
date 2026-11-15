@@ -1,4 +1,4 @@
-import { Button, Fragment, RichText, ScrollView, Text, TextInput, View, normalizeChildren } from "./index.js";
+import { Fragment, RichText, ScrollView, Text, TextInput, View, normalizeChildren } from "./index.js";
 import type { Child, Component, ComponentElement, FragmentElement, HostElement, HostTag, Key, UIElement } from "./index.js";
 export { Fragment };
 
@@ -14,8 +14,8 @@ export function jsx(type: ElementType, props: object | null, key?: Key): UIEleme
   const resolvedKey = key ?? attributes.key ?? null;
   if (type === Fragment) return { kind: "fragment", key: resolvedKey, children: normalizeChildren(attributes.children) } as FragmentElement;
   if (typeof type !== "function") throw new Error("Unsupported JSX component");
-  if (type === View || type === Text || type === RichText || type === Button || type === TextInput || type === ScrollView) {
-    const tag: HostTag = type === View ? "View" : type === Text ? "Text" : type === RichText ? "RichText" : type === Button ? "Button" : type === TextInput ? "TextInput" : "ScrollView";
+  if (type === View || type === Text || type === RichText || type === TextInput || type === ScrollView) {
+    const tag: HostTag = type === View ? "View" : type === Text ? "Text" : type === RichText ? "RichText" : type === TextInput ? "TextInput" : "ScrollView";
     const children = normalizeChildren(attributes.children);
     if (tag !== "Text" && tag !== "RichText" && children.some(child => typeof child === "string" || typeof child === "number")) {
       throw new Error("RAW_TEXT_OUTSIDE_TEXT");

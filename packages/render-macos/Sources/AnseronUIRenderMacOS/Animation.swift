@@ -34,10 +34,19 @@ final class AnseronUINodeAnimation: NSObject {
     var options: TSAnimationOptions?
     private var running: TSAnimationOptions?
     private var link: Timer?
+    private var active = true
+    private var pausedAt: Double = 0
     private var start: Double = 0
     private var completion: ((Bool) -> Void)?
     private var mirroredX = false, mirroredY = false
     init(view: NSView) { self.view = view }
+    func setActive(_ value: Bool) {
+        guard active != value else { return }
+        if !value { pausedAt = CACurrentMediaTime() }
+        else { start += CACurrentMediaTime() - pausedAt }
+        active = value
+        link?.fireDate = value ? Date() : .distantFuture
+    }
     func stage(_ values: [String: Double]) {
         for (key, value) in values where declared[key] != value { declared[key] = value; staged[key] = value }
     }
@@ -75,8 +84,9 @@ final class AnseronUINodeAnimation: NSObject {
     private func begin(_ next: [String: Double], _ options: TSAnimationOptions, _ complete: ((Bool) -> Void)? = nil) {
         cancel(); target = next; from = current; running = options; completion = complete
         start = CACurrentMediaTime() + options.delay / 1000
+        if !active { pausedAt = CACurrentMediaTime() }
         let timer = Timer(timeInterval: 1.0 / 60, target: self, selector: #selector(tick(_:)), userInfo: nil, repeats: true)
-        link = timer; RunLoop.main.add(timer, forMode: .common)
+        link = timer; if !active { timer.fireDate = .distantFuture }; RunLoop.main.add(timer, forMode: .common)
     }
     @objc private func tick(_ timer: Timer) {
         guard let options = running else { return }

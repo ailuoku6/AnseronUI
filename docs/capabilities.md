@@ -13,9 +13,9 @@
 | 组件 | 用途 | 常用能力 |
 | --- | --- | --- |
 | `View` | 通用容器 | Flex 布局、背景、边框、圆角、触摸和布局事件 |
-| `Text` | 普通文本 | 字号、字重、斜体、颜色、对齐、行数和省略 |
+| `Text` | 普通文本 | 字号、绝对行高、字重、斜体、颜色、对齐、行数和省略 |
 | `RichText` | 富文本 | 多 span 颜色、字号、字重、斜体、下划线、删除线和 span 点击 |
-| `Button` | 按钮 | 标题、点击、长按、禁用状态和通用样式 |
+| `Button` | 共享 View/Text 组合按钮 | 标题、点击、长按、统一按压/禁用状态、无障碍语义和通用样式 |
 | `TextInput` | 输入框 | 受控 value、placeholder、键盘类型、密码输入、焦点和提交 |
 | `ScrollView` | 垂直滚动容器 | 原生滚动、滚动事件、滚动结束事件、`scrollTo` |
 | `Image` | 图片 | `asset://`、本地/网络资源、占位图、缩放模式、加载成功/失败 |
@@ -35,7 +35,7 @@
 | `Button` | 必填 `title`、可选 `disabled` | 通用 `onClick`、`onLongPress` |
 | `TextInput` | 必填 `value`、`onChangeText`；`placeholder`、`editable`、`secureTextEntry`、`maxLength`、`keyboardType`、`returnKeyType`、`autoCapitalize`、`autoCorrect`、`placeholderTextColor`、`dmPlaceholderTextColor` | `onChangeText(value)`、`onFocus()`、`onBlur()`、`onSubmitEditing(value)` |
 | `ScrollView` | `scrollEnabled`、`showsVerticalScrollIndicator` | `onScroll(offset, event)`、`onScrollEnd(event)` |
-| `Image` | 必填 `src`；`placeholderSrc`、`resizeMode` | `onLoad(source)`、`onError(source, errorCode)` |
+| `Image` | 必填 `src`；深色 `dmSrc`、`placeholderSrc`、`resizeMode` | `onLoad(source)`、`onError(source, errorCode)` |
 | `Video` | 必填 `src`；`resizeMode`、`controls`、`autoplay`、`loop`、`muted`、`rate`、`playControl`（`play` / `pause` / `stop`） | `onPlaybackStateChange(state)`、`onTimeUpdate(currentTime, duration)`、`onFirstFrame()`、`onError(source, errorCode)` |
 | `NativeComponent` | 必填 `name`；`nativeProps`、公共样式及 ref | `onNativeEvent({ name, data })` |
 
@@ -54,12 +54,12 @@
 - 夜间颜色：`dmBackgroundColor`、`dmColor`、`dmBorderColor`、`dmShadowColor`、`dmPlaceholderTextColor`；
 - 外阴影：`shadowColor`、`shadowOpacity`、`shadowRadius`、`shadowOffsetX`、`shadowOffsetY`；
 - 变换：`translateX/translateY`、`scaleX/scaleY`、`rotate`；
-- 文本：`fontSize`、`fontWeight`、`fontStyle`、`textAlign`、`textDecorationLine`；
+- 文本：`fontSize`、`lineHeight`（绝对布局单位，用于 Text/RichText/Button 标题）、`fontWeight`、`fontStyle`、`textAlign`、`textDecorationLine`；
 - 裁剪和可见性：`overflow`、`visibility`。
 
 布局在 Core 中计算成节点 frame，再由各平台应用到真实 View、UIView 或 DOM。尺寸和间距使用数值逻辑单位，TSX 的 `Style` 不接受任意 CSS 字符串；底层 Flexily 能力不等于全部暴露到 TSX。布局默认方向为 `row`，纵向容器请显式设置 `flexDirection: "column"`。业务不应在每个平台重新实现一套布局算法。
 
-夜间颜色自动跟随宿主外观，缺少 `dm` 值时回退到普通颜色。阴影默认透明度为 `0`，需显式开启。完整示例、圆角裁剪与平台差异见[颜色、夜间模式与阴影](styles.md)。
+夜间颜色自动跟随宿主外观，缺少 `dm` 值时回退到普通颜色。阴影默认透明度为 `0`，需显式开启。页面可通过 `useServices().appearance.get()` / `.subscribe()` 感知 `light` / `dark`；Image 可用 `dmSrc` 自动跟随深色模式。完整示例、行高、布局回调及平台差异见[颜色、夜间模式与阴影](styles.md)。
 
 ## 事件模型
 
@@ -75,7 +75,7 @@
 <View onLayout={frame => console.log(frame.width, frame.height)} />
 ```
 
-`onLayout` 返回 Core 确认的目标布局 `{ x, y, width, height }`。动画期间它不会逐帧报告视觉插值位置。
+`onLayout` 在首次布局或 frame 变化、渲染器确认提交后返回 Core 的目标布局 `{ x, y, width, height }`，单位为逻辑布局单位，`x/y` 相对直接父元素。相同布局的重渲染不重复触发；滚动和 transform 不计入布局位置，动画期间不会逐帧报告视觉插值位置。
 
 ### 触摸、捕获和冒泡
 
@@ -136,6 +136,8 @@
 - `useRouter`：页面跳转和返回；
 - `useImperativeHandle`：函数组件向外暴露异步句柄。
 
+支持自定义 Hook、高阶组件、组件作为属性、元素插槽和 render prop，写法与 AOT 限制见[自定义 Hook 与组件组合](component-composition.md)。
+
 组件卸载时清理所属 effect、ref 与未完成服务请求；节点删除会释放其平台资源。整个页面退出时再销毁 surface、宿主计时器、媒体和动画。异步业务代码仍需处理 Promise rejection，不能假设一个页面会一直存活。
 
 ## 图片、视频和富文本
@@ -193,7 +195,7 @@ const router = useRouter();
 <Button title="返回" onClick={() => { void router.back(); }} />
 ```
 
-支持 `push`、`replace`、`pop`、`back`、`current`。页面必须在 `anseronui.config.json` 的 `pages` 中注册。当前不支持路由参数、深链、页面缓存和嵌套路由。详见[页面路由](routing.md)。
+支持 `push`、`replace`、`pop`、`back`、`current` 和 `getParams`。页面必须在 `anseronui.config.json` 的 `pages` 中注册。支持 JSON 路由参数和内存中的页面保活；当前不支持深链、跨进程页面恢复和嵌套路由。详见[页面路由](routing.md)。
 
 ## Module、原生组件和 ref
 
@@ -204,7 +206,7 @@ const router = useRouter();
 - 用 `ref` 获取 `NodeHandle`，调用 `measure`、`focus`、`blur`、`scrollTo`、`animate`、`invoke`；
 - 用 `useImperativeHandle` 让函数组件公开业务句柄。
 
-原生扩展注册由 iOS、Android、macOS、Web 宿主注入，TSX 不直接持有 UIView、Android View、NSView 或 DOM 对象。详见[原生扩展](native-extensions.md)。
+原生扩展注册由 iOS、Android、macOS、HarmonyOS、Web 宿主注入，TSX 不直接持有 UIView、Android View、NSView 或 DOM 对象。详见[原生扩展](native-extensions.md)。
 
 ## 平台支持
 
@@ -213,15 +215,16 @@ const router = useRouter();
 | iOS | UIKit Renderer、AOT Core、图片/视频、触摸、动画、Module、原生组件、ref | `packages/render-ios` |
 | Android | Android View Renderer、JNI Core、图片/视频、触摸、动画、Module、原生组件、ref | `packages/render-android` |
 | macOS | AppKit Renderer、arm64 AOT Core、单窗口、组件/媒体映射、路由、Module、原生组件和 ref；专项验收边界见 Renderer 文档 | [packages/render-macos](../packages/render-macos/README.md) |
+| HarmonyOS | API 21 Stage HAP、ArkUI Native Node、AOT Core、媒体/触摸/动画、Module/原生扩展/ref、路由保活及容量回收；硬件与发布限制见专项文档 | [鸿蒙支持](harmonyos.md) |
 | Web | DOM Renderer、Wasm Core、基础组件/媒体/触摸、浏览器 Module、原生组件扩展、ref、动画和路由 | `packages/render-web` |
 
 iOS 没有 Android 同等的统一物理返回键，导航控制器需要主动调用 `handleBackPress()`；Android 示例 Activity 已接入系统返回；Web 示例监听 `Escape` 和 `BrowserBack`。
 
-macOS 宿主也可调用 `handleBackPress()` 和 `pop()`，仓库示例通过 Navigate 菜单触发。macOS TextInput 为单行，移动端键盘提示不逐一对应；触摸协议映射为鼠标事件，桌面滚动仲裁与完整多指手势尚未对齐。RichText 点击、IME、媒体、拖动和动画已有 AppKit 回归覆盖；完整无障碍、macOS 14 和 Intel 仍需目标环境验收，详情见 [AppKit 能力边界](../packages/render-macos/README.md#能力与当前边界)。鸿蒙尚未实现。
+macOS 宿主也可调用 `handleBackPress()` 和 `pop()`，仓库示例通过 Navigate 菜单触发。macOS TextInput 为单行，移动端键盘提示不逐一对应；触摸协议映射为鼠标事件，桌面滚动仲裁与完整多指手势尚未对齐。RichText 点击、IME、媒体、拖动和动画已有 AppKit 回归覆盖；完整无障碍、macOS 14 和 Intel 仍需目标环境验收，详情见 [AppKit 能力边界](../packages/render-macos/README.md#能力与当前边界)。鸿蒙的标准服务已接入；通知资格、推送集成、后台及硬件验证边界见[鸿蒙支持](harmonyos.md)。
 
 ## 当前限制
 
-- 页面路由暂不支持参数、深链、页面缓存和持久化导航状态；
+- 页面路由暂不支持深链、跨进程页面恢复和持久化导航状态；
 - Core 的异步请求可以取消等待和丢弃迟到结果，但不能强制终止任意已经挂起的业务 async fiber；
 - 自定义原生组件需要平台分别注册工厂；
 - 布局使用逻辑单位/设备宿主单位转换，尚未提供完整的高 DPI 连续坐标模式；
@@ -234,3 +237,7 @@ macOS 宿主也可调用 `handleBackPress()` 和 `pop()`，仓库示例通过 Na
 ## 标准系统服务
 
 `useServices()` 已提供 HTTP request、普通/安全存储、应用/设备/语言信息、剪贴板、弹窗、链接、分享、触觉、环境状态与订阅、权限、定位、照片/文档选择及上传下载，以及推送通知、后台原生任务、BLE/GATT 和 NFC NDEF。支付与生物识别未接入。各端差异、生命周期与示例见[标准系统能力](native-services.md)。示例 App 的「扩展」页包含可操作用例。
+
+## 性能、长列表与页面保活
+
+支持[可变高度虚拟列表](virtual-list.md)、[可见性生命周期与容量回收](page-lifecycle.md)，以及[整条渲染链路性能统计和基准](performance.md)。回收隐藏页面后保留路由参数，Hook 状态在重建时初始化。

@@ -1,0 +1,37 @@
+name: Render performance
+
+on:
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'examples/virtual-list/**'
+      - 'scripts/**'
+      - 'anseronui.config.json'
+      - 'package*.json'
+      - '.github/workflows/render-performance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck:framework
+      - run: npm run test:framework
+      - name: Check render, message and memory budgets
+        run: npm run bench:render
+      - name: Save machine-specific performance report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: render-performance-reference
+          path: .verification/performance/*.json
+          if-no-files-found: ignore

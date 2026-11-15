@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
+import { buildHarmony } from './harmony-app.mjs';
 import { buildMacOS, requireMacOS } from './macos-app.mjs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,9 @@ process.chdir(fileURLToPath(new URL('../', import.meta.url)));
 function run(command,args,env=process.env) { const r=spawnSync(command,args,{stdio:'inherit',env}); if(r.error)throw r.error; if(r.status!==0)process.exit(r.status??1); }
 const target = process.argv[2];
 const release = process.env.ANSERONUI_RELEASE_BUILD === '1';
+// Every ordinary platform build is a Debug build, including Web. Release is
+// the sole mode that omits the instrumentation and its generated code.
+process.env.ANSERONUI_DEBUG_BUILD = release ? '0' : '1';
 const signed = process.env.ANSERONUI_SIGNED_BUILD === '1';
 const config = process.env.ANSERONUI_CONFIG;
 const coreArgs = config ? [config] : [];
@@ -17,7 +21,10 @@ const iconConfig = appConfig ?? JSON.parse(readFileSync('anseronui.config.json',
 if (signed && (target === 'ios' || target === 'ios-device') && !process.env.ANSERONUI_IOS_TEAM_ID) throw new Error('Set ANSERONUI_IOS_TEAM_ID to create a signed iOS distribution IPA.');
 if (signed && target === 'android' && !['ANSERONUI_ANDROID_KEYSTORE','ANSERONUI_ANDROID_STORE_PASSWORD','ANSERONUI_ANDROID_KEY_ALIAS','ANSERONUI_ANDROID_KEY_PASSWORD'].every(name => process.env[name])) throw new Error('Set ANSERONUI_ANDROID_KEYSTORE, ANSERONUI_ANDROID_STORE_PASSWORD, ANSERONUI_ANDROID_KEY_ALIAS, and ANSERONUI_ANDROID_KEY_PASSWORD to create signed Android artifacts.');
 if (signed && target === 'macos' && !process.env.ANSERONUI_MACOS_SIGN_IDENTITY) throw new Error('Set ANSERONUI_MACOS_SIGN_IDENTITY to a Developer ID Application certificate for signed distribution.');
-if (target === 'macos') {
+if (target === 'harmony') {
+  run(process.execPath,['scripts/build-core.mjs','harmony',...coreArgs]);
+  buildHarmony({framework:process.cwd(),app:process.cwd(),config:iconConfig,core:join(process.cwd(),'.verification/core-harmony'),release,requireSignature:signed});
+} else if (target === 'macos') {
   requireMacOS();
   run(process.execPath,['scripts/build-core.mjs','macos-arm64',...coreArgs]);
   buildMacOS({framework:process.cwd(),app:process.cwd(),config:appConfig ?? JSON.parse(readFileSync('anseronui.config.json','utf8')),core:join(process.cwd(),'.verification/core-macos-arm64'),release,requireSignature:signed});
@@ -74,6 +81,9 @@ if (target === 'macos') {
   run('examples/native/android/gradlew',['-p','examples/native/android',...(release?[':app:assembleRelease',':app:bundleRelease']:[':app:assembleDebug']),'--console=plain'],env);
 } else if (target === 'web') {
   run(process.execPath,['scripts/build-core.mjs','wasm', ...coreArgs]);
-  if (config && !appConfig?.web?.viteConfig) throw new Error('Configured app must provide web.viteConfig before building a Web host');
+  // The framework repository has a checked-in demo Vite host. Standalone
+  // projects must still point at their own host config instead of silently
+  // building the framework demo.
+  if (config && resolve(config) !== resolve('anseronui.config.json') && !appConfig?.web?.viteConfig) throw new Error('Configured app must provide web.viteConfig before building a Web host');
   run(process.execPath,['node_modules/vite/bin/vite.js','build','--config', appConfig?.web?.viteConfig ?? 'examples/native/web/vite.config.ts']);
 } else throw new Error('Expected ios, ios-device, android, macos, or web');

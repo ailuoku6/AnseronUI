@@ -43,27 +43,55 @@ class AndroidHost(
     private val thread = HandlerThread("AnseronUICore").apply { start() }
     private val owner = Handler(thread.looper)
     private val network = Executors.newSingleThreadExecutor()
-    val renderer = AndroidRenderer(root, extensions) { event ->
-        enqueue {
-            val payload = JSONObject().put("type", event.type).put("nodeId", event.nodeId).put("revision", event.revision)
-            if (event.type == "InputChange") payload.put("value", event.value).put("inputRevision", event.inputRevision)
-            if (event.type == "NativeEvent") {
-                payload.put("event", event.event)
-                event.value?.let { payload.put("value", it) }
-                event.x?.let { payload.put("x", it) }; event.y?.let { payload.put("y", it) }
-                event.contentWidth?.let { payload.put("contentWidth", it) }; event.contentHeight?.let { payload.put("contentHeight", it) }
-                event.source?.let { payload.put("source", it) }; event.state?.let { payload.put("state", it) }
-                event.duration?.let { payload.put("duration", it) }; event.errorCode?.let { payload.put("errorCode", it) }
-                event.pageX?.let { payload.put("pageX", it) }; event.pageY?.let { payload.put("pageY", it) }; event.pointerId?.let { payload.put("pointerId", it) }
-                event.touches?.let { points -> payload.put("touches", JSONArray().also { array -> points.forEach { point -> array.put(JSONObject().put("x", point.x).put("y", point.y).put("pageX", point.pageX).put("pageY", point.pageY).put("pointerId", point.pointerId)) } }) }
-                event.targetId?.let { payload.put("targetId", it) }
+    private val eventLock = Any()
+    private val pendingEvents = mutableListOf<RendererEvent>()
+    private var eventsScheduled = false
+    val renderer = AndroidRenderer(root, extensions) { event -> queueEvent(event) }
+
+    private fun queueEvent(event: RendererEvent) {
+        if (closed) return
+        val schedule = synchronized(eventLock) {
+            // Coalesce before JSON encoding and the owner queue, while retaining
+            // discrete events as ordering barriers.
+            if (event.type == "NativeEvent" && event.event == "scroll") {
+                for (index in pendingEvents.indices.reversed()) {
+                    val previous = pendingEvents[index]
+                    if (previous.type != "NativeEvent" || previous.event != "scroll") break
+                    if (previous.nodeId == event.nodeId) { pendingEvents.removeAt(index); break }
+                }
             }
-            send(payload)
+            pendingEvents.add(event)
+            if (eventsScheduled) false else { eventsScheduled = true; true }
         }
+        if (schedule) enqueue {
+            val batch = synchronized(eventLock) {
+                pendingEvents.toList().also { pendingEvents.clear(); eventsScheduled = false }
+            }
+            batch.forEach { sendEvent(it) }
+        }
+    }
+
+    private fun sendEvent(event: RendererEvent) {
+        val payload = JSONObject().put("type", event.type).put("nodeId", event.nodeId).put("revision", event.revision)
+        if (event.type == "InputChange") payload.put("value", event.value).put("inputRevision", event.inputRevision)
+        if (event.type == "NativeEvent") {
+            payload.put("event", event.event)
+            event.value?.let { payload.put("value", it) }
+            event.x?.let { payload.put("x", it) }; event.y?.let { payload.put("y", it) }
+            event.contentWidth?.let { payload.put("contentWidth", it) }; event.contentHeight?.let { payload.put("contentHeight", it) }
+            event.scrollAdjustment?.let { payload.put("scrollAdjustment", it) }
+            event.source?.let { payload.put("source", it) }; event.state?.let { payload.put("state", it) }
+            event.duration?.let { payload.put("duration", it) }; event.errorCode?.let { payload.put("errorCode", it) }
+            event.pageX?.let { payload.put("pageX", it) }; event.pageY?.let { payload.put("pageY", it) }; event.pointerId?.let { payload.put("pointerId", it) }
+            event.touches?.let { points -> payload.put("touches", JSONArray().also { array -> points.forEach { point -> array.put(JSONObject().put("x", point.x).put("y", point.y).put("pageX", point.pageX).put("pageY", point.pageY).put("pointerId", point.pointerId)) } }) }
+            event.targetId?.let { payload.put("targetId", it) }
+        }
+        send(payload)
     }
     private var core: AndroidCoreTransport? = null
     private var started = false
     private var ready = false
+    private var visible = true
     private var pendingPage = ""
     private var pendingWidth = 0.0
     private var pendingHeight = 0.0
@@ -75,7 +103,7 @@ class AndroidHost(
     private val surfaceId = 1L
     private val generation = 1L
     // Optional renderer nodes must not prevent loading pages from a basic-node Core.
-    private val requiredNodes = listOf("View", "Text", "RichText", "Button", "TextInput", "ScrollView", "Image", "Video")
+    private val requiredNodes = listOf("View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video")
     @Volatile private var backWaiter: ((Boolean) -> Unit)? = null
 
     init { require(Looper.myLooper() == Looper.getMainLooper()) { "Create the host on the UI thread" } }
@@ -92,6 +120,26 @@ class AndroidHost(
             }
             send(JSONObject().put("type", "Handshake").put("requiredNodes", JSONArray(requiredNodes)))
         }
+    }
+
+    @Volatile private var profiling = false
+    private val bridgeMetrics = mutableMapOf<String, Double>() // Core owner thread
+    private val hostMetrics = mutableMapOf<String, Double>() // UI thread
+    private fun metric(values: MutableMap<String, Double>, key: String, value: Double) { if (profiling) values[key] = (values[key] ?: 0.0) + value }
+    private fun elapsed(start: Long): Double = if (profiling && start != 0L) (System.nanoTime() - start) / 1_000_000.0 else 0.0
+    var onRuntimeStats: (JSONObject) -> Unit = {}
+    fun inspectRuntime(enabled: Boolean = true, reset: Boolean = false) {
+        if (!started || closed) return
+        profiling = enabled
+        if (reset) hostMetrics.clear()
+        enqueue {
+            if (reset) bridgeMetrics.clear()
+            send(JSONObject().put("type", "InspectRuntime").put("enabled", enabled).put("reset", reset))
+        }
+    }
+    fun setVisibility(value: Boolean) {
+        renderer.setPageActive(value)
+        enqueue { visible = value; if (ready) send(JSONObject().put("type", "SurfaceVisibility").put("visible", value)) }
     }
 
     fun resize(width: Float, height: Float) {
@@ -138,29 +186,63 @@ class AndroidHost(
         val runtime = core ?: error("Core not initialized")
         require(inputSequence < 0xffffffffL) { "Input sequence overflow" }
         val envelope = JSONObject()
-            .put("protocolMajor", 1).put("protocolMinor", 0)
+            .put("protocolMajor", 1).put("protocolMinor", 5)
             .put("bundleBuildId", runtime.bundleBuildId).put("runtimeEpoch", runtime.runtimeEpoch)
             .put("surfaceId", surfaceId).put("surfaceGeneration", generation)
             .put("sequence", ++inputSequence).put("ackSequence", outputSequence).put("payload", payload)
+        val encodeStart = if (profiling) System.nanoTime() else 0L
         val bytes = envelope.toString().toByteArray(StandardCharsets.UTF_8)
+        metric(bridgeMetrics, "bridgeEncodeMs", elapsed(encodeStart))
+        metric(bridgeMetrics, "bridgeInputBytes", bytes.size.toDouble())
         require(bytes.size <= 1_048_576) { "Input message too large" }
+        val postStart = if (profiling) System.nanoTime() else 0L
         runtime.post(bytes)
+        metric(bridgeMetrics, "adapterPostMs", elapsed(postStart))
     }
 
     private fun drain() {
         val runtime = core ?: return
-        repeat(32) {
-            val output = runtime.step(64)
-            if (output.isEmpty()) {
-                if (runtime.hasPendingWork()) owner.post { enqueue {} }
-                return
+        try {
+            repeat(32) {
+                val stepStart = if (profiling) System.nanoTime() else 0L
+                val output = runtime.step(64)
+                metric(bridgeMetrics, "adapterStepMs", elapsed(stepStart))
+                if (output.isEmpty()) {
+                    if (runtime.hasPendingWork()) owner.post { enqueue {} }
+                    return
+                }
+                for (bytes in output) handle(bytes)
             }
-            for (bytes in output) handle(bytes)
+            if (runtime.hasPendingWork()) owner.post { enqueue {} }
+        } finally { flushMeasurements() }
+    }
+
+    private val measurements = mutableListOf<JSONObject>() // Core owner thread
+    private fun flushMeasurements() {
+        if (measurements.isEmpty()) return
+        val batch = measurements.toList(); measurements.clear()
+        val queuedAt = if (profiling) System.nanoTime() else 0L
+        ui.post {
+            if (closed) return@post
+            metric(hostMetrics, "uiQueueMs", elapsed(queuedAt))
+            try {
+                val started = if (profiling) System.nanoTime() else 0L
+                val results = batch.map { payload ->
+                    val size = renderer.measure(payload.getString("kind"), payload.getString("text"), payload.getDouble("fontSize").toFloat(), payload.getDouble("maxWidth").toFloat(), payload.optJSONObject("props"))
+                    JSONObject().put("type", "MeasureResult").put("requestId", payload.getLong("requestId"))
+                        .put("nodeId", payload.getLong("nodeId")).put("width", size.width.toDouble())
+                        .put("height", size.height.toDouble()).put("baseline", size.baseline.toDouble())
+                }
+                metric(hostMetrics, "hostMeasureMs", elapsed(started))
+                // One UI/owner round trip for the whole measurement window.
+                enqueue { results.forEach { send(it) } }
+            } catch (error: Throwable) { enqueue { throw error } }
         }
-        if (runtime.hasPendingWork()) owner.post { enqueue {} }
     }
 
     private fun handle(bytes: ByteArray) {
+        val decodeStart = if (profiling) System.nanoTime() else 0L
+        metric(bridgeMetrics, "bridgeOutputBytes", bytes.size.toDouble())
         require(bytes.size <= 1_048_576) { "Output message too large" }
         val envelope = JSONObject(String(bytes, StandardCharsets.UTF_8))
         val runtime = core ?: error("Core disposed")
@@ -172,38 +254,43 @@ class AndroidHost(
         require(envelope.getLong("ackSequence") in 0..inputSequence)
         outputSequence++
         val payload = envelope.getJSONObject("payload")
+        metric(bridgeMetrics, "bridgeDecodeMs", elapsed(decodeStart))
+        val queuedAt = if (profiling) System.nanoTime() else 0L
         when (payload.getString("type")) {
             "Ready" -> {
                 require(!ready && (0 until payload.getJSONArray("supportedNodes").length()).map { payload.getJSONArray("supportedNodes").getString(it) }
                     .containsAll(requiredNodes))
                 ready = true
-                send(JSONObject().put("type", "CreateSurface").put("page", pendingPage).put("width", pendingWidth).put("height", pendingHeight))
+                send(JSONObject().put("type", "CreateSurface").put("page", pendingPage).put("width", pendingWidth).put("height", pendingHeight).put("visible", visible))
                 ui.post { onReady() }
             }
             "Commit" -> ui.post {
+                metric(hostMetrics, "uiQueueMs", elapsed(queuedAt))
                 try {
-                    renderer.applyJson(payload.toString())
+                    val applyStart = if (profiling) System.nanoTime() else 0L
+                    renderer.applyCommit(payload)
+                    metric(hostMetrics, "rendererApplyMs", elapsed(applyStart))
+                    metric(hostMetrics, "hostCommits", 1.0)
                     enqueue { send(JSONObject().put("type", "CommitAck").put("revision", payload.getLong("revision"))) }
                 } catch (error: Throwable) {
                     enqueue { send(JSONObject().put("type", "CommitFailed").put("revision", payload.getLong("revision")).put("reason", error.toString().take(4096))) }
                 }
             }
-            "MeasureRequest" -> ui.post {
-                try {
-                    val size = renderer.measure(payload.getString("kind"), payload.getString("text"), payload.getDouble("fontSize").toFloat(), payload.getDouble("maxWidth").toFloat(), payload.optJSONObject("props"))
-                    enqueue {
-                        send(JSONObject().put("type", "MeasureResult").put("requestId", payload.getLong("requestId"))
-                            .put("nodeId", payload.getLong("nodeId")).put("width", size.width.toDouble())
-                            .put("height", size.height.toDouble()).put("baseline", size.baseline.toDouble()))
-                    }
-                } catch (error: Throwable) { enqueue { throw error } }
-            }
+            "MeasureRequest" -> measurements.add(payload)
             "InvokeModule" -> invoke(payload)
             "CancelRequest" -> {
                 requests.remove(payload.getLong("requestId"))?.invoke()
                 ui.post { extensionRequests.remove(payload.getLong("requestId"))?.invoke() }
             }
             "BackPressResult" -> backWaiter?.invoke(payload.getBoolean("consumed"))
+            "RuntimeStats" -> {
+                val values = payload.getJSONObject("values")
+                bridgeMetrics.forEach { (key, value) -> values.put(key, value) }
+                ui.post {
+                    hostMetrics.forEach { (key, value) -> values.put(key, value) }
+                    onRuntimeStats(values)
+                }
+            }
             "Diagnostic" -> {
                 ui.post { onDiagnostic(payload.getString("code"), payload.getString("message")) }
                 if (!ready) finish()

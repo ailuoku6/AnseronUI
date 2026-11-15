@@ -16,9 +16,11 @@ test('Core stamp detects protocol, page, compiler and config changes without dep
     const config = { sourceDirs: ['examples/page'], pages: [{ source: 'examples/page/page.tsx' }] };
     write('anseronui.config.json', JSON.stringify(config));
     for (const path of ['scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs',
-      'internal/toolchain/build-library.mjs', 'internal/toolchain/async-embedding.patch', 'packages/core/native/profile.json',
+      'internal/toolchain/build-library.mjs', 'internal/toolchain/async-embedding.patch', 'scripts/harmony-library.mjs',
+      'internal/toolchain/harmony-api21.patch', 'packages/core/native/profile.json',
       'packages/core/native/framework.profile.json', 'packages/core/native/business.profile.json', 'scripts/prepare-compiler.mjs',
-      'packages/core/native/split_bridge.c', 'scripts/lower-timers.mjs', 'packages/core/src/kernel.ts',
+      'packages/core/native/split_bridge.c', 'scripts/lower-timers.mjs', 'packages/devtools/instrumentation/index.mjs',
+      'packages/devtools/instrumentation/runtime.inc', 'packages/core/src/kernel.ts',
       'packages/core/src/business-runtime.ts', 'packages/core/src/contracts.ts']) write(path, 'original');
     for (const dir of [...coreSourceDirs(config), 'packages/ui-compiler/src']) write(`${dir}/index.ts`, 'original');
     for (const name of ['core-inputs.mjs', 'check-ios-core.mjs']) write('scripts/' + name, readFileSync(new URL(name, import.meta.url)));

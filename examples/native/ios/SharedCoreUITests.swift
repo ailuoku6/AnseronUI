@@ -2,6 +2,36 @@ import XCTest
 import UIKit
 
 final class SharedCoreUITests: XCTestCase {
+    func testAppearanceSourceAndLayout() {
+        let app = XCUIApplication(); app.launchArguments += ["--page", "appearance"]; app.launch()
+        let mode = app.staticTexts["appearance-mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 20))
+        let source = app.staticTexts["appearance-image-source"]
+        let predicate = NSPredicate(format: "label == %@", mode.label.contains("dark") ? "asset://theme-dark.png" : "asset://theme-light.png")
+        expectation(for: predicate, evaluatedWith: source); waitForExpectations(timeout: 10)
+        let layout = app.staticTexts["appearance-image-layout"]
+        XCTAssertTrue(layout.label.contains("90×45"))
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "appearance-source-layout"; shot.lifetime = .keepAlways; add(shot)
+    }
+    func testSharedPrimitiveButtons() {
+        let app = XCUIApplication(); app.launchArguments += ["--page", "components"]; app.launch()
+        let toggle = app.buttons["animation-mode-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 20))
+        XCTAssertEqual(toggle.frame.width, 52, accuracy: 1)
+        XCTAssertEqual(toggle.frame.height, 44, accuracy: 1)
+        let scroll = app.scrollViews["component-scroll"]
+        let increment = app.buttons["component-increment"]
+        for _ in 0..<6 { if increment.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(increment.isHittable); increment.tap()
+        let count = app.staticTexts["component-count"]
+        expectation(for: NSPredicate(format: "label == %@", "点击: 1"), evaluatedWith: count); waitForExpectations(timeout: 10)
+        let disabled = app.buttons["component-disabled"]
+        XCTAssertTrue(disabled.exists); XCTAssertFalse(disabled.isEnabled)
+        disabled.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertEqual(count.label, "点击: 1")
+        XCTAssertFalse(app.staticTexts["事件: disabled ERROR"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "shared-primitive-buttons-ios"; shot.lifetime = .keepAlways; add(shot)
+    }
     func testEdgeSwipeBackCancelsAndRestoresRetainedPage() {
         let app = XCUIApplication(); app.launch()
         XCTAssertTrue(app.staticTexts["Count: 0"].waitForExistence(timeout: 15))

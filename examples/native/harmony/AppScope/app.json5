@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "org.anseronui.demo",
+    "vendor": "AnseronUI",
+    "versionCode": 1000000,
+    "versionName": "1.0.0",
+    "icon": "$media:app_icon_custom",
+    "label": "$string:app_name"
+  }
+}

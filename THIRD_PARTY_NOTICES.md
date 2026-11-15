@@ -27,3 +27,13 @@ The Android template includes the Gradle wrapper under Apache-2.0. A copy of the
 ## pngjs
 
 App icon tooling uses the installed npm dependency pngjs 7.0.0 under MIT, copyright (c) 2015 Luke Page & Original Contributors, derived work copyright (c) 2012 Kuba Niegowski. Its license is shipped in the dependency's `LICENSE` file; preserve it when redistributing the dependency. pngjs is used at build time and is not embedded in native application binaries.
+
+## kuikly-devtools panel
+
+The AnseronUI DevTools panel adapts the UI components and styles from
+[kuikly-devtools](https://github.com/ailuoku6/kuikly-devtools), version 1.0.7,
+by ailuoku6, distributed under the MIT license. The source is retained under
+packages/devtools/ui; the local adaptations are described in UPSTREAM.md.
+
+The bundled development panel also includes React and React DOM under MIT.
+Their full license texts are included in packages/devtools/src/panel/THIRD_PARTY_LICENSES.txt.

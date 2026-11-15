@@ -4,22 +4,26 @@ import { createHash } from 'node:crypto';
 
 // Explicit distribution boundary: never copy checkout history, dependencies or build outputs.
 const directories = [
-  ...['core', 'ui', 'layout', 'flexily', 'protocol', 'ui-compiler', 'render-web'].map(name => `packages/${name}/src`),
-  'packages/core/native', 'packages/render-ios/Sources', 'packages/render-macos/Sources',
+  ...['core', 'ui', 'layout', 'flexily', 'protocol', 'ui-compiler', 'render-web', 'devtools'].map(name => `packages/${name}/src`),
+  'packages/devtools/native', 'packages/devtools/instrumentation',
+  'packages/core/native', 'packages/render-harmony/src', 'packages/render-ios/Sources', 'packages/render-macos/Sources',
   'packages/render-android/src/main/java', 'packages/render-android/src/main/cpp',
   'scripts/templates/app',
 ];
 const files = [
-  'LICENSE', 'THIRD_PARTY_NOTICES.md', 'docs/app-icons.md', 'docs/styles.md',
+  'LICENSE', 'THIRD_PARTY_NOTICES.md', 'docs/app-icons.md', 'docs/styles.md', 'docs/devtools.md', 'docs/virtual-list.md', 'docs/page-lifecycle.md', 'docs/performance.md', 'docs/performance-baseline.md',
   'packages/render-macos/Package.swift', 'packages/flexily/LICENSE', 'packages/render-ios/Package.swift',
   'packages/render-android/src/main/AndroidManifest.xml',
-  'internal/toolchain/build-library.mjs', 'internal/toolchain/async-embedding.patch', 'internal/toolchain/scriptc.vendor.json',
+  'internal/toolchain/build-library.mjs', 'internal/toolchain/harmony-api21.patch', 'docs/harmonyos.md', 'internal/toolchain/async-embedding.patch', 'internal/toolchain/scriptc.vendor.json',
   ...['anseronui', 'standalone-app', 'native-plugins', 'sdk-files', 'prepare-compiler', 'prepare-tools',
-    'macos-app', 'app-icons', 'web-app', 'build-core', 'build-app', 'stage-core', 'core-inputs', 'lower-timers'].map(name => `scripts/${name}.mjs`),
+    'macos-app', 'harmony-app', 'harmony-library', 'app-icons', 'web-app', 'build-core', 'build-app', 'stage-core', 'core-inputs', 'lower-timers'].map(name => `scripts/${name}.mjs`),
 ];
 export const toolchainHost = `${process.platform}-${process.arch}${process.platform === 'linux' ? (process.report.getReport().header.glibcVersionRuntime ? '-gnu' : '-musl') : process.platform === 'win32' ? '-msvc' : ''}`;
 export const sdkAliases = Object.fromEntries([
-  ...['core', 'ui', 'layout', 'protocol', 'render-web'].map(name => [`@anseronui/${name}`, `packages/${name}/src/index.ts`]),
+  ...['core', 'ui', 'layout', 'protocol', 'render-web', 'devtools'].map(name => [`@anseronui/${name}`, `packages/${name}/src/index.ts`]),
+  ['@anseronui/devtools/client', 'packages/devtools/src/client.ts'],
+  ['@anseronui/devtools/server', 'packages/devtools/src/server.ts'],
+  ['@anseronui/devtools/vite', 'packages/devtools/src/vite.ts'],
   ['@anseronui/ui/jsx-runtime', 'packages/ui/src/jsx-runtime.ts'],
   ['@anseronui/ui/jsx-dev-runtime', 'packages/ui/src/jsx-runtime.ts'],
 ]);

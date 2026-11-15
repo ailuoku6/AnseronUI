@@ -33,9 +33,18 @@ final class AnseronUINodeAnimation: NSObject {
     var options: TSAnimationOptions?
     private var running: TSAnimationOptions?
     private var link: CADisplayLink?
+    private var active = true
+    private var pausedAt: Double = 0
     private var start: Double = 0
     private var completion: ((Bool) -> Void)?
     init(view: UIView) { self.view = view }
+    func setActive(_ value: Bool) {
+        guard active != value else { return }
+        if !value { pausedAt = CACurrentMediaTime() }
+        else { start += CACurrentMediaTime() - pausedAt }
+        active = value
+        link?.isPaused = !value
+    }
     func stage(_ values: [String: Double]) {
         for (key, value) in values where declared[key] != value { declared[key] = value; staged[key] = value }
     }
@@ -73,8 +82,9 @@ final class AnseronUINodeAnimation: NSObject {
     private func begin(_ next: [String: Double], _ options: TSAnimationOptions, _ complete: ((Bool) -> Void)? = nil) {
         cancel(); target = next; from = current; running = options; completion = complete
         start = CACurrentMediaTime() + options.delay / 1000
+        if !active { pausedAt = CACurrentMediaTime() }
         let timer = CADisplayLink(target:self, selector:#selector(tick(_:)))
-        link = timer; timer.add(to:.main, forMode:.common)
+        link = timer; timer.isPaused = !active; timer.add(to:.main, forMode:.common)
     }
     @objc private func tick(_ timer: CADisplayLink) {
         guard let options = running else { return }

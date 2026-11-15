@@ -39,3 +39,12 @@ xcuserdata/
 .DS_Store
 *.swp
 *.swo
+
+# HarmonyOS local caches and generated host sources
+**/.hvigor/
+**/oh_modules/
+**/.cxx/
+**/oh-package-lock.json5
+**/entry/src/main/cpp/anseronui.cmake
+/examples/native/harmony/entry/src/main/ets/anseronui/
+/examples/native/harmony/AppScope/resources/base/media/app_icon_custom.png

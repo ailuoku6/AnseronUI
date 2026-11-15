@@ -47,6 +47,7 @@ import AVKit
     }
     static func run() throws {
         try darkStyles()
+        try themeImagesAndLineHeight()
         try text()
         try images()
         try input()
@@ -56,6 +57,28 @@ import AVKit
         try animation()
         try media()
         print("PASS: renderer regressions (text layout/hits, image scaling, IME, input, mouse cancellation, animations, video lifecycle)")
+    }
+    static func themeImagesAndLineHeight() throws {
+        let f = Fixture(); defer { f.close() }
+        let assets = URL(fileURLWithPath:FileManager.default.currentDirectoryPath).appendingPathComponent("examples/components/assets")
+        let light = assets.appendingPathComponent("theme-light.png").absoluteString
+        let dark = assets.appendingPathComponent("theme-dark.png").absoluteString
+        f.root.appearance = NSAppearance(named:.aqua)
+        try f.create(1,"Image",["testID":"theme-image","src":light,"dmSrc":dark],NSRect(x:0,y:0,width:120,height:60))
+        try f.bind(1,["loadSuccess"])
+        let image = f.widget("theme-image") as! NSImageView
+        Integration.wait("light image loaded") { image.image != nil }
+        f.root.appearance = NSAppearance(named:.darkAqua); f.renderer.appearanceChanged()
+        Integration.wait("dark source loaded after theme change") { f.events.contains { $0.event == "loadSuccess" && $0.source == dark } }
+        f.events.removeAll()
+        f.root.appearance = NSAppearance(named:.aqua); f.renderer.appearanceChanged()
+        Integration.wait("light source restored") { f.events.contains { $0.event == "loadSuccess" && $0.source == light } }
+        let measured = try f.renderer.measure(kind:"Text",text:"first\nsecond",fontSize:16,maxWidth:200,props:props(["lineHeight":30]))
+        Integration.check(abs(measured.height - 60) <= 1,"lineHeight affects AppKit measurement: \(measured.height)")
+        try f.create(2,"Text",["testID":"lineheight","text":"first\nsecond","lineHeight":30],NSRect(x:0,y:80,width:200,height:60))
+        let label = f.widget("lineheight") as! NSTextField
+        let style = label.attributedStringValue.attribute(.paragraphStyle,at:0,effectiveRange:nil) as! NSParagraphStyle
+        Integration.check(style.minimumLineHeight == 30 && style.maximumLineHeight == 30,"lineHeight affects AppKit rendering")
     }
     static func darkStyles() throws {
         let f = Fixture(); defer { f.close() }
@@ -201,13 +224,13 @@ import AVKit
     }
     static func retainedViews() throws {
         let f = Fixture(); defer { f.close() }
-        try f.create(1,"Button",["testID":"pause","title":"暂停"],NSRect(x:0,y:0,width:100,height:40))
+        try f.create(1,"View",["testID":"pause","accessibilityRole":"button","accessibilityLabel":"暂停"],NSRect(x:0,y:0,width:100,height:40))
         try f.create(2,"View",[:],NSRect(x:0,y:50,width:100,height:40))
         f.root.removals = 0
         try f.apply([["type":"MoveChild","nodeId":2,"parentId":0,"index":0],["type":"MoveChild","nodeId":1,"parentId":0,"index":1]])
-        Integration.check(f.root.removals == 0,"unchanged MoveChild must preserve native button tracking during video commits")
+        Integration.check(f.root.removals == 0,"unchanged MoveChild must preserve composed control tracking during video commits")
         try f.apply([["type":"MoveChild","nodeId":1,"parentId":0,"index":0]])
-        Integration.check(f.root.removals == 1 && f.root.subviews.first!.subviews.first === f.widget("pause"),"real reordering still moves retained views")
+        Integration.check(f.root.removals == 1 && f.root.subviews.first === f.widget("pause"),"real reordering still moves retained views")
     }
     static func scroll() throws {
         let f = Fixture(); defer { f.close() }

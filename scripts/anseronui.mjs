@@ -71,6 +71,8 @@ function checkApp() {
   if (!existsSync(configPath)) throw new Error(`Config not found: ${configPath}`);
   const config = json(configPath);
   validateIconConfig(dirname(configPath), config);
+  const harmonyPermissions = config.harmony?.permissions ?? [];
+  if (!Array.isArray(harmonyPermissions) || harmonyPermissions.some(permission => typeof permission !== 'string' || !/^ohos\.permission\.[A-Z_]+$/.test(permission))) throw new Error('harmony.permissions must contain valid ohos.permission names');
   if (!/^[a-z][a-z0-9_-]*$/.test(config.buildId ?? "")) throw new Error("buildId must start with a lowercase letter");
   if (!Array.isArray(config.pages) || config.pages.length === 0) throw new Error("pages must contain at least one page");
   const names = new Set();
@@ -91,12 +93,12 @@ function checkApp() {
 
 function buildApp() {
   const target = parsed.positionals[0];
-  if (!target || !["ios", "ios-device", "android", "web", "macos"].includes(target)) throw new Error("Usage: anseronui build <ios|ios-device|android|web|macos> --config path");
+  if (!target || !["ios", "ios-device", "android", "web", "macos", "harmony"].includes(target)) throw new Error("Usage: anseronui build <ios|ios-device|android|web|macos|harmony> --config path");
   const config = resolve(process.cwd(), valueAfter("--config", "anseronui.config.json"));
   if (!existsSync(config)) throw new Error(`Config not found: ${config}`);
   const release = parsed.values.release ?? false;
   const signed = parsed.values.signed ?? false;
-  if (json(config).app) buildStandalone(config, target, { release: release || signed, signed });
+  if (json(config).app?.applicationId) buildStandalone(config, target, { release: release || signed, signed });
   else run(process.execPath, ["scripts/build-app.mjs", target], { ...process.env, ANSERONUI_CONFIG: config, ANSERONUI_RELEASE_BUILD: release || signed ? '1' : '', ANSERONUI_SIGNED_BUILD: signed ? '1' : '' });
 }
 
@@ -121,9 +123,10 @@ try {
 
   create <directory> [--name AppName] [--application-id com.example.app] [--package specifier] [--local-framework] [--force]
   setup | check | typecheck [--config path]
-  build <ios|ios-device|android|web|macos> [--release|--signed] [--config path]
+  build <ios|ios-device|android|web|macos|harmony> [--release|--signed] [--config path]
   run ios [--device UUID-or-name] [--no-build] [--dry-run] [--config path]
   run android [--device serial | --avd name] [--no-build] [--dry-run] [--config path]
+  run harmony [--device hdc-target] [--no-build] [--dry-run] [--config path]
   run macos [--no-build] [--dry-run] [--config path]
   dev web [--config path]
   integrate <existing-project> [--name app-name] [--force]

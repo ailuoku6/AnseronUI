@@ -18,7 +18,7 @@ function sameFrame(a: Frame, b: Frame): boolean {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 function measureKey(nodeId: number, kind: NodeKind, text: string, fontSize: number, maxWidth: number, props: RenderProps): string {
-  return JSON.stringify([nodeId, kind, text, fontSize, maxWidth, props.fontWeight, props.fontStyle, props.numberOfLines, props.ellipsizeMode, props.spans]);
+  return JSON.stringify([nodeId, kind, text, fontSize, maxWidth, props.fontWeight, props.fontStyle, props.lineHeight, props.numberOfLines, props.ellipsizeMode, props.spans]);
 }
 function finiteDimension(value: number): boolean { return Number.isFinite(value) && value >= 0; }
 
@@ -46,6 +46,7 @@ class SurfaceLayout {
   }
 
   render(request: RenderRequest): RenderResult {
+    const started = request.profile ? Date.now() : 0;
     this.cache = new Map(request.measureCache.map(item => [item.key, item]));
     this.queries.clear();
     this.nextRequestId = request.nextRequestId;
@@ -120,16 +121,25 @@ class SurfaceLayout {
       this.engine.releaseSubtree(record.node);
     }
     try {
+      const layoutStarted = request.profile ? Date.now() : 0;
       this.engine.calculateLayout(this.root, request.width, request.height);
       const frames = hosts.map(host => {
         const node = this.nodes.get(host.id)!.node;
         host.frame = { x: node.getComputedLeft(), y: node.getComputedTop(), width: node.getComputedWidth(), height: node.getComputedHeight() };
-        if (!Number.isFinite(host.frame.x) || !Number.isFinite(host.frame.y) || !finiteDimension(host.frame.width) || !finiteDimension(host.frame.height)) throw new Error("INVALID_LAYOUT_FRAME");
+        if (!Number.isFinite(host.frame.x) || !Number.isFinite(host.frame.y) || !finiteDimension(host.frame.width) || !finiteDimension(host.frame.height)) {
+          if (this.queries.size === 0) throw new Error("INVALID_LAYOUT_FRAME:" + host.id + ":" + JSON.stringify(host.frame));
+          // Intrinsic containers can have unresolved alignment while text is
+          // awaiting native measurement. These provisional frames never commit.
+          host.frame = { x: 0, y: 0, width: 0, height: 0 };
+        }
         return { nodeId: host.id, frame: host.frame };
       });
+      const diffStarted = request.profile ? Date.now() : 0;
+      const commands = this.queries.size === 0 ? diff(request.previous, request.tree) : [];
+      const timings = request.profile ? { syncMs: layoutStarted - started, layoutMs: diffStarted - layoutStarted, diffMs: Date.now() - diffStarted } : undefined;
       return { type: "RenderResult", abi: CORE_ABI_VERSION, surfaceId: request.surfaceId, generation: request.generation,
         revision: request.revision, round: request.round, frames, measures: [...this.queries.values()], nextRequestId: this.nextRequestId,
-        commands: this.queries.size === 0 ? diff(request.previous, request.tree) : [] };
+        commands, timings };
     } finally {
       // Measure callbacks read current-round data only; don't retain message caches.
       this.cache.clear();
@@ -161,12 +171,12 @@ class SurfaceLayout {
 }
 
 function isMeasured(kind: NodeKind): boolean {
-  return kind === "Text" || kind === "RichText" || kind === "Button" || kind === "TextInput";
+  return kind === "Text" || kind === "RichText" || kind === "TextInput";
 }
 function textContent(host: RenderNode): string {
   return host.kind === "TextInput" ? String(host.props.value || host.props.placeholder || "")
     : host.kind === "RichText" ? (JSON.parse(String(host.props.spans ?? "[]")) as { text?: string }[]).map(span => span.text ?? "").join("")
-    : String(host.props.text ?? host.props.title ?? "");
+    : String(host.props.text ?? "");
 }
 function measurementValue(value: MeasureValue | undefined): string {
   return value ? JSON.stringify([value.width, value.height, value.baseline]) : "missing";
@@ -282,7 +292,9 @@ function diff(oldTree: RenderNode[], nextTree: RenderNode[]): RenderCommand[] {
         if (!previous || !sameFrame(previous.frame, node.frame)) commands.push({ type: "SetFrame", nodeId: node.id, frame: node.frame });
         for (const event of EVENT_NAMES) {
           const enabled = node.events.includes(event);
-          if (!previous || previous.events.includes(event) !== enabled) commands.push({ type: "BindEvent", nodeId: node.id, event, enabled });
+          // New nodes start with no bindings. Avoid emitting twenty disabled
+          // bindings per primitive, especially for composed controls in lists.
+          if ((previous?.events.includes(event) ?? false) !== enabled) commands.push({ type: "BindEvent", nodeId: node.id, event, enabled });
         }
         append(node.children, node.id);
       });

@@ -1,0 +1,16 @@
+{
+  "name": "@anseronui/devtools",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./server": "./src/server.ts",
+    "./vite": "./src/vite.ts"
+  },
+  "dependencies": {
+    "@anseronui/render-web": "0.1.0"
+  }
+}

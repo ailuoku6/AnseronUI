@@ -9,14 +9,12 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
-import android.content.res.ColorStateList
 import android.util.TypedValue
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.view.MotionEvent
 import android.view.ViewConfiguration
-import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ScrollView
@@ -49,7 +47,7 @@ data class RendererEvent(
     val type: String, val nodeId: Long, val revision: Long,
     val value: String? = null, val inputRevision: Long? = null, val event: String? = null,
     val x: Double? = null, val y: Double? = null, val contentWidth: Double? = null, val contentHeight: Double? = null,
-    val source: String? = null, val state: String? = null, val duration: Double? = null, val errorCode: Double? = null,
+    val scrollAdjustment: Double? = null, val source: String? = null, val state: String? = null, val duration: Double? = null, val errorCode: Double? = null,
     val pageX: Double? = null, val pageY: Double? = null, val pointerId: Long? = null, val touches: List<TouchPoint>? = null,
     val targetId: Long? = null
 )
@@ -58,6 +56,7 @@ data class TextSize(val width: Float, val height: Float, val baseline: Float)
 data class TouchPoint(val x: Double, val y: Double, val pageX: Double, val pageY: Double, val pointerId: Long)
 
 private class NodeRecord(val view: View, val content: ViewGroup?, val kind: String) {
+    val defaultTypeface = (view as? TextView)?.typeface
     var declaredProps: JSONObject? = null
     var resolvedProps: JSONObject? = null
     var shadowKey = ""
@@ -80,6 +79,11 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     /** The first surface child's target background, after a successful commit. */
     var onPageBackgroundColor: ((Int) -> Unit)? = null
     private val nodes = mutableMapOf<Long, NodeRecord>()
+    private val recordsByView = java.util.IdentityHashMap<View, NodeRecord>()
+    private val textPool = java.util.ArrayDeque<TextView>()
+    private val textMeasurements = object : android.util.LruCache<String, TextSize>(128 * 1024) {
+        override fun sizeOf(key: String, value: TextSize) = key.length * 2 + 24
+    }
     private var revision = 0L
     private val density get() = root.resources.displayMetrics.density
     private data class TouchSession(val target: Long, val owner: Long?, val startX: Float, val startY: Float,
@@ -88,7 +92,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     private inner open class ShadowLayout : FrameLayout(root.context) {
         init { clipChildren = false; clipToPadding = false }
         override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
-            nodes.values.firstOrNull { it.view === child }?.let { drawShadow(canvas, it) }
+            recordsByView[child]?.let { drawShadow(canvas, it) }
             return super.drawChild(canvas, child, drawingTime)
         }
     }
@@ -104,9 +108,10 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
 
     private fun isDark() = root.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
     private fun themed(raw: JSONObject): JSONObject {
-        val props = JSONObject(raw.toString())
-        if (!isDark()) return props
-        for (key in listOf("backgroundColor", "color", "borderColor", "shadowColor", "placeholderTextColor")) {
+        if (!isDark()) return raw
+        val props = JSONObject()
+        raw.keys().forEach { key -> props.put(key, raw.get(key)) }
+        for (key in listOf("backgroundColor", "color", "borderColor", "shadowColor", "placeholderTextColor", "src")) {
             val dm = "dm" + key.replaceFirstChar { it.uppercaseChar() }
             if (raw.has(dm)) props.put(key, raw.get(dm))
         }
@@ -120,7 +125,8 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
 
     /** Reapply only visual declarations: never replay media/native commands or controlled input. */
     fun appearanceChanged() {
-        nodes.values.forEach { record -> record.declaredProps?.let { setProps(record, it, true); record.animation.commit() } }
+        textMeasurements.evictAll()
+        nodes.values.forEach { record -> record.declaredProps?.let { setProps(record, it, true); record.animation.setActive(pageActive); record.animation.commit() } }
         val page = surface.getChildAt(0)
         onPageBackgroundColor?.invoke(nodes.values.firstOrNull { it.view === page }?.pageBackgroundColor ?: Color.TRANSPARENT)
         surface.invalidate()
@@ -162,7 +168,105 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     }
 
     private inner class TouchScrollView : ScrollView(root.context) {
+        private val flingScroller = android.widget.OverScroller(context)
+        private var flingAdjustment = 0
+        private var anchorValue = 0
+        private var anchorPixels = 0
+        var appliedAnchorPixels = 0
+            private set
+        private var anchors = emptyList<Pair<View, Double>>()
+        var anchorsEnabled = false
+        fun captureAnchor() {
+            if (!anchorsEnabled) return
+            val document = (getChildAt(0) as? ViewGroup)?.getChildAt(0) as? ViewGroup ?: return
+            anchors = (0 until document.childCount).map { document.getChildAt(it) }
+                .filter { it.bottom > scrollY && it.top < scrollY + height }
+                .sortedBy { it.top }.map { child -> child to (recordsByView[child]?.animation?.declared?.get("y") ?: child.top / density.toDouble()) }
+        }
+        fun reconcileAnchor(proposedPixels: Int) {
+            // Core may be a few frames behind the native fling. Anchor the row
+            // actually visible now, rather than its last reported viewport.
+            val retained = anchors.firstOrNull { (child, _) -> recordsByView.containsKey(child) }
+            if (retained != null) {
+                val top = recordsByView.getValue(retained.first).animation.declared["y"] ?: retained.second
+                anchorPixels += ((top - retained.second) * density).roundToInt() - proposedPixels
+            }
+            anchors = emptyList()
+        }
+        fun pendingAnchor(): Int = anchorPixels
+        fun stageAnchor(value: Double) {
+            val pixels = (value * density).roundToInt()
+            anchorPixels += pixels - anchorValue
+            anchorValue = pixels
+            if (anchorPixels != 0) requestLayout()
+        }
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            val previous = scrollY
+            super.onLayout(changed, l, t, r, b)
+            if (anchorPixels != 0) {
+                val delta = anchorPixels; anchorPixels = 0
+                // Change the viewport and row frames in the same layout pass.
+                // Shift the fling's coordinate origin, preserving its velocity.
+                flingAdjustment += delta
+                appliedAnchorPixels += delta
+                super.scrollTo(scrollX, previous + delta)
+            }
+        }
+        override fun fling(velocityY: Int) {
+            flingAdjustment = 0
+            flingScroller.fling(scrollX, scrollY, 0, velocityY, 0, 0, 0,
+                max(0, (getChildAt(0)?.height ?: 0) - height), 0, 0)
+            postInvalidateOnAnimation()
+        }
+        override fun computeScroll() {
+            if (flingScroller.computeScrollOffset()) {
+                val desired = flingScroller.currY + flingAdjustment
+                var next = desired
+                if (anchorsEnabled) {
+                    val document = (getChildAt(0) as? ViewGroup)?.getChildAt(0) as? ViewGroup
+                    if (document != null && document.childCount > 0) {
+                        var first = Int.MAX_VALUE; var last = 0
+                        for (index in 0 until document.childCount) {
+                            val row = document.getChildAt(index)
+                            first = min(first, row.top); last = max(last, row.bottom)
+                        }
+                        val delta = desired - scrollY
+                        val room = if (delta > 0) last - height - scrollY else scrollY - first
+                        // Consume less momentum as an asynchronous window's
+                        // runway runs out. Never accumulate a delayed jump:
+                        // shift the scroller origin by the unconsumed distance.
+                        if (room >= 0 && delta != 0) {
+                            val scale = (room.toDouble() / max(1, height * 2)).coerceIn(0.0, 1.0)
+                            val travel = (delta * scale).toInt().coerceIn(-room, room)
+                            next = scrollY + travel
+                            flingAdjustment += next - desired
+                        }
+                    }
+                }
+                super.scrollTo(flingScroller.currX, next)
+                postInvalidateOnAnimation()
+            } else super.computeScroll()
+        }
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) flingScroller.abortAnimation()
+            return super.onTouchEvent(event)
+        }
+        fun stopFling() { flingScroller.abortAnimation() }
+        override fun dispatchDraw(canvas: Canvas) {
+            // Shared View parents permit overflow for shadows. ScrollView's
+            // child is the full document, so clipChildren alone does not bound
+            // it to this viewport when the parent does not clip this view.
+            val saved = canvas.save()
+            canvas.clipRect(scrollX, scrollY, scrollX + width, scrollY + height)
+            super.dispatchDraw(canvas)
+            canvas.restoreToCount(saved)
+        }
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN && !flingScroller.isFinished) {
+                flingScroller.abortAnimation()
+                super.onInterceptTouchEvent(event)
+                return true
+            }
             val relevant = sessions.values.filter { nodes[it.target]?.view?.let { view -> isDescendant(view, this) } == true }
             if (relevant.any { if (it.axis == "x") !it.allowX else if (it.axis == "y") !it.allowY else !it.allowX && !it.allowY }) return false
             val intercept = super.onInterceptTouchEvent(event)
@@ -244,9 +348,10 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             touches = sessions.filterValues { !it.cancelled }.map { point(it.key, it.value) }, targetId = session.target))
     }
 
-    fun applyJson(payload: String) {
+    fun applyJson(payload: String) = applyCommit(JSONObject(payload))
+
+    internal fun applyCommit(commit: JSONObject) {
         require(Looper.myLooper() == Looper.getMainLooper()) { "Renderer must run on the UI thread" }
-        val commit = JSONObject(payload)
         require(commit.getString("type") == "Commit") { "Invalid commit" }
         val next = commit.getLong("revision")
         require(next > revision && next <= 0xffffffffL) { "Invalid revision" }
@@ -254,9 +359,17 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         require(commands.length() <= 4096) { "Too many commands" }
         validate(commands)
         try {
+            val scrollAnchors = nodes.values.mapNotNull { it.view as? TouchScrollView }
+            val pendingAnchors = scrollAnchors.associateWith { it.pendingAnchor() }
+            scrollAnchors.forEach { it.captureAnchor() }
             for (i in 0 until commands.length()) applyOne(commands.getJSONObject(i))
-            nodes.values.forEach { it.animation.commit() }
+            scrollAnchors.forEach { it.reconcileAnchor(it.pendingAnchor() - pendingAnchors.getValue(it)) }
+            nodes.values.forEach { it.animation.setActive(pageActive); it.animation.commit() }
             revision = next
+            if (!pageActive) for (record in nodes.values) {
+                val video = record.view as? AndroidVideoView ?: continue
+                if (video.player.isPlaying) { resumeVideos.add(video); video.player.pause() }
+            }
             updateScrollExtents()
             val page = surface.getChildAt(0)
             onPageBackgroundColor?.invoke(nodes.values.firstOrNull { it.view === page }?.pageBackgroundColor ?: Color.TRANSPARENT)
@@ -266,7 +379,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         }
     }
 
-    fun clear() { sessions.clear(); nodes.values.forEach { releaseNode(it) }; surface.removeAllViews(); nodes.clear(); revision = 0L }
+    fun clear() { sessions.clear(); textMeasurements.evictAll(); nodes.values.forEach { releaseNode(it) }; surface.removeAllViews(); nodes.clear(); recordsByView.clear(); textPool.clear(); revision = 0L }
     fun invoke(nodeId: Long, method: String, args: Any?, complete: NativeCompletion): (() -> Unit)? {
         val record = nodes[nodeId] ?: error("NODE_UNMOUNTED")
         if (method == "measure") {
@@ -292,6 +405,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         } else if (method == "scrollTo" && view is ScrollView && args is JSONObject) {
             val x = args.getDouble("x"); val y = args.getDouble("y")
             require(x.isFinite() && y.isFinite())
+            (view as? TouchScrollView)?.stopFling()
             if (args.optBoolean("animated")) view.smoothScrollTo((x*density).roundToInt(), (y*density).roundToInt())
             else view.scrollTo((x*density).roundToInt(), (y*density).roundToInt())
         } else error("UNSUPPORTED_VIEW_METHOD: $method")
@@ -299,13 +413,6 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     }
 
     fun viewFor(nodeId: Long): View? = nodes[nodeId]?.view
-
-    private fun systemButton() = Button(root.context).apply {
-        setAllCaps(false)
-        minWidth = 0
-        minHeight = 0
-        setPadding((12 * density).roundToInt(), (6 * density).roundToInt(), (12 * density).roundToInt(), (6 * density).roundToInt())
-    }
 
     private fun themeColor(attribute: Int, fallback: Int): Int {
         val value = TypedValue()
@@ -319,9 +426,11 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     fun measure(kind: String, text: String, fontSize: Float, maxWidth: Float, props: JSONObject? = null): TextSize {
         require(Looper.myLooper() == Looper.getMainLooper()) { "Measurement must run on the UI thread" }
         require(fontSize.isFinite() && fontSize >= 0 && maxWidth.isFinite() && maxWidth >= 0)
+        val cacheKey = JSONArray().put(kind).put(text).put(fontSize.toDouble()).put(maxWidth.toDouble())
+            .put(density.toDouble()).put(root.resources.configuration.fontScale.toDouble()).put(props?.toString()).toString()
+        textMeasurements.get(cacheKey)?.let { return it }
         val view: TextView = when (kind) {
             "Text", "RichText" -> TextView(root.context)
-            "Button" -> systemButton()
             "TextInput" -> EditText(root.context)
             else -> error("Unknown text kind")
         }
@@ -333,7 +442,9 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             View.MeasureSpec.makeMeasureSpec(bound, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
-        return TextSize(min(maxWidth, kotlin.math.ceil(view.measuredWidth / density)), kotlin.math.ceil(view.measuredHeight / density), view.baseline / density)
+        val result = TextSize(min(maxWidth, kotlin.math.ceil(view.measuredWidth / density)), kotlin.math.ceil(view.measuredHeight / density), view.baseline / density)
+        if (cacheKey.length <= 4096) textMeasurements.put(cacheKey, result)
+        return result
     }
 
     private fun validate(commands: JSONArray) {
@@ -344,7 +455,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             require(id in 1..0xffffffffL) { "Invalid node ID" }
             when (command.getString("type")) {
                 "CreateNode" -> {
-                    require(id !in known && command.getString("kind") in setOf("View", "Text", "RichText", "Button", "TextInput", "ScrollView", "Image", "Video", "Native"))
+                    require(id !in known && command.getString("kind") in setOf("View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video", "Native"))
                     known.add(id)
                 }
                 "InsertChild", "MoveChild" -> {
@@ -374,9 +485,8 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             var native: AndroidNativeComponent? = null
             when (kind) {
                 "View" -> { view = ShadowLayout(); content = view }
-                "Text" -> { view = TextView(root.context); content = null }
+                "Text" -> { view = textPool.pollFirst() ?: TextView(root.context); content = null }
                 "RichText" -> { view = TextView(root.context); content = null }
-                "Button" -> { view = systemButton(); content = null }
                 "TextInput" -> { view = EditText(root.context); content = null }
                 "ScrollView" -> {
                     val scroll = TouchScrollView().apply { isFillViewport = true }
@@ -403,8 +513,14 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             val record = NodeRecord(view, content, kind)
             record.native = native
             nodes[id] = record
-            if (view is Button) view.setOnClickListener {
-                if ("tap" in record.events) onEvent?.invoke(RendererEvent("Tap", id, revision))
+            recordsByView[view] = record
+            val sharedInteraction = kind in setOf("View", "Text", "RichText", "ScrollView", "Image")
+            if (sharedInteraction) {
+                view.setOnClickListener {
+                    if (view.isEnabled && "tap" in record.events) onEvent?.invoke(RendererEvent("Tap", id, revision))
+                }
+                // A label without a tap handler must let its parent receive the click.
+                view.isClickable = false
             }
             if (view is EditText) view.addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -416,9 +532,13 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 }
                 override fun afterTextChanged(s: Editable?) {}
             })
-            view.setOnLongClickListener {
-                if ("longPress" in record.events) onEvent?.invoke(RendererEvent("NativeEvent", id, revision, event = "longPress"))
-                "longPress" in record.events
+            if (sharedInteraction) {
+                view.setOnLongClickListener {
+                    val enabled = view.isEnabled && "longPress" in record.events
+                    if (enabled) onEvent?.invoke(RendererEvent("NativeEvent", id, revision, event = "longPress"))
+                    enabled
+                }
+                view.isLongClickable = false
             }
             if (view is EditText) {
                 view.setOnFocusChangeListener { _, focused ->
@@ -432,7 +552,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             }
             if (view is ScrollView) view.setOnScrollChangeListener { scroll, x, y, _, _ ->
                 val sendScroll = { event: String ->
-                    if (event in record.events) onEvent?.invoke(RendererEvent("NativeEvent", id, revision, event = event, x = x.toDouble(), y = y.toDouble(), contentWidth = scroll.width.toDouble(), contentHeight = scroll.height.toDouble()))
+                    if (event in record.events) onEvent?.invoke(RendererEvent("NativeEvent", id, revision, event = event, x = x.toDouble() / density, y = y.toDouble() / density, scrollAdjustment = (scroll as? TouchScrollView)?.appliedAnchorPixels?.div(density.toDouble()), contentWidth = (record.content?.width ?: scroll.width).toDouble() / density, contentHeight = (record.content?.height ?: scroll.height).toDouble() / density))
                 }
                 sendScroll("scroll")
                 scroll.removeCallbacks(scroll.tag as? Runnable ?: Runnable {})
@@ -454,7 +574,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                     record.timePoll?.let { root.removeCallbacks(it) }
                     val poll = object : Runnable {
                         override fun run() {
-                            if (nodes[id] !== record || !view.prepared) return
+                            if (nodes[id] !== record || !view.prepared || !pageActive) return
                             emitMedia(record, "playTimeDidChanged", time = video.currentPosition.toDouble(), duration = video.duration.coerceAtLeast(0).toDouble())
                             root.postDelayed(this, 500)
                         }
@@ -492,9 +612,12 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                     if (view is ViewGroup) for (index in 0 until view.childCount) collect(view.getChildAt(index))
                 }
                 collect(record.view)
-                nodes.values.filter { it.view in subtree }.forEach { releaseNode(it) }
+                val retired = nodes.values.filter { it.view in subtree }
+                retired.forEach { releaseNode(it) }
                 nodes.entries.removeAll { it.value.view in subtree }
+                subtree.forEach { recordsByView.remove(it) }
                 (record.view.parent as? ViewGroup)?.removeView(record.view)
+                retired.forEach { recycleLeaf(it) }
             }
             "InsertChild", "MoveChild" -> {
                 val parentId = command.getLong("parentId")
@@ -510,17 +633,23 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             "SetFrame" -> {
                 val frame = command.getJSONObject("frame")
                 record.animation.stage(listOf("x","y","width","height").associateWith { frame.getDouble(it) })
-                if ("layout" in record.events) record.view.post {
-                    onEvent?.invoke(RendererEvent("NativeEvent", id, revision, event = "layout", x = frame.getDouble("x"), y = frame.getDouble("y"), contentWidth = frame.getDouble("width"), contentHeight = frame.getDouble("height")))
+                // Core dispatches the committed layout after CommitAck.
+            }
+            "BindEvent" -> {
+                val event = command.getString("event")
+                val enabled = command.getBoolean("enabled")
+                if (enabled) record.events.add(event) else record.events.remove(event)
+                if (record.kind in setOf("View", "Text", "RichText", "ScrollView", "Image")) {
+                    if (event == "tap") record.view.isClickable = enabled
+                    if (event == "longPress") record.view.isLongClickable = enabled
                 }
             }
-            "BindEvent" -> if (command.getBoolean("enabled")) record.events.add(command.getString("event")) else record.events.remove(command.getString("event"))
             else -> error("Unknown command")
         }
     }
 
     private fun setProps(record: NodeRecord, raw: JSONObject, appearanceOnly: Boolean = false) {
-        record.declaredProps = JSONObject(raw.toString())
+        record.declaredProps = raw // Commit payloads are immutable after handoff to the UI thread.
         val props = themed(raw)
         record.resolvedProps = props
         if (!appearanceOnly) record.native?.setProps(JSONObject(props.optString("nativeProps", "{}")))
@@ -535,7 +664,16 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         record.animation.stage(visual)
         view.contentDescription = props.optString("accessibilityLabel").takeIf { it.isNotEmpty() }
         view.transitionName = props.optString("testID").takeIf { it.isNotEmpty() }
-        view.isEnabled = props.optBoolean("editable", true)
+        view.isEnabled = props.optBoolean("editable", true) && !props.optBoolean("disabled", false)
+        if (record.kind == "View") {
+            view.isFocusable = props.optString("accessibilityRole") == "button"
+            view.accessibilityDelegate = if (view.isFocusable) object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = "android.widget.Button"
+                }
+            } else null
+        }
         view.visibility = if (props.optString("visibility") == "hidden") View.INVISIBLE else View.VISIBLE
         val background = view.background as? GradientDrawable ?: GradientDrawable().also { view.background = it }
         background.setStroke((props.optDouble("borderWidth", 0.0) * density).roundToInt(), parseColor(props.optString("borderColor", ""), Color.TRANSPARENT))
@@ -544,7 +682,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         (view.parent as? View)?.invalidate()
         if (view is TextView) {
             view.textSize = props.optDouble("fontSize", 16.0).toFloat()
-            view.setTextColor(parseColor(props.optString("color", ""), if (record.kind == "Button") Color.rgb(0, 122, 255) else themeColor(android.R.attr.textColorPrimary, Color.BLACK)))
+            view.setTextColor(parseColor(props.optString("color", ""), themeColor(android.R.attr.textColorPrimary, Color.BLACK)))
             view.typeface = android.graphics.Typeface.create(view.typeface, if (props.optString("fontWeight") == "bold") android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
             if (props.optString("fontStyle") == "italic") view.setTypeface(view.typeface, android.graphics.Typeface.ITALIC)
             view.gravity = when (props.optString("textAlign")) { "center" -> android.view.Gravity.CENTER_HORIZONTAL; "right" -> android.view.Gravity.RIGHT; else -> android.view.Gravity.LEFT }
@@ -589,19 +727,6 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                     view.text = rich
                     view.movementMethod = LinkMovementMethod.getInstance()
                 }
-                "Button" -> {
-                    view.setAllCaps(false)
-                    view.text = props.optString("title", "")
-                    val normal = parseColor(props.optString("color", ""), Color.rgb(0, 122, 255))
-                    val disabled = if (props.has("color")) {
-                        Color.argb((Color.alpha(normal) * 0.4f).roundToInt(), Color.red(normal), Color.green(normal), Color.blue(normal))
-                    } else Color.rgb(142, 142, 147)
-                    view.setTextColor(ColorStateList(
-                        arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-                        intArrayOf(disabled, normal)
-                    ))
-                    view.isEnabled = !props.optBoolean("disabled", false)
-                }
                 "TextInput" -> {
                     val input = view as EditText
                     input.setPadding(0, 0, 0, 0)
@@ -629,11 +754,30 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 }
             }
         }
+        if (view is TextView && record.kind in setOf("Text", "RichText")) {
+            view.includeFontPadding = !props.has("lineHeight")
+            if (props.has("lineHeight")) {
+                val text = android.text.SpannableString(view.text)
+                val height = (props.getDouble("lineHeight") * density).roundToInt().coerceAtLeast(0)
+                text.setSpan(object : android.text.style.LineHeightSpan {
+                    override fun chooseHeight(text: CharSequence, start: Int, end: Int, spanstartv: Int, v: Int, fm: android.graphics.Paint.FontMetricsInt) {
+                        val extra = height - (fm.descent - fm.ascent)
+                        fm.ascent -= extra / 2; fm.descent = fm.ascent + height
+                        fm.top = fm.ascent; fm.bottom = fm.descent
+                    }
+                }, 0, text.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+                view.text = text
+            }
+        }
         if (view is ScrollView) {
+            if (!appearanceOnly && view is TouchScrollView) {
+                view.anchorsEnabled = props.has("scrollAnchorOffset")
+                view.stageAnchor(props.optDouble("scrollAnchorOffset", 0.0))
+            }
             view.isEnabled = props.optBoolean("scrollEnabled", true)
             view.isVerticalScrollBarEnabled = props.optBoolean("showsVerticalScrollIndicator", true)
         }
-        if (view is ImageView && !appearanceOnly) {
+        if (view is ImageView) {
             view.contentDescription = props.optString("accessibilityLabel").takeIf { it.isNotEmpty() }
             view.scaleType = when (props.optString("resizeMode")) {
                 "contain" -> ImageView.ScaleType.FIT_CENTER
@@ -646,7 +790,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 val generation = record.mediaGeneration.incrementAndGet()
                 view.setImageDrawable(null)
                 val placeholder = props.optString("placeholderSrc", "")
-                if (placeholder.isNotEmpty()) loadBitmap(placeholder) { bitmap, _ -> if (bitmap != null && generation == record.mediaGeneration.get()) view.setImageBitmap(bitmap) }
+                if (placeholder.isNotEmpty()) loadBitmap(placeholder) { bitmap, _ -> if (bitmap != null && view.drawable == null && generation == record.mediaGeneration.get()) view.setImageBitmap(bitmap) }
                 loadBitmap(source) { bitmap, error ->
                     if (generation != record.mediaGeneration.get()) return@loadBitmap
                     if (bitmap != null) {
@@ -671,6 +815,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             }
             val source = props.optString("src", "")
             if (source != record.mediaSource) {
+                resumeVideos.remove(view)
                 record.timePoll?.let { root.removeCallbacks(it) }; record.timePoll = null
                 video.stopPlayback()
                 view.prepared = false; view.mediaPlayer = null; view.firstFrame = false; view.appliedControl = null
@@ -721,8 +866,9 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         if (!force && control == view.appliedControl) return
         val video = view.player
         when (control) {
-            "play" -> { video.start(); emitMedia(record, "playStateDidChanged", state = "playing") }
+            "play" -> { if (pageActive) video.start() else resumeVideos.add(view); emitMedia(record, "playStateDidChanged", state = "playing") }
             "pause", "stop" -> {
+                resumeVideos.remove(view)
                 video.pause()
                 if (control == "stop") video.seekTo(0)
                 // Decode a preview for an initially paused source without starting playback.
@@ -739,12 +885,29 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         record.mediaGeneration.incrementAndGet()
         record.timePoll?.let { root.removeCallbacks(it) }; record.timePoll = null
         (record.view as? AndroidVideoView)?.let {
+            resumeVideos.remove(it)
             it.prepared = false; it.mediaPlayer = null
             it.player.setOnPreparedListener(null); it.player.setOnCompletionListener(null)
             it.player.setOnInfoListener(null); it.player.setOnErrorListener(null)
             it.player.stopPlayback()
         }
         record.native?.dispose()
+    }
+
+    private fun recycleLeaf(record: NodeRecord) {
+        // Only stateless controls participate. Inputs, media and native
+        // components retain their existing disposal/creation semantics.
+        val view = record.view as? TextView ?: return
+        if (record.kind != "Text") return
+        if (textPool.size >= 64) return
+        (view.parent as? ViewGroup)?.removeView(view)
+        view.setOnClickListener(null); view.setOnLongClickListener(null)
+        view.isClickable = false; view.isLongClickable = false
+        view.isPressed = false; view.isSelected = false; view.clearFocus()
+        view.text = ""; view.typeface = record.defaultTypeface
+        view.maxLines = Int.MAX_VALUE; view.ellipsize = null
+        view.contentDescription = null; view.transitionName = null
+        textPool.addLast(view)
     }
 
     private fun deepestNodeAt(x: Float, y: Float): Pair<Long, NodeRecord>? {
@@ -801,6 +964,20 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         return android.view.inputmethod.BaseInputConnection.getComposingSpanStart(editable) >= 0
     }
 
+    private var pageActive = true
+    private val resumeVideos = mutableSetOf<AndroidVideoView>()
+    fun setPageActive(active: Boolean) {
+        if (pageActive == active) return
+        pageActive = active
+        for (record in nodes.values) {
+            record.animation.setActive(active)
+            record.timePoll?.let { root.removeCallbacks(it); if (active) root.post(it) }
+            val video = record.view as? AndroidVideoView ?: continue
+            if (!active && video.player.isPlaying) { resumeVideos.add(video); video.player.pause() }
+            else if (active && resumeVideos.remove(video)) video.player.start()
+        }
+    }
+
     private fun updateScrollExtents() {
         for (record in nodes.values) if (record.view is ScrollView) {
             val content = record.content ?: continue
@@ -809,11 +986,15 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             for (i in 0 until content.childCount) {
                 val child = content.getChildAt(i)
                 val params = child.layoutParams as? FrameLayout.LayoutParams ?: continue
-                val model = nodes.values.firstOrNull { it.view === child }?.animation?.declared
+                val model = recordsByView[child]?.animation?.declared
                 width = max(width, if (model != null) (((model["x"] ?: 0.0) + (model["width"] ?: 0.0))*density).roundToInt() else params.leftMargin + params.width)
                 height = max(height, if (model != null) (((model["y"] ?: 0.0) + (model["height"] ?: 0.0))*density).roundToInt() else params.topMargin + params.height)
             }
-            content.layoutParams = FrameLayout.LayoutParams(max(record.view.layoutParams?.width ?: 0, width), max(record.view.layoutParams?.height ?: 0, height))
+            val nextWidth = max(record.view.layoutParams?.width ?: 0, width)
+            val nextHeight = max(record.view.layoutParams?.height ?: 0, height)
+            if (content.layoutParams?.width != nextWidth || content.layoutParams?.height != nextHeight) {
+                content.layoutParams = FrameLayout.LayoutParams(nextWidth, nextHeight)
+            }
         }
     }
 

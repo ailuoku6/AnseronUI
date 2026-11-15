@@ -1,0 +1,75 @@
+{
+  "date": "2026-11-13T18:21:50.912Z",
+  "minimumApi": 21,
+  "reuseBuild": false,
+  "environment": "aarch64\n21 \nOpenHarmony-6.0.1.112 \nemulator 6.0.0.112(SP3DEVC00E112R4P11) \n",
+  "sdk": {
+    "apiVersion": "21",
+    "displayName": "Native",
+    "meta": {
+      "metaVersion": "3.0.0"
+    },
+    "path": "native",
+    "releaseType": "Release",
+    "version": "6.0.1.112"
+  },
+  "llvm": "Homebrew clang version 23.1.1\nTarget: arm64-apple-darwin27.2.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm/23.1.1/bin\nConfiguration file: /opt/homebrew/Cellar/llvm/23.1.1/etc/clang/arm64-apple-darwin27.cfg\n",
+  "clang": "OHOS (dev) clang version 15.0.4 (llvm-project 115b628d33dda4da4b17e14ed69dd8b74c058b48)\nTarget: arm64-apple-darwin27.2.0\nThread model: posix\nInstalledDir: /Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native/llvm/bin\n",
+  "sourceFingerprint": "66b0d0ff421a60c74f024c308c6195c5c37506fb4e86574f7f0e3d893d6673b9",
+  "patchSha256": "89f4671f027ad9282d4577f515a1182a650e910c997b13fad8201803786384a4",
+  "results": {
+    "sdk-smoke": "SDK_SMOKE PASS thread=21 main_tls=6 mmap=ok\nANSERONUI_EXIT:0",
+    "runtime-probe": "RUNTIME_PROBE PASS threads=2 sessions=40 async=80 unicode=json+utf8 nested_await=ok rejection=ok shutdown=ok\nANSERONUI_EXIT:0",
+    "fiber-probe": "FIBER_PROBE PASS backend=AArch64-fast-context fibers=2 awaits=4000 checkpoints=4002 x19=ok d8=ok mmap_stack=ok shutdown=ok\nANSERONUI_EXIT:0",
+    "core-transport": "CORE_TRANSPORT PASS threads=2 sessions=20 handshake=ok ownership=ok duplicate_open=refused close=ok\nANSERONUI_EXIT:0",
+    "core-poison": "POISON_SINK captured=\u0001Uncaught SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)\n\u001fSC4013\u001fanseronui_business_post\nKNOWN_LIMITATION_CONFIRMED poisoned_close=refused owner_thread_stays_occupied=yes\nANSERONUI_EXIT:0",
+    "replay": [
+      {
+        "name": "counter",
+        "steps": 118,
+        "envelopes": 111,
+        "sha256": "0350476f1589bb092b375bd1dd433951d0e28f56a5aca022ec119663f671f3ef",
+        "result": "PASS"
+      },
+      {
+        "name": "async-form",
+        "steps": 114,
+        "envelopes": 88,
+        "sha256": "373997348884dd8831e545c77f9ecc6215f4f3e8abf92553a4e9097f6deb82e1",
+        "result": "PASS"
+      },
+      {
+        "name": "components",
+        "steps": 784,
+        "envelopes": 718,
+        "sha256": "f32a3729f37a550ba733588c83d3f326e1c986246e5938ae845f1620b7a30fa0",
+        "result": "PASS"
+      },
+      {
+        "name": "extensions",
+        "steps": 1046,
+        "envelopes": 986,
+        "sha256": "7aee80b88603b6ad163994a23a608c734e2feb700bb76f613503c19a976ef73f",
+        "result": "PASS"
+      },
+      {
+        "name": "timers",
+        "steps": 84,
+        "envelopes": 67,
+        "sha256": "56bb1fc35009858591d7113e8338077a7ec85f4472e76b63d4f5dc3d94019dc6",
+        "result": "PASS"
+      }
+    ]
+  },
+  "sha256": {
+    "sdk-smoke": "2286852bcfd55defd7ce346e01913a9898a8fcda34107f47be24daa75e2caf47",
+    "runtime-probe": "ed8592b27a04dade4695b0d8b689ff8d8643c385ef0fe5ee1e1408c286ce3da3",
+    "fiber-probe": "d254ec952cb550881e3198ce4b6fe862a081ae1b8c68334c76e13147f20a3bce",
+    "core-transport": "ddca895846c768521d617dfb4001a874f7bf69bb18ef7d3ef7d5818613c728bf",
+    "core-poison": "c6fb3b8298c940ad8c54e24e375a393b290a699ad8fe80e19e71167107df8602",
+    "core-stdio": "d88e7f7090dccd2a12fa9a1bbb05e9215b4e17e7d8dd0a11eaeb696f293fc226",
+    "runtime/entry.lib.a": "7ee2a19944a300f44c5fd588bafdcd6e12bdc286afe6257d71ac61413a289181",
+    "framework/entry.lib.a": "2d1ae004f493ea63d8b1b6f403f7c907cfdeafdf2474fd6b9e25dc3c41114207",
+    "business/entry.lib.a": "38c1f4e90698e46e13f0b0fc00225a9253a86d719abc31f66261f994237d13ad"
+  }
+}

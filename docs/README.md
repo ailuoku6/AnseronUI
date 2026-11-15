@@ -8,11 +8,16 @@ AnseronUI 是一个使用 TypeScript/TSX 编写共享页面、通过 AOT Core �
 | --- | --- |
 | [根 README](../README.md) | 创建 App、编写 TSX 页面、运行各平台和日常开发命令 |
 | [能力清单](capabilities.md) | 组件、属性、事件、Hooks、动画、路由、扩展和平台支持 |
+| [自定义 Hook 与组件组合](component-composition.md) | 自定义 Hook、高阶组件、组件属性、JSX 插槽与 render prop |
 | [架构与原理](architecture.md) | 分层设计、编译运行链路、协议、生命周期、并发模型和 `.gitignore` |
 | [页面与 Core 合包](core-bundles.md) | 页面为何触发重编、实例与二进制的区别、独立编译方向 |
 | [TS/TSX 编写限制](typescript-limitations.md) | scriptc 限制、JSX/Hook 规则、Node 兼容表的适用范围 |
 | [应用创建与接入](tooling.md) | `create`、`integrate`、`check`、`build` 命令 |
-| [应用图标](app-icons.md) | 四端图标、iOS 深色／着色／Icon Composer、Android 自适应／主题／night 配置 |
+| [应用图标](app-icons.md) | 多平台图标、iOS 深色／着色／Icon Composer、Android 自适应／主题／night 配置 |
+| [原生鸿蒙支持](harmonyos.md) | HarmonyOS 6.0.1/API 21 Stage 应用构建、渲染和模拟器验收 |
+| [可变高度虚拟列表](virtual-list.md) | 长列表、真实行高测量、滚动锚点与定位 |
+| [页面生命周期与内存](page-lifecycle.md) | 显示/隐藏、资源暂停、保活容量与隐藏页面回收 |
+| [渲染链路性能](performance.md) | 分阶段统计、JS/native/Wasm 基准、真实 UI 与回归预算 |
 | [页面路由](routing.md) | `useRouter()`、JSON 参数与页面状态保留 |
 | [系统返回键](back-press.md) | Android、iOS、Web 的返回键消费流程 |
 | [原生扩展](native-extensions.md) | Module、原生组件、事件和 ref |
@@ -25,6 +30,7 @@ AnseronUI 是一个使用 TypeScript/TSX 编写共享页面、通过 AOT Core �
 
 ## 贡献者与历史记录
 
+- [鸿蒙支持技术设计](../internal/design/harmonyos-native-support.md)：OHOS 工具链、ArkUI Native Renderer、服务/生命周期和验收边界；
 - [框架开发与仓库示例](framework-development.md)：框架依赖、仓库示例和修改后的验证命令；
 - [框架技术方案](../internal/design/anseronui-framework.md)：设计目标和决策历史；
 - [macOS 与鸿蒙支持方案](../internal/design/macos-harmony-support.md)：AppKit 实现记录及鸿蒙平台的推荐架构、工具链改造和分阶段验收；
@@ -47,6 +53,6 @@ AnseronUI 是一个使用 TypeScript/TSX 编写共享页面、通过 AOT Core �
 
 ## 当前实现边界
 
-当前版本已经可以构建 iOS 模拟器/设备产物、Android APK、Web/Wasm 应用和原生 AppKit macOS `.app`，支持共享 TSX 页面、基础组件、布局、事件、媒体、动画、路由、返回键、平台 Module、原生组件和 ref。macOS 的系统输入、媒体、无障碍和旧系统一致性仍需专项验证。框架尚未包含热更新、完整应用签名发布、深链参数、页面缓存、完整无障碍语义和通用插件生态；鸿蒙仍处于技术方案阶段。
+当前版本可以构建 iOS 模拟器/设备产物、Android APK、Web/Wasm 应用、原生 AppKit macOS `.app` 和 HarmonyOS Stage HAP。鸿蒙最低版本是 HarmonyOS 6.0.1/API 21；模拟器验收、当前组件/服务范围及缺失项见[鸿蒙支持文档](harmonyos.md)。macOS 的系统输入、无障碍和旧系统一致性仍需专项验证。框架尚未包含热更新、完整发布签名自动化、深链参数、跨进程页面恢复、完整无障碍语义和通用插件生态。
 
 - [标准系统能力与用例](native-services.md)：HTTP、存储、系统交互、环境订阅、权限定位、文件选择与传输、推送、后台任务、BLE 与 NFC。

@@ -1,0 +1,24 @@
+{
+  "profile_format": 1,
+  "name": "harmony-api21-probe",
+  "entry": "probe.ts",
+  "emission": "llvm",
+  "optimization": "release",
+  "async_embedding": { "version": 1 },
+  "abi": {
+    "prefix": "probe_",
+    "init_symbol": "probe_init",
+    "sink_register_symbol": "probe_sink",
+    "collect_symbol": "probe_collect",
+    "result_reset_symbol": "probe_reset",
+    "instance_per_thread": true,
+    "localize_runtime": true
+  },
+  "exports": [
+    { "export": "sync", "symbol": "probe_sync", "params": [], "returns": "string" },
+    { "export": "start", "symbol": "probe_start", "params": [], "returns": "void" },
+    { "export": "resolve", "symbol": "probe_resolve", "params": ["string"], "returns": "void" },
+    { "export": "reject", "symbol": "probe_reject", "params": [], "returns": "void" },
+    { "export": "read", "symbol": "probe_read", "params": [], "returns": "string" }
+  ]
+}

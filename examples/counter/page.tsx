@@ -11,6 +11,7 @@ export function Counter(): UIElement {
       <Text style={{ fontSize: 20 }}>Count: {count}</Text>
       <Button title="+1" onClick={() => setCount(value => value + 1)} />
       <Button title="打开 Async Form" onClick={() => { void router.push("async-form", { source: 'counter', count, message: '来自 Counter 的参数', options: { editable: true }, tags: ['路由', '示例'] }); }} />
+      <Button title="可变高度列表" onClick={() => { void router.push("virtual-list"); }} />
       <Button title="返回上一页" onClick={() => { void router.back().catch(() => {}); }} />
       <Text>先点击 +1，再打开 Async Form 并返回，计数会保留。</Text>
       <Text testID="counter-route-params">路由参数: {routeInfo}</Text>

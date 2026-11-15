@@ -1,0 +1,40 @@
+{
+  "string": [
+    {
+      "name": "anseronui_permission_ohos_permission_vibrate",
+      "value": "Provide haptic feedback in response to user actions."
+    },
+    {
+      "name": "anseronui_permission_ohos_permission_approximately_location",
+      "value": "Read approximate location when requested by the application."
+    },
+    {
+      "name": "anseronui_permission_ohos_permission_camera",
+      "value": "Use the camera when requested by the application."
+    },
+    {
+      "name": "anseronui_permission_ohos_permission_microphone",
+      "value": "Use the microphone when requested by the application."
+    },
+    {
+      "name": "anseronui_permission_ohos_permission_access_bluetooth",
+      "value": "Use Bluetooth when requested by the application."
+    },
+    {
+      "name": "anseronui_permission_ohos_permission_nfc_tag",
+      "value": "Read or write a nearby NFC tag when requested by the application."
+    },
+    {
+      "name": "anseronui_permission_ohos_permission_publish_agent_reminder",
+      "value": "Schedule reminders requested by the application."
+    },
+    {
+      "name": "anseronui_permission_ohos_permission_internet",
+      "value": "Connect to remote services used by the application."
+    },
+    {
+      "name": "anseronui_permission_ohos_permission_get_network_info",
+      "value": "Read network connectivity to report the current connection type."
+    }
+  ]
+}

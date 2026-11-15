@@ -5,6 +5,8 @@ import UIKit
 /// Removing it from a superview does not destroy the page, so it can be reparented.
 @MainActor public final class AnseronUIRenderView: UIView, UIGestureRecognizerDelegate {
     public var onReady: (() -> Void)?
+    public var onRuntimeStats: (([String: Double]) -> Void)?
+    public func inspectRuntime(enabled: Bool = true, reset: Bool = false) { host?.inspectRuntime(enabled: enabled, reset: reset) }
     /// Lets the owning app extend the page background into system safe areas.
     public var onPageBackgroundColor: ((UIColor) -> Void)?
     public var onDiagnostic: ((String, String) -> Void)?
@@ -22,6 +24,12 @@ import UIKit
         var color: UIColor?
         init(_ page: String, _ params: String) { self.page = page; self.params = params }
     }
+    /// Includes the current page. Evicted entries retain route parameters and remount on return.
+    public var maxRetainedPages = Int.max { didSet { precondition(maxRetainedPages >= 1); enforceRetention() } }
+    public var onPageEvicted: ((String) -> Void)?
+    private var externallyVisible = true
+    private var appActive = true
+    private var lifecycleObservers: [NSObjectProtocol] = []
     private var routes: [Route] = []
     private var backPreview: (current: UIView, previous: UIView)?
     private var backTransitionID: UUID?
@@ -54,6 +62,16 @@ import UIKit
         self.baseURL = baseURL
         self.createCore = createCore
         super.init(frame: frame)
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.appActive = true; self?.updateVisibility() }
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.appActive = false; self?.updateVisibility() }
+        })
+        appActive = UIApplication.shared.applicationState == .active
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.trimMemory() }
+        })
         addGestureRecognizer(backGesture)
     }
 
@@ -75,6 +93,7 @@ import UIKit
         precondition(!isDestroyed && !page.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         let entry = Route(page, parameterSnapshot(params))
         resetBackPreview()
+        host?.setVisibility(false)
         renderRoot?.removeFromSuperview()
         routes.append(entry)
         loadCurrentPage()
@@ -209,6 +228,8 @@ import UIKit
         if let color = entry.color { onPageBackgroundColor?(color) }
         synchronizeSize()
         host?.environmentChanged()
+        updateVisibility()
+        enforceRetention()
         setNeedsLayout()
     }
 
@@ -234,9 +255,29 @@ import UIKit
     public func destroy() {
         guard !isDestroyed else { return }
         isDestroyed = true
+        lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) }; lifecycleObservers.removeAll()
         resetBackPreview()
         retireAllPages()
         page = nil
+    }
+
+    /// Also use this when an embedded container is covered by native navigation.
+    public func setVisibility(_ visible: Bool) { externallyVisible = visible; updateVisibility() }
+    private func updateVisibility() {
+        for entry in routes { entry.host?.setVisibility(entry === routes.last && externallyVisible && appActive) }
+    }
+    /// Releases hidden runtime/view instances; route names and params remain in the stack.
+    public func trimMemory() { evictHidden(keeping: 0) }
+    private func enforceRetention() { evictHidden(keeping: maxRetainedPages - 1) }
+    private func evictHidden(keeping: Int) {
+        guard routes.count > 1 else { return }
+        let hidden = routes.dropLast().filter { $0.host != nil }
+        for entry in hidden.prefix(max(0, hidden.count - keeping)) {
+            guard let index = routes.firstIndex(where: { $0 === entry }) else { continue }
+            retirePage(entry)
+            routes[index] = Route(entry.page, entry.params)
+            onPageEvicted?(entry.page)
+        }
     }
 
     private func retirePage(_ entry: Route) {
@@ -248,6 +289,8 @@ import UIKit
         let old = routes; routes.removeAll()
         old.forEach { retirePage($0) }
     }
+
+    deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
 
     private func synchronizeSize() {
         guard !isDestroyed, let entry = routes.last, !entry.failed, let root = entry.root else { return }
@@ -306,8 +349,13 @@ import UIKit
             entry.failed = true
             if self.routes.last === entry { self.onFailure?(error) }
         }
+        host.onRuntimeStats = { [weak self, weak entry] values in
+            guard let self, let entry, !self.isDestroyed, self.routes.last === entry else { return }
+            self.onRuntimeStats?(values)
+        }
         entry.host = host
         entry.lastSize = size
+        host.setVisibility(externallyVisible && appActive)
         host.start(page: page, width: size.width, height: size.height)
     }
 }

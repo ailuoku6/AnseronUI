@@ -10,7 +10,7 @@ function Card(props: { title: string; note: string; children?: UIElement | UIEle
 }
 function Tile(props: { id?: string; text: string; color?: string; style?: Style }): UIElement {
   return <View testID={props.id} style={{ alignItems: "center", justifyContent: "center", backgroundColor: props.color ?? "#275de5", borderRadius: 4, ...props.style }}>
-    <Text style={{ fontSize: 11, color: "#ffffff" }}>{props.text}</Text>
+    <Text style={{ fontSize: 11, color: "#ffffff", textAlign: "center" }}>{props.text}</Text>
   </View>;
 }
 

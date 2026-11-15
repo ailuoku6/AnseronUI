@@ -46,6 +46,6 @@ export function FloatingBall(props: { width: number; height: number }): UIElemen
       setDragging(true);
     }}
     onTouchMove={move} onTouchUp={(event: TouchEvent) => { move(event); finish(event); }} onTouchCancel={finish}>
-    <Text testID="floating-ball-label" style={{ fontSize: 13, color: "#ffffff", fontWeight: "bold" }}>{dragging ? "松手" : "拖动"}</Text>
+    <Text testID="floating-ball-label" style={{ fontSize: 13, color: "#ffffff", fontWeight: "bold", textAlign: "center" }}>{dragging ? "松手" : "拖动"}</Text>
   </View>;
 }

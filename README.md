@@ -1,8 +1,8 @@
 # AnseronUI
 
-使用 TypeScript/TSX 编写共享页面，构建运行于 **iOS、Android、Web 和 macOS** 的 App。iOS 使用 UIKit，Android 使用原生 View，macOS 使用 AppKit，Web 使用 DOM + Wasm；共享页面负责布局、状态、交互和业务逻辑。
+使用 TypeScript/TSX 编写共享页面，构建运行于 **iOS、Android、Web、macOS 和 HarmonyOS** 的 App。iOS 使用 UIKit，Android 使用原生 View，macOS 使用 AppKit，HarmonyOS 使用 Stage/ArkUI Native Node，Web 使用 DOM + Wasm；共享页面负责布局、状态、交互和业务逻辑。
 
-AnseronUI 提供创建工程的 CLI、组件与 Hooks、页面路由、动画和原生能力扩展。底层通过 [scriptc](https://github.com/vercel-labs/scriptc) 编译共享代码，使用 [Flexily](https://github.com/beorn/flexily) 计算布局。iOS、Android 和 macOS 的共享业务 Core 不依赖嵌入 JavaScript 引擎。
+AnseronUI 提供创建工程的 CLI、组件与 Hooks、页面路由、动画和原生能力扩展。底层通过 [scriptc](https://github.com/vercel-labs/scriptc) 编译共享代码，使用 [Flexily](https://github.com/beorn/flexily) 计算布局。iOS、Android、macOS 和 HarmonyOS 的共享业务 Core 不依赖嵌入 JavaScript 引擎。
 
 [创建并运行 App](#创建并运行独立-app) · [编写页面](#编写共享页面) · [能力清单](docs/capabilities.md) · [TS/TSX 限制](docs/typescript-limitations.md) · [夜间样式与阴影](docs/styles.md) · [完整文档](docs/README.md)
 
@@ -14,6 +14,7 @@ AnseronUI 提供创建工程的 CLI、组件与 Hooks、页面路由、动画和
 | iOS | macOS、完整 Xcode、已安装的 Simulator runtime、Python 3；最低 iOS 15 |
 | Android | Android SDK 35、NDK、JDK 17–22（推荐 17，支持 Android Studio JBR 21）；最低 Android API 26 |
 | macOS | Apple Silicon、macOS 15+ 构建主机与完整 Xcode；产物声明最低 macOS 14，旧系统待验证 |
+| HarmonyOS | DevEco Studio 6.0.1 / API 21 SDK、主机 LLVM 23；最低 HarmonyOS 6.0.1/API 21，当前 arm64 |
 | Web / 跨平台编译 | 可用的 Zig 工具链；Web 使用支持 Wasm 和 ES modules 的浏览器 |
 
 当前主要验证环境为 **macOS Apple Silicon**，iOS 模拟器和设备产物固定 arm64，Android 产物固定 `arm64-v8a`。Android 设备或 AVD 也应使用 ARM64 架构。
@@ -35,7 +36,7 @@ npm run android
 
 新建应用已附带默认图标及 iOS 深色／着色、Android 自适应／主题图层；可替换 `assets/icons/` 中的资源，配置方式见[应用图标](docs/app-icons.md)。
 
-目标目录需要为空。`--application-id` 同时设置 iOS Bundle ID、Android applicationId 和 macOS bundle identifier；`--name` 可指定应用显示名称。生成的 App 固定依赖 AnseronUI 版本，可独立移动和维护；请提交应用的 `package-lock.json`。
+目标目录需要为空。`--application-id` 同时设置 iOS Bundle ID、Android applicationId、macOS bundle identifier 和 HarmonyOS bundleName；`--name` 可指定应用显示名称。生成的 App 固定依赖 AnseronUI 版本，可独立移动和维护；请提交应用的 `package-lock.json`。
 
 `setup` 使用随 npm 包提供的编译器源码准备构建环境，首次会安装依赖，无需 Git。升级 AnseronUI 后需重新执行 `npm run setup`。
 
@@ -73,6 +74,15 @@ npm run macos -- --no-build
 
 输出为 `.verification/macos/App.app`，构建时进行本机 ad-hoc 签名。当前支持 arm64、单窗口，最低部署版本声明为 macOS 14，已验证环境为 macOS 27.2。具体能力、旧应用接入和验证限制见 [macOS Renderer](packages/render-macos/README.md)。
 
+### HarmonyOS
+
+~~~sh
+npm run build:harmony
+npm run harmony -- --device 127.0.0.1:5557
+~~~
+
+使用 API 21 原生 HAP；CLI 为本地模拟器生成 SDK 测试签名，真机/发布须配置自己的 DevEco 签名。支持原生组件、媒体、服务、路由保活与回收；通知资格、推送、BLE/NFC 和实际设备验证边界见[鸿蒙支持](docs/harmonyos.md)。
+
 ### Web
 
 ```sh
@@ -91,6 +101,7 @@ awesomeAnseron/
 ├── platforms/ios/             # iOS 应用宿主
 ├── platforms/android/         # Android 应用宿主
 ├── platforms/macos/App.swift  # macOS AppKit 应用宿主
+├── platforms/harmony/         # HarmonyOS Stage 应用宿主
 ├── web/                       # Web 入口、Vite 配置和公共资源
 ├── assets/                    # 应用资源目录，需按目标平台规则接入
 ├── package.json               # 应用依赖和开发命令
@@ -99,7 +110,7 @@ awesomeAnseron/
 
 日常开发主要修改 `src/` 和 `anseronui.config.json`；需要扩展原生能力时再修改平台宿主。图片、视频等资源的打包与引用规则见[能力清单](docs/capabilities.md)。
 
-应用图标通过 `app.icon` 配置，支持单张 PNG 用于四端、iOS 浅色／深色／着色与 Icon Composer、Android 自适应／单色主题／night 资源。完整示例和旧工程接入见[应用图标](docs/app-icons.md)。
+应用图标通过 `app.icon` 配置，支持单张 PNG 用于五端、iOS 浅色／深色／着色与 Icon Composer、Android 自适应／单色主题／night 资源。完整示例和旧工程接入见[应用图标](docs/app-icons.md)。
 
 各平台容器直接展示共享 TSX 页面。设置页面根节点的 `backgroundColor`，移动端系统栏背景会跟随页面主题。SDK 和构建缓存位于 `.anseronui/`，应用构建产物位于 `.verification/`、Android `build/` 和 `dist/web/`；这些目录不应提交到业务仓库。
 
@@ -156,7 +167,7 @@ npm run ios
 
 `name` 是路由名称，`source` 相对于应用根目录，`export` 必须匹配文件导出的页面符号。页面代码需位于配置的 `sourceDirs` 中，默认是 `src`。
 
-在函数组件内使用 `const router = useRouter()` 获取路由，通过 `router.push("details")` 打开详情页，使用 `router.back()` 返回；`useRouter` 同样从 `anseronui/ui` 引入。新增页面后重新构建目标平台。当前返回页面会重新创建实例，不保留之前的页面 state。完整行为见[页面路由](docs/routing.md)和[系统返回键](docs/back-press.md)。
+在函数组件内使用 `const router = useRouter()` 获取路由，通过 `router.push("details")` 打开详情页，使用 `router.back()` 返回；`useRouter` 同样从 `anseronui/ui` 引入。新增页面后重新构建目标平台。当前返回仍保留的页面会恢复 state；容量回收后重建实例，保留路由参数。完整行为见[页面路由](docs/routing.md)和[系统返回键](docs/back-press.md)。
 
 ## App 开发能力
 
@@ -187,6 +198,7 @@ npm run ios
 | `npm run build:ios-device` | 构建未签名 iOS 真机应用 |
 | `npm run build:android` | 仅构建 Android Debug APK |
 | `npm run build:macos` | 构建本机 AppKit `.app` |
+| `npm run build:harmony` | 构建 API 21 HAP；运行使用 npm run harmony |
 | `npm run build:web` | 构建 Web/Wasm 应用，输出到 `dist/web/` |
 | `npm run build:web:release` | 构建 Web 生产资源 |
 | `npm run build:ios:release` | 构建 iOS Release `.xcarchive`；配置团队签名后导出签名 IPA |
@@ -201,13 +213,13 @@ CLI 的设备选择、缓存、路径规则和常见问题见[应用创建、构
 
 ## 接入现有原生应用
 
-AnseronUI 支持把共享页面嵌入已有宿主。iOS、Android 和 macOS 分别使用原生 `AnseronUIRenderView`，Web 使用 `BrowserHost` 和 `WasmRuntime`；业务宿主负责挂载位置、原生能力注册及生命周期。
+AnseronUI 支持把共享页面嵌入已有宿主。iOS、Android 和 macOS 分别使用原生 `AnseronUIRenderView`，HarmonyOS 使用 AnseronView/HarmonyController，Web 使用 `BrowserHost` 和 `WasmRuntime`；业务宿主负责挂载位置、原生能力注册及生命周期。
 
 接入需要配置原生依赖和 Core 链接。具体步骤见[应用接入指南](docs/tooling.md)、[iOS 宿主](packages/render-ios/README.md)、[Android 宿主](packages/render-android/README.md)和[macOS 宿主](packages/render-macos/README.md)。
 
 ## 当前使用边界
 
-当前版本尚不包含热更新、React 兼容层、路由参数、深链、页面缓存、完整无障碍支持和商店账号/证书托管。Release 构建已覆盖四端，但上架仍需由应用方提供平台签名与分发信息。自定义原生组件需分别实现各目标平台的宿主部分。上线前应在目标设备上验证布局、文本、交互和业务所需的平台能力。
+当前版本尚不包含热更新、React 兼容层、自动深链路由、跨进程页面恢复、完整无障碍支持和商店账号/证书托管。Release 构建已覆盖五端，但上架仍需由应用方提供平台签名与分发信息。自定义原生组件需分别实现各目标平台的宿主部分。上线前应在目标设备上验证布局、文本、交互和业务所需的平台能力。
 
 更多指南见[完整文档](docs/README.md)。需要理解编译缓存或宿主生命周期时，可阅读[编译与业务包](docs/core-bundles.md)及[架构与运行原理](docs/architecture.md)。修改框架本身的贡献者请参考[框架开发与仓库示例](docs/framework-development.md)。
 

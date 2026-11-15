@@ -3,6 +3,8 @@ import AVKit
 
 /// Core frames use a top-left origin and logical points.
 @MainActor public class FlippedView: NSView {
+    var pressAction: (() -> Bool)?
+    public override func accessibilityPerformPress() -> Bool { pressAction?() ?? false }
     public override var isFlipped: Bool { true }
     public override var wantsDefaultClipping: Bool { false }
     public override init(frame: NSRect) { super.init(frame:frame); autoresizesSubviews = false }
@@ -15,6 +17,7 @@ private final class DesktopScrollView: NSScrollView {
 }
 
 @MainActor private final class NodeRecord {
+    var anchorOffset: Double = 0
     var declaredProps: RenderProps?
     let view: FlippedView
     var widget: NSView
@@ -38,6 +41,7 @@ private final class DesktopScrollView: NSScrollView {
     var native: MacOSNativeComponent?
     var nativeToken = UUID()
     var observers: [NSObjectProtocol] = []
+    var suspendedRate: Float = 0
     var player: AVPlayer?
     var timeObserver: Any?
     var statusObserver: NSKeyValueObservation?
@@ -65,6 +69,17 @@ private final class DesktopScrollView: NSScrollView {
     public var onEvent: ((RendererEvent) -> Void)?
     public var onPageBackgroundColor: ((NSColor) -> Void)?
     private var nodes: [UInt32: NodeRecord] = [:]
+    private var pageActive = true
+    public func setPageActive(_ active: Bool) {
+        guard pageActive != active else { return }
+        pageActive = active
+        for record in nodes.values {
+            record.animation.setActive(active)
+            if !active { record.suspendedRate = record.player?.rate ?? 0; record.player?.pause() }
+            else if record.suspendedRate != 0 { record.player?.playImmediately(atRate: record.suspendedRate); record.suspendedRate = 0 }
+        }
+    }
+
     private var revision: UInt32 = 0
     private let extensions: MacOSPlatformExtensions
     private var mouseMonitor: Any?
@@ -107,7 +122,7 @@ private final class DesktopScrollView: NSScrollView {
         try validate(commit.commands)
         do {
             for command in commit.commands { try applyOne(command) }
-            for record in nodes.values { record.animation.commit(); if record.widget !== record.view { record.widget.frame = record.view.bounds } }
+            for record in nodes.values { record.animation.setActive(pageActive); record.animation.commit(); if record.widget !== record.view { record.widget.frame = record.view.bounds } }
             revision = commit.revision
             updateScrollExtents()
             onPageBackgroundColor?(nodes.values.first { $0.view === root.subviews.first }?.background ?? .clear)
@@ -120,13 +135,13 @@ private final class DesktopScrollView: NSScrollView {
             let p = raw.themed(dark)
             r.background = parseColor(p.backgroundColor) ?? .clear
             let c = r.background.usingColorSpace(.sRGB) ?? .clear
-            r.animation.stage(["r":c.redComponent*255,"g":c.greenComponent*255,"b":c.blueComponent*255,"a":c.alphaComponent]); r.animation.commit()
+            r.animation.stage(["r":c.redComponent*255,"g":c.greenComponent*255,"b":c.blueComponent*255,"a":c.alphaComponent]); r.animation.setActive(pageActive); r.animation.commit()
             r.view.layer?.borderColor = parseColor(p.borderColor)?.cgColor
             r.view.layer?.shadowColor = (parseColor(p.shadowColor) ?? .black).cgColor
             if let label = r.widget as? NSTextField, r.kind == "Text" || r.kind == "RichText" {
                 label.attributedStringValue = attributed(text:p.text ?? "", font:textFont(size:p.fontSize ?? 14,weight:p.fontWeight,style:p.fontStyle),props:p)
             }
-            if let button = r.widget as? NSButton { button.contentTintColor = parseColor(p.color) }
+            if let image = r.widget as? DesktopImageView { try? loadImage(r, image:image, source:p.src ?? "", placeholder:p.placeholderSrc) }
             if let field = r.widget as? NSTextField, r.kind == "TextInput" {
                 field.textColor = parseColor(p.color) ?? .labelColor
                 field.placeholderAttributedString = p.placeholder.map { NSAttributedString(string:$0,attributes:[.foregroundColor:parseColor(p.placeholderTextColor) ?? .placeholderTextColor]) }
@@ -145,7 +160,7 @@ private final class DesktopScrollView: NSScrollView {
             guard c.nodeId != 0 else { throw RenderError.invalidCommand }
             switch c.type {
             case "CreateNode":
-                guard parents[c.nodeId] == nil, ["View","Text","RichText","Button","TextInput","ScrollView","Image","Video","Native"].contains(c.kind ?? "") else { throw RenderError.invalidCommand }
+                guard parents[c.nodeId] == nil, ["View","Text","RichText","TextInput","ScrollView","Image","Video","Native"].contains(c.kind ?? "") else { throw RenderError.invalidCommand }
                 parents[c.nodeId] = 0
             case "RemoveNode":
                 guard parents[c.nodeId] != nil else { throw RenderError.invalidCommand }
@@ -186,7 +201,7 @@ private final class DesktopScrollView: NSScrollView {
             guard parent == 0 || nodes[parent]?.kind == "View" || nodes[parent]?.kind == "ScrollView" || nodes[parent]?.native?.contentView != nil else { throw RenderError.invalidCommand }
             guard let target = parent == 0 ? root : nodes[parent]?.content else { throw RenderError.invalidCommand }
             // Core emits MoveChild for every retained node. Detaching a view
-            // that is already in place cancels NSButton mouse tracking when a
+            // that is already in place interrupts control mouse tracking when a
             // video time update commits between mouse down and mouse up.
             if record.view.superview === target,
                target.subviews.firstIndex(of:record.view) == min(c.index!,max(0,target.subviews.count-1)) {
@@ -202,12 +217,7 @@ private final class DesktopScrollView: NSScrollView {
         case "SetFrame":
             let f = c.frame!
             record.animation.stage(["x":f.x,"y":f.y,"width":f.width,"height":f.height])
-            if record.events.contains("layout") {
-                DispatchQueue.main.async { [weak self, weak record] in
-                    guard let self, let record, self.nodes[c.nodeId] === record else { return }
-                    self.emit("layout", id: c.nodeId, x:f.x, y:f.y, width:f.width, height:f.height)
-                }
-            }
+            // Core dispatches the committed layout after CommitAck.
         case "BindEvent":
             if c.enabled! { record.events.insert(c.event!) } else { record.events.remove(c.event!) }
             updateRecognizers(record)
@@ -225,9 +235,6 @@ private final class DesktopScrollView: NSScrollView {
             let label = DesktopTextField(frame: .zero)
             label.isSelectable = false; label.maximumNumberOfLines = 0
             widget = label; content = label
-        case "Button":
-            let button = NSButton(title: "", target:self, action:#selector(tapped(_:)))
-            button.bezelStyle = .rounded; widget = button; content = button
         case "TextInput":
             let field = NSTextField(); field.delegate = self
             field.target = self; field.action = #selector(submitted(_:))
@@ -273,10 +280,14 @@ private final class DesktopScrollView: NSScrollView {
         }
     }
     private func updateRecognizers(_ r:NodeRecord) {
-        // Unbound recognizers on every wrapper compete with child NSButton /
+        // Unbound recognizers on every wrapper compete with child controls /
         // AVPlayerView mouse handling. Install only the gestures Core requests.
         let clickView = r.widget is DesktopTextField ? r.widget : r.view
-        let needsClick = (r.events.contains("tap") || r.events.contains("spanClick")) && !["Button","TextInput","Video","ScrollView","Native"].contains(r.kind)
+        r.view.pressAction = { [weak self, weak r] in
+            guard let self, let r, let id = self.id(for:r.view), r.events.contains("tap"), r.declaredProps?.disabled != true else { return false }
+            self.onEvent?(RendererEvent(type:"Tap",nodeId:id,revision:self.revision)); return true
+        }
+        let needsClick = (r.events.contains("tap") || r.events.contains("spanClick")) && !["TextInput","Video","ScrollView","Native"].contains(r.kind)
         if needsClick, r.clickRecognizer == nil {
             let click = NSClickGestureRecognizer(target:self,action:#selector(clicked(_:)))
             clickView.addGestureRecognizer(click); r.clickRecognizer = click
@@ -319,16 +330,17 @@ private final class DesktopScrollView: NSScrollView {
         }
         r.widget.identifier = p.testID.map { NSUserInterfaceItemIdentifier($0) }
         r.widget.setAccessibilityIdentifier(p.testID); r.widget.setAccessibilityLabel(p.accessibilityLabel)
+        if r.kind == "View" {
+            r.widget.setAccessibilityElement(p.accessibilityRole == "button")
+            r.widget.setAccessibilityRole(p.accessibilityRole == "button" ? .button : .group)
+            r.widget.setAccessibilityEnabled(p.disabled != true)
+        }
         let font = textFont(size:p.fontSize ?? 14, weight:p.fontWeight, style:p.fontStyle)
         if let label = r.widget as? NSTextField, r.kind == "Text" || r.kind == "RichText" {
             r.spans = p.spans.flatMap { try? JSONSerialization.jsonObject(with:Data($0.utf8)) as? [[String:Any]] } ?? []
             label.attributedStringValue = attributed(text:p.text ?? "", font:font, props:p)
             label.maximumNumberOfLines = p.numberOfLines ?? 0
             label.lineBreakMode = lineBreak(p)
-        }
-        if let button = r.widget as? NSButton {
-            button.title = p.title ?? ""; button.font = font; button.isEnabled = !(p.disabled ?? false)
-            button.contentTintColor = parseColor(p.color)
         }
         if let field = r.widget as? NSTextField, r.kind == "TextInput" {
             r.maxLength = p.maxLength
@@ -367,7 +379,7 @@ private final class DesktopScrollView: NSScrollView {
         guard fontSize.isFinite, fontSize > 0, maxWidth.isFinite, maxWidth >= 0 else { throw RenderError.invalidCommand }
         let font = textFont(size:fontSize,weight:props?.fontWeight,style:props?.fontStyle)
         let string = attributed(text:text.isEmpty ? " " : text,font:font,props:props)
-        let inset = kind == "Button" ? CGSize(width:20,height:12) : (kind == "TextInput" ? CGSize(width:4,height:4) : .zero)
+        let inset = kind == "TextInput" ? CGSize(width:4,height:4) : .zero
         let layout = DesktopTextLayout(string, size:NSSize(width:max(0,maxWidth-inset.width),height:CGFloat.greatestFiniteMagnitude), lines:props?.numberOfLines ?? 0, lineBreak:lineBreak(props))
         let rect = layout.usedRect
         return (min(maxWidth,ceil(rect.width+inset.width)),ceil(rect.height+inset.height),font.ascender+inset.height/2)
@@ -392,7 +404,15 @@ private final class DesktopScrollView: NSScrollView {
     }
     private func updateScrollExtents() {
         for r in nodes.values where r.kind == "ScrollView" {
+            let anchor = r.declaredProps?.scrollAnchorOffset ?? 0
+            let delta = anchor - r.anchorOffset
+            r.anchorOffset = anchor
             r.content.frame.size = NSSize(width:max(r.widget.bounds.width,r.content.subviews.map { $0.frame.maxX }.max() ?? 0),height:max(r.widget.bounds.height,r.content.subviews.map { $0.frame.maxY }.max() ?? 0))
+            if delta != 0, let scroll = r.widget as? NSScrollView {
+                let offset = scroll.contentView.bounds.origin
+                scroll.contentView.scroll(to:NSPoint(x:offset.x,y:max(0,min(offset.y + delta,r.content.frame.height-scroll.contentSize.height))))
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
         }
     }
     private func id(for view:NSView) -> UInt32? { nodes.first { $0.value.widget === view || $0.value.view === view }?.key }
@@ -400,11 +420,7 @@ private final class DesktopScrollView: NSScrollView {
         guard let r = nodes[id], r.events.contains(event) else { return }
         onEvent?(RendererEvent(type:"NativeEvent",nodeId:id,revision:revision,value:value,event:event,x:x,y:y,contentWidth:width,contentHeight:height))
     }
-    @objc private func tapped(_ sender:NSButton) {
-        root.window?.makeFirstResponder(nil)
-        guard let id = id(for:sender), nodes[id]?.events.contains("tap") == true else { return }
-        onEvent?(RendererEvent(type:"Tap",nodeId:id,revision:revision))
-    }
+
     @objc private func clicked(_ sender:NSClickGestureRecognizer) {
         guard let view = sender.view, let id = id(for:view), let r = nodes[id] else { return }
         if r.events.contains("spanClick"), let label = r.widget as? DesktopTextField, !r.spans.isEmpty {
@@ -439,7 +455,7 @@ private final class DesktopScrollView: NSScrollView {
                         allowY = allowY && record.touchAction != "none" && record.touchAction != "pan-x"
                         if let scroll = record.widget as? DesktopScrollView, scroll.allowsScroll { scrollID = id }
                     }
-                    if ["Button","TextInput","Video","Native"].contains(record.kind) { nativeInteraction = true }
+                    if ["TextInput","Video","Native"].contains(record.kind) { nativeInteraction = true }
                 }
                 guard let parent = view.superview else { break }; view = parent
             }
@@ -578,6 +594,7 @@ private final class DesktopScrollView: NSScrollView {
         view.controlsStyle = p.controls == false ? .none : .inline
         view.videoGravity = p.resizeMode == "cover" ? .resizeAspectFill : (p.resizeMode == "stretch" ? .resize : .resizeAspect)
         if sourceChanged {
+            r.suspendedRate = 0
             if let token = r.timeObserver { r.player?.removeTimeObserver(token) }; r.timeObserver = nil
             r.player?.pause(); r.rateObserver = nil; r.statusObserver = nil; r.firstFrameObserver = nil
             r.observers.forEach(NotificationCenter.default.removeObserver); r.observers.removeAll()
@@ -613,7 +630,7 @@ private final class DesktopScrollView: NSScrollView {
             r.statusObserver = player.currentItem?.observe(\.status,options:[.initial,.new]) { [weak self, weak r] item,_ in
                 DispatchQueue.main.async {
                     guard let self, let r, self.nodes[id] === r, r.sourceToken == token else { return }
-                    if item.status == .readyToPlay { self.emitMedia("loadSuccess",id:id,source:r.source); if r.desiredPlay { r.player?.playImmediately(atRate:r.rate) } }
+                    if item.status == .readyToPlay { self.emitMedia("loadSuccess",id:id,source:r.source); if r.desiredPlay { if self.pageActive { r.player?.playImmediately(atRate:r.rate) } else { r.suspendedRate = r.rate } } }
                     else if item.status == .failed {
                         self.emitMedia("loadFailure",id:id,source:r.source,error:1)
                         self.emitPlaybackState(r,id:id,state:"error")
@@ -633,7 +650,7 @@ private final class DesktopScrollView: NSScrollView {
                     r.player?.seek(to:.zero) { [weak self, weak r] finished in
                         DispatchQueue.main.async {
                             guard finished, let self, let r, self.nodes[id] === r, r.sourceToken == token else { return }
-                            r.player?.playImmediately(atRate:r.rate)
+                            if self.pageActive { r.player?.playImmediately(atRate:r.rate) } else { r.suspendedRate = r.rate }
                         }
                     }
                 } else { self.emitPlaybackState(r,id:id,state:"ended") }
@@ -644,7 +661,7 @@ private final class DesktopScrollView: NSScrollView {
         // Re-renders (for example onTimeUpdate -> state) must not undo native
         // controls or repeatedly seek a stopped video back to its beginning.
         if playbackChanged {
-            if r.desiredPlay { r.player?.playImmediately(atRate:r.rate) } else { r.player?.pause() }
+            if r.desiredPlay { if self.pageActive { r.player?.playImmediately(atRate:r.rate) } else { r.suspendedRate = r.rate } } else { r.suspendedRate = 0; r.player?.pause() }
             if p.playControl == "stop" { r.player?.seek(to:.zero) }
             if !r.desiredPlay, r.player != nil, let id = id(for:view) {
                 // An already-ended player has rate zero: pause() emits no KVO
@@ -680,6 +697,7 @@ private final class DesktopScrollView: NSScrollView {
     private func lineBreak(_ p:RenderProps?) -> NSLineBreakMode { p?.ellipsizeMode == "clip" ? .byClipping : ((p?.numberOfLines ?? 0) == 0 ? .byWordWrapping : .byTruncatingTail) }
     private func attributed(text:String,font:NSFont,props p:RenderProps?) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle(); paragraph.alignment = p?.textAlign == "center" ? .center : (p?.textAlign == "right" ? .right : .left); paragraph.lineBreakMode = lineBreak(p)
+        if let height = p?.lineHeight { paragraph.minimumLineHeight = height; paragraph.maximumLineHeight = height }
         func attributes(_ span:[String:Any] = [:]) -> [NSAttributedString.Key:Any] {
             var values: [NSAttributedString.Key:Any] = [.font:textFont(size:span["fontSize"] as? Double ?? font.pointSize,weight:span["fontWeight"] as? String ?? p?.fontWeight,style:span["fontStyle"] as? String ?? p?.fontStyle),.foregroundColor:parseColor(span["color"] as? String ?? p?.color) ?? .labelColor,.paragraphStyle:paragraph]
             let decoration = span["textDecorationLine"] as? String ?? p?.textDecorationLine

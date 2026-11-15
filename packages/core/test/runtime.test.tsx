@@ -37,6 +37,10 @@ function harness(page: ReturnType<typeof definePage>, onWake?: () => void) {
   return { runtime, send, drain };
 }
 function createdNode(commands: RenderCommand[], kind: string): number {
+  if (kind === "Button") {
+    const root = commands.find(command => command.type === "SetProps" && command.props.accessibilityRole === "button");
+    if (root) return root.nodeId;
+  }
   const item = commands.find(command => command.type === "CreateNode" && command.kind === kind);
   if (!item || item.type !== "CreateNode") throw new Error("Node missing: " + kind);
   return item.nodeId;
@@ -473,9 +477,9 @@ describe("reference Core", () => {
     const initial = h.drain();
     const first = initial.find(item => item.type === "Commit");
     if (!first || first.type !== "Commit") throw new Error("No first commit");
-    const buttons = first.commands.filter((cmd): cmd is Extract<RenderCommand, { type: "SetProps" }> => cmd.type === "SetProps" && typeof cmd.props.title === "string");
-    const b = buttons.find(cmd => cmd.props.title === "b:0")!.nodeId;
-    const swap = buttons.find(cmd => cmd.props.title === "swap")!.nodeId;
+    const buttons = first.commands.filter((cmd): cmd is Extract<RenderCommand, { type: "SetProps" }> => cmd.type === "SetProps" && typeof cmd.props.accessibilityLabel === "string");
+    const b = buttons.find(cmd => cmd.props.accessibilityLabel === "b:0")!.nodeId;
+    const swap = buttons.find(cmd => cmd.props.accessibilityLabel === "swap")!.nodeId;
     h.send({ type: "Tap", nodeId: b, revision: 1 });
     h.drain();
     h.send({ type: "Tap", nodeId: swap, revision: 2 });
@@ -502,7 +506,7 @@ describe("reference Core", () => {
     h.send({ type: "CreateSurface", page: "component-bailout", width: 300, height: 100 });
     const first = h.drain().find(item => item.type === "Commit");
     if (!first || first.type !== "Commit") throw new Error("No initial commit");
-    const button = first.commands.find(item => item.type === "SetProps" && item.props.title === "update");
+    const button = first.commands.find(item => item.type === "SetProps" && item.props.accessibilityLabel === "update");
     if (!button || button.type !== "SetProps") throw new Error("Update button missing");
     const buttonId = button.nodeId;
     expect(childRenders).toBe(1);
@@ -530,7 +534,7 @@ describe("reference Core", () => {
     h.send({ type: "CreateSurface", page: "context-bailout", width: 300, height: 100 });
     const first = h.drain().find(item => item.type === "Commit");
     if (!first || first.type !== "Commit") throw new Error("No initial commit");
-    const button = first.commands.find(item => item.type === "SetProps" && item.props.title === "toggle");
+    const button = first.commands.find(item => item.type === "SetProps" && item.props.accessibilityLabel === "toggle");
     if (!button || button.type !== "SetProps") throw new Error("Toggle button missing");
     expect(childRenders).toBe(1);
     h.send({ type: "Tap", nodeId: button.nodeId, revision: 1 });
@@ -561,7 +565,7 @@ describe("reference Core", () => {
     expect(updated?.type).toBe("Commit");
     expect(parentRenders).toBe(1);
     expect(childRenders).toBe(2);
-    if (updated?.type === "Commit") expect(updated.commands.some(item => item.type === "SetProps" && item.props.title === "1")).toBe(true);
+    if (updated?.type === "Commit") expect(updated.commands.some(item => item.type === "SetProps" && item.props.accessibilityLabel === "1")).toBe(true);
     h.runtime.dispose();
   });
 

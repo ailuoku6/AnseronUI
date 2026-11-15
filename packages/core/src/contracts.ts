@@ -8,7 +8,7 @@ export interface RenderNode {
   frame: Frame; events: EventKind[]; children: RenderNode[];
 }
 export interface MeasureQuery {
-  requestId: number; nodeId: number; kind: "Text" | "RichText" | "Button" | "TextInput";
+  requestId: number; nodeId: number; kind: "Text" | "RichText" | "TextInput";
   text: string; fontSize: number; maxWidth: number; props: RenderProps; key: string;
 }
 export interface RenderRequest {
@@ -16,6 +16,8 @@ export interface RenderRequest {
   abi: number; surfaceId: number; generation: number; revision: number; round: number;
   width: number; height: number; tree: RenderNode[]; previous: RenderNode[];
   nextRequestId: number;
+  /** Optional diagnostic extension; omitted in normal builds. */
+  profile?: boolean;
   measureCache: { key: string; width: number; height: number; baseline: number }[];
 }
 export interface RenderResult {
@@ -23,6 +25,7 @@ export interface RenderResult {
   abi: number; surfaceId: number; generation: number; revision: number; round: number;
   frames: { nodeId: number; frame: Frame }[]; measures: MeasureQuery[];
   commands: RenderCommand[]; nextRequestId: number;
+  timings?: { syncMs: number; layoutMs: number; diffMs: number };
 }
 export interface ReleaseSurfaceRequest {
   type: "ReleaseSurface"; abi: number; surfaceId: number; generation: number;

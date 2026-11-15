@@ -7,6 +7,10 @@ const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
 let sequence = 0, ack = 0, revision = 0;
 const nodes = new Map();
 const modules = [];
+// Debug builds run the inspector from the same Core and therefore emit a
+// bounded HTTP snapshot request. Keep that transport call out of the
+// business-module assertions below; leaving it pending also prevents a test
+// double from creating an unbounded, zero-delay polling loop.
 async function send(payload) {
   child.stdin.write(payload ? JSON.stringify({ protocolMajor: 1, protocolMinor: 0, bundleBuildId: 'anseronui-demo', runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: 1, sequence: ++sequence, ackSequence: ack, payload }) + '\n' : '\n');
   const line = await lines.next();
@@ -47,12 +51,19 @@ async function settle(outputs) {
       const index = modules.indexOf(p); if (index >= 0) modules.splice(index, 1);
       queue.push(...await send({ type: 'ModuleResult', requestId: p.requestId, ok: true, value: JSON.stringify({ source: 'host', message: '原生参数' }) }));
     }
+    if (p.type === 'InvokeModule' && p.module === 'http' && p.method === 'request') {
+      let argument = null;
+      try { argument = JSON.parse(p.argument); } catch {}
+      if (argument?.url?.includes('/__anseronui_devtools/ingest')) {
+        const index = modules.indexOf(p); if (index >= 0) modules.splice(index, 1);
+      }
+    }
     if(p.type==='MeasureRequest') queue.push(...await send({type:'MeasureResult',requestId:p.requestId,nodeId:p.nodeId,width:Math.min(p.maxWidth,Math.ceil(p.text.length*p.fontSize*0.6+16)),height:p.fontSize*1.3+12,baseline:p.fontSize}));
     if(p.type==='Commit') queue.push(...await send({type:'CommitAck',revision:p.revision}));
   }
   throw new Error('Core did not settle');
 }
-const requiredNodes = ['View','Text','RichText','Button','TextInput','ScrollView','Image','Video'];
+const requiredNodes = ['View','Text','RichText','TextInput','ScrollView','Image','Video'];
 const handshake = await send({type:'Handshake',requiredNodes});
 assert.deepEqual(handshake.find(p => p.type === 'Ready')?.supportedNodes.slice().sort(), [...requiredNodes, "Native"].sort());
 await settle(handshake);
@@ -61,10 +72,10 @@ await settle(await send({type:'CreateSurface',page,width:390,height:844}));
 function node(field,value) { const match=[...nodes].find(([,props])=>props[field]===value); assert(match,`Missing ${field}=${value}; ${JSON.stringify([...nodes])}`);return match[0]; }
 if (page==='counter') {
   node('text','Count: 0');
-  await settle(await send({type:'Tap',nodeId:node('title','+1'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','+1'),revision}));
   node('text','Count: 1');
   node('text', '路由参数: ' + JSON.stringify({ source: 'host', message: '原生参数' }));
-  await settle(await send({ type: 'Tap', nodeId: node('title', '打开 Async Form'), revision }));
+  await settle(await send({ type: 'Tap', nodeId: node('accessibilityLabel', '打开 Async Form'), revision }));
   const navigation = modules.find(item => item.module === 'router' && item.method === 'push');
   assert(navigation, 'Missing route push');
   assert.deepEqual(JSON.parse(navigation.argument), { page: 'async-form', params: { source: 'counter', count: 1, message: '来自 Counter 的参数', options: { editable: true }, tags: ['路由', '示例'] } });
@@ -77,26 +88,26 @@ if (page==='counter') {
   const native = byID('extension-switch');
   assert.equal(nodes.get(native).kind, 'Native');
   assert.deepEqual(JSON.parse(nodes.get(native).nativeProps), {value:false});
-  await settle(await send({type:'Tap',nodeId:node('title','读取平台信息'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','读取平台信息'),revision}));
   let call = modules.shift(); assert.equal(call.module,'device'); assert.equal(call.method,'info');
   assert.deepEqual(JSON.parse(call.argument),{source:'tsx'});
   await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'{"platform":"Native test"}'}));
   node('text','平台: Native test');
   await settle(await send({type:'NativeEvent',nodeId:native,revision,event:'nativeComponent',value:'{"name":"change","data":{"value":true}}'}));
   node('text','开关: on');
-  await settle(await send({type:'Tap',nodeId:node('title','更新原生属性'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','更新原生属性'),revision}));
   assert.deepEqual(JSON.parse(nodes.get(native).nativeProps),{value:false});
-  await settle(await send({type:'Tap',nodeId:node('title','调用原生方法'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','调用原生方法'),revision}));
   call=modules.shift(); assert.equal(call.module,'__view'); assert.equal(call.method,'toggle'); assert.equal(JSON.parse(call.argument).nodeId,native);
   await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'{"value":true}'}));
   node('text','状态: ref toggle');
-  await settle(await send({type:'Tap',nodeId:node('title','组件 ref 聚焦'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','组件 ref 聚焦'),revision}));
   call=modules.shift(); assert.equal(call.method,'focus'); assert.equal(JSON.parse(call.argument).nodeId,byID('extension-input'));
   await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'null'}));
   node('text','状态: component focus');
-  await settle(await send({type:'Tap',nodeId:node('title','卸载原生组件'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','卸载原生组件'),revision}));
   assert(!nodes.has(native));
-  await settle(await send({type:'Tap',nodeId:node('title','检查卸载 ref'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','检查卸载 ref'),revision}));
   node('text','状态: ref cleared / stale rejected');
   // Exercise the typed service facade through real compiled AOT/Wasm code.
   await settle(await send({type:'Tap',nodeId:byID('native-storage'),revision}));
@@ -115,7 +126,7 @@ if (page==='counter') {
     await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:JSON.stringify(value)}));
   }
   assert(nodes.get(byID('native-status')).text.includes('Asia/Shanghai'));
-  await settle(await send({type:'Tap',nodeId:node('title','监听网络 / 窗口 / 主题 / 键盘 / 前后台 / 链接 / 传输'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','监听网络 / 窗口 / 主题 / 键盘 / 前后台 / 链接 / 传输'),revision}));
   for (let i=0;i<7;i++) {
     const index=modules.findIndex(item=>item.module==='capabilities'); assert(index>=0,'subscription capabilities '+JSON.stringify(modules));
     call=modules.splice(index,1)[0];
@@ -127,17 +138,28 @@ if (page==='counter') {
   call=modules.shift(); assert.equal(call.module,'events'); assert.equal(call.method,'next');
   await settle(await send({type:'ModuleResult',requestId:call.requestId,ok:true,value:'{"connected":false,"type":"none"}'}));
   assert(nodes.get(byID('native-events')).text.includes('false'), 'compiled subscription receives subsequent events');
-  await settle(await send({type:'Tap',nodeId:node('title','停止环境监听'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','停止环境监听'),revision}));
   node('text','已停止监听'); modules.length=0;
 
 
 } else if (page === 'components') {
-  assert.deepEqual([...new Set([...nodes.values()].map(props => props.kind))].sort(), requiredNodes.slice().sort());
+  assert.deepEqual([...new Set([...nodes.values()].map(props => props.kind))].sort(), requiredNodes.sort());
   const byID = id => node('testID', id);
   const scrollFrame = nodes.get(byID('component-scroll')).frame;
   assert.equal(scrollFrame.y, 112);
   assert.equal(scrollFrame.height, 844 - 112, 'Scroll viewport must fit the surface');
   assert(nodes.get(byID('scroll-footer')).frame.y > scrollFrame.height, 'Content must extend beyond the viewport');
+  node('text', 'Hook: 2 / double: 4');
+  node('text', 'render prop: ready');
+  node('text', 'children slot');
+  await settle(await send({type:'Tap',nodeId:byID('composition-increment'),revision}));
+  node('text', 'Hook: 3 / double: 6');
+  await settle(await send({type:'Tap',nodeId:byID('composition-hoc'),revision}));
+  node('text', 'HOC: 1');
+  await settle(await send({type:'Tap',nodeId:byID('composition-rerender'),revision}));
+  node('text', '父组件更新: 1');
+  node('text', 'HOC: 1');
+  node('text', 'Hook: 3 / double: 6');
   await settle(await send({type:'Tap',nodeId:byID('component-increment'),revision}));
   node('text','点击: 1');
   await settle(await send({type:'InputChange',nodeId:byID('component-input'),revision,value:'native showcase',inputRevision:1}));
@@ -150,8 +172,8 @@ if (page==='counter') {
   node('text','移动事件: 1');
   node('text','捕获收到移动: 1');
   node('text','外层收到移动: 0');
-  await settle(await send({type:'Tap',nodeId:node('title','允许事件冒泡'),revision}));
-  node('title','阻止事件冒泡');
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','允许事件冒泡'),revision}));
+  node('accessibilityLabel','阻止事件冒泡');
   await settle(await send({type:'NativeEvent',nodeId:byID('touch-pad'),targetId,revision,event:'touchMove',...touch}));
   node('text','移动事件: 2');
   node('text','捕获收到移动: 2');
@@ -273,20 +295,20 @@ if (page==='counter') {
   const updates=[];
   for(let i=1;i<='native task'.length;i++) updates.push(...await send({type:'InputChange',nodeId:input,revision,value:'native task'.slice(0,i),inputRevision:i}));
   // A tap can arrive while text measurement and input commits are still pending.
-  updates.push(...await send({type:'Tap',nodeId:node('title','Add task'),revision}));
+  updates.push(...await send({type:'Tap',nodeId:node('accessibilityLabel','Add task'),revision}));
   await settle(updates);
   node('text','native task');
-  await settle(await send({type:'Tap',nodeId:node('title','Wait'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','Wait'),revision}));
   node('text','Status: waiting');
   const timer=modules.shift(); assert.equal(timer.module,'timer');
   await settle(await send({type:'ModuleResult',requestId:timer.requestId,ok:true,value:''}));
   node('text','Status: done');
-  await settle(await send({type:'Tap',nodeId:node('title','Load message'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','Load message'),revision}));
   const http=modules.shift(); assert.equal(http.module,'http');
   await settle(await send({type:'ModuleResult',requestId:http.requestId,ok:true,value:'native HTTP'}));
   node('text','Status: native HTTP');
   // Dispose while an async handler is suspended: cancellation must unwind it.
-  await settle(await send({type:'Tap',nodeId:node('title','Wait'),revision}));
+  await settle(await send({type:'Tap',nodeId:node('accessibilityLabel','Wait'),revision}));
 }
 await settle(await send({type:'DestroySurface'}));
 child.stdin.end();

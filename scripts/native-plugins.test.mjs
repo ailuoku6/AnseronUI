@@ -66,7 +66,8 @@ test('rejects invalid schemas, missing sources, escaping paths and unsupported t
   const f = fixture();
   try {
     for (const mutate of [
-      spec => { spec.schemaVersion = 3; },
+      spec => { spec.schemaVersion = 4; },
+      spec => { spec.schemaVersion = 1.5; },
       spec => { spec.ios.factory = 'Bad();'; },
       spec => { delete spec.ios.factory; },
       spec => { spec.android.permissions = ['camera"/>']; },
@@ -86,6 +87,30 @@ test('rejects invalid schemas, missing sources, escaping paths and unsupported t
     f.manifest.anseronui.ios.sources = ['external'];
     write(join(f.plugin, 'package.json'), f.manifest);
     assert.throws(() => discoverNativePlugins(f.app), /escapes package/);
+  } finally { f.cleanup(); }
+});
+
+test('schema 3 validates and stages HarmonyOS native sources and permissions', () => {
+  const f = fixture();
+  try {
+    write(join(f.plugin, 'harmony/DevicePlugin.cpp'), '#include "extensions.h"\n');
+    const manifest = structuredClone(f.manifest);
+    manifest.anseronui.schemaVersion = 3;
+    manifest.anseronui.harmony = { sources: ['harmony'], permissions: ['ohos.permission.CAMERA'] };
+    write(join(f.plugin, 'package.json'), manifest);
+    const plugins = discoverNativePlugins(f.app);
+    assert.deepEqual(plugins[0].harmony.sources, [join(f.plugin, 'harmony/DevicePlugin.cpp')]);
+    assert.deepEqual(plugins[0].harmony.permissions, ['ohos.permission.CAMERA']);
+    const generated = generateNativePlugins(f.app, plugins, 'harmony');
+    assert.deepEqual(JSON.parse(readFileSync(join(generated, 'harmony.json'))), {
+      sources: [join(f.plugin, 'harmony/DevicePlugin.cpp')], permissions: ['ohos.permission.CAMERA'],
+    });
+    delete manifest.anseronui.harmony;
+    delete manifest.anseronui.ios;
+    delete manifest.anseronui.android;
+    delete manifest.anseronui.web;
+    write(join(f.plugin, 'package.json'), manifest);
+    assert.throws(() => discoverNativePlugins(f.app), /at least one platform/);
   } finally { f.cleanup(); }
 });
 

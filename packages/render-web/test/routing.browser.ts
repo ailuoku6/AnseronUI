@@ -3,6 +3,11 @@ import { counterPage } from '../../../examples/counter/page.js';
 import { asyncFormPage } from '../../../examples/async-form/page.js';
 
 export async function verifyRouting(): Promise<void> {
+  // A command-line WKWebView can stay document.hidden even with an ordered window.
+  // Control visibility notifications here; DOM measurement and page hosts remain real.
+  const visibilityDescriptor = Object.getOwnPropertyDescriptor(document, 'hidden');
+  let hidden = false;
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
   const root = document.createElement('div'); root.style.cssText = 'width:390px;height:844px'; document.body.append(root);
   const hosts: BrowserReferenceHost[] = []; let failure: unknown;
   const stack = new BrowserPageStack(root, async (surface, page, router) => {
@@ -11,14 +16,23 @@ export async function verifyRouting(): Promise<void> {
     await host.mount(page, 390, 844); return host;
   }, error => { failure = error; });
   const router = stack.router;
+  let stage = 'initial load';
+  (globalThis as typeof globalThis & { __anseronuiTestState?: () => unknown }).__anseronuiTestState = () => ({
+    stage, hidden: document.hidden, routes: router.routeStack, text: root.textContent,
+    hosts: hosts.map(host => ({ stats: host.runtime.getStats(), diagnostics: host.diagnostics })),
+  });
   const wait = async (condition: () => boolean) => { for (let i = 0; i < 100; i++) { if (failure) throw failure; await stack.host?.flush(); if (condition()) return; await new Promise(resolve => setTimeout(resolve, 5)); } throw new Error('Routing did not settle: ' + root.textContent); };
   const node = (id: string) => root.querySelector<HTMLElement>('[data-testid="' + id + '"]');
-  const click = (title: string) => { const button = Array.from(root.querySelectorAll('button')).find(item => item.textContent === title); if (!button) throw new Error('Missing route button: ' + title); button.click(); };
+  const click = (title: string) => { stage = title; const button = Array.from(root.querySelectorAll('button')).find(item => item.textContent === title); if (!button) throw new Error('Missing route button: ' + title); button.click(); };
   const assert = (value: unknown, message: string) => { if (!value) throw new Error(message); };
   try {
     router.load('counter', { original: '根参数', nested: { valid: true } });
     await wait(() => !!node('counter-route-params')?.textContent?.includes('根参数')); const original = stack.host;
     click('+1'); await wait(() => !!root.textContent?.includes('Count: 1'));
+    hidden = true; document.dispatchEvent(new Event('visibilitychange')); await stack.whenIdle();
+    click('+1'); await original!.flush();
+    assert(root.textContent?.includes('Count: 1'), 'Hidden route must ignore UI events');
+    hidden = false; document.dispatchEvent(new Event('visibilitychange')); await stack.whenIdle();
     click('打开 Async Form'); await wait(() => !!node('form-route-params')?.textContent?.includes('"count":1')); const form = stack.host;
     assert(node('form-route-params')?.textContent?.includes('来自 Counter 的参数'), 'Lost Unicode/nested route payload');
     const input = node('form-draft') as HTMLInputElement; input.value = '保留的输入草稿'; input.dispatchEvent(new Event('input', { bubbles: true })); await form!.flush();
@@ -31,7 +45,14 @@ export async function verifyRouting(): Promise<void> {
     assert(router.routeStack.length === 2 && stack.host !== form && (node('form-draft') as HTMLInputElement).value === '', 'replace releases only current entry');
     click('返回 Counter'); await wait(() => !!node('counter-route-params')?.textContent?.includes('根参数'));
     assert(root.textContent?.includes('Count: 1') && stack.host === original, 'back must restore original Counter instance and state');
-    router.load('counter'); await wait(() => stack.host !== original && !!root.textContent?.includes('Count: 0'));
+    stage = 'reload'; router.load('counter'); await wait(() => stack.host !== original && !!root.textContent?.includes('Count: 0'));
     for (const host of hosts) assert(host.diagnostics.length === 0, JSON.stringify(host.diagnostics));
-  } finally { await stack.destroy(); root.remove(); }
+  } finally {
+    try { await stack.destroy(); }
+    finally {
+      root.remove();
+      if (visibilityDescriptor) Object.defineProperty(document, 'hidden', visibilityDescriptor);
+      else delete (document as unknown as { hidden?: boolean }).hidden;
+    }
+  }
 }

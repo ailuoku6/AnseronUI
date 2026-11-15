@@ -164,3 +164,11 @@ macOS 平台使用插件清单 `schemaVersion: 2`，新增 `macos: { sources: ["
 参考 [macOS Renderer](../packages/render-macos/README.md) 与 `examples/native-plugin/macos/DevicePlugin.swift`。
 
 标准 HTTP、存储、设备信息、权限、定位、分享、文件传输等无需自行注册，见[标准系统能力与用例](native-services.md)。标准方法由框架实现优先处理，自定义扩展请使用自己的命名空间。
+
+## HarmonyOS 插件
+
+插件 schemaVersion:3 可声明 harmony: { sources:["harmony"], permissions:["ohos.permission.ACCESS_BLUETOOTH"] }。C++ 源码包含 extensions.h，在动态库初始化注册 registerComponent / registerModule；回调在 ArkUI 主线程执行。NativeComponent 返回 node、可选 content、setProps、invoke 和 dispose。setProps 接收完整 JSON 文本；Emit 发送 {"name":"change","data":{...}} 的 JSON，invoke 返回 JSON 兼容 NAPI 值或 Promise。
+
+用 addNodeEventReceiver 绑定自有控件事件，勿替换全局 registerNodeEventReceiver；销毁时注销所有回调。框架隔离插件 userData 与自己的 Node，并丢弃卸载后迟到 Emit。异步原生回调必须先切回 ArkUI 主线程。组件需支持内容时返回 content，空 content 为叶子。
+
+仓库 examples/native/harmony/DemoExtensions.cpp 提供可运行 DemoSwitch 与 device.info；独立 App 不会自动包含此示例。真实属性更新、ref.toggle、change 事件与 Module 已纳入 test:harmony:device。

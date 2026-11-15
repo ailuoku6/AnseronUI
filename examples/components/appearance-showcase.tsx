@@ -1,5 +1,5 @@
-import { View, Text, RichText, TextInput, definePage, useState } from "@anseronui/ui";
-import type { UIElement } from "@anseronui/ui";
+import { View, Text, RichText, TextInput, Image, definePage, useState, useEffect, useServices } from "@anseronui/ui";
+import type { UIElement, LayoutEvent } from "@anseronui/ui";
 
 export function AppearanceShowcase(): UIElement {
   const [value, setValue] = useState("");
@@ -53,12 +53,33 @@ export function AppearanceShowcase(): UIElement {
 }
 
 export function AppearancePage(): UIElement {
+  const services = useServices();
+  const [theme, setTheme] = useState("loading");
+  const [frame, setFrame] = useState("等待布局");
+  const [source, setSource] = useState("loading");
+  useEffect(() => {
+    let active = true;
+    let notified = false;
+    const unsubscribe = services.appearance.subscribe(value => { notified = true; if (active) setTheme(value); });
+    services.appearance.get().then(value => { if (active && !notified) setTheme(value); });
+    return () => { active = false; unsubscribe(); };
+  }, []);
   return <View testID="appearance-root" style={{
     flexDirection: "column", flexGrow: 1, padding: 24, gap: 18,
     backgroundColor: "#f3f5fa", dmBackgroundColor: "#111722",
   }}>
     <Text style={{ height: 32, fontSize: 25, fontWeight: "bold", color: "#19283f", dmColor: "#f2f5fc" }}>外观样式</Text>
-    <Text style={{ height: 40, fontSize: 14, color: "#61718a", dmColor: "#b0bfd8" }}>两种配色，同一份页面。输入文字后切换外观，内容会保留。</Text>
+    <View style={{ flexDirection: "row", height: 60, gap: 12 }}>
+      <Image testID="appearance-image" src="asset://theme-light.png" dmSrc="asset://theme-dark.png"
+        resizeMode="contain" style={{ width: 90, height: 45 }}
+        onLoad={(value: string) => setSource(value)}
+        onLayout={(value: LayoutEvent) => setFrame(value.x + "," + value.y + " " + value.width + "×" + value.height)} />
+      <View style={{ flexDirection: "column", flexGrow: 1 }}>
+        <Text testID="appearance-mode" style={{ fontSize: 14, lineHeight: 20, color: "#19283f", dmColor: "#f2f5fc" }}>{"主题: " + theme}</Text>
+        <Text testID="appearance-image-source" style={{ fontSize: 11, lineHeight: 16, color: "#61718a", dmColor: "#b0bfd8" }}>{source}</Text>
+        <Text testID="appearance-image-layout" style={{ fontSize: 11, lineHeight: 16, color: "#61718a", dmColor: "#b0bfd8" }}>{"onLayout: " + frame}</Text>
+      </View>
+    </View>
     <AppearanceShowcase />
   </View>;
 }

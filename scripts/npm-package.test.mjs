@@ -22,8 +22,19 @@ test('packed SDK creates a portable app with all native templates and no private
     const paths = pack.files.map(file => file.path);
     assert.ok(paths.includes('LICENSE'));
     assert.ok(paths.includes('THIRD_PARTY_NOTICES.md'));
+    assert.ok(paths.includes('dist/sdk/packages/devtools/src/panel/index.html'));
+    assert.ok(paths.some(path => /^dist\/sdk\/packages\/devtools\/src\/panel\/assets\/.*\.js$/.test(path)));
+    assert.ok(paths.includes('dist/sdk/packages/devtools/src/client.ts'));
+    assert.ok(paths.includes('dist/sdk/packages/devtools/src/vite.ts'));
     assert.ok(!paths.some(path => path.endsWith('/.DS_Store')));
     for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'docs/app-icons.md', 'docs/styles.md', 'scripts/anseronui.mjs', 'scripts/templates/app/gitignore',
+      'docs/harmonyos.md', 'scripts/harmony-app.mjs', 'scripts/harmony-library.mjs',
+      'packages/render-harmony/src/main/ets/HarmonyMedia.ets', 'packages/render-harmony/src/main/ets/HarmonyVideoSurface.ets',
+      'packages/render-harmony/src/main/ets/HarmonyApplicationServices.ets', 'packages/render-harmony/src/main/ets/HarmonyRadioServices.ets',
+      'packages/render-harmony/src/main/cpp/bridge.cpp', 'packages/render-harmony/src/main/cpp/touch_policy.h',
+      'scripts/templates/app/platforms/harmony/entry/src/main/ets/workability/WorkAbility.ets',
+      'scripts/templates/app/platforms/harmony/entry/src/main/ets/ServiceSetup.ets',
+      'scripts/templates/app/platforms/harmony/entry/src/main/cpp/types/libanseronui/Index.d.ts',
       'scripts/native-plugins.mjs', 'scripts/macos-app.mjs', 'scripts/app-icons.mjs', 'scripts/web-app.mjs', 'scripts/templates/app/platforms/macos/App.swift',
       'scripts/templates/app/assets/icons/app.png', 'scripts/templates/app/assets/icons/app-dark.png',
       'scripts/templates/app/assets/icons/app-tinted.png', 'scripts/templates/app/assets/icons/android-monochrome.xml',
@@ -66,6 +77,9 @@ test('packed SDK creates a portable app with all native templates and no private
     const metadata = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8'));
     assert.equal(metadata.dependencies.anseronui, pack.version);
     assert.equal(metadata.scripts.ios, 'anseronui run ios');
+    assert.equal(metadata.scripts.harmony, 'anseronui run harmony');
+    assert.ok(existsSync(join(app, 'platforms/harmony/entry/src/main/ets/entryability/EntryAbility.ets')));
+    assert.ok(existsSync(join(app, 'platforms/harmony/entry/src/main/ets/workability/WorkAbility.ets')));
     assert.ok(existsSync(join(app, '.gitignore')));
     assert.match(readFileSync(join(app, 'src/pages/home.tsx'), 'utf8'), /from "anseronui\/ui"/);
     const sdk = join(directory, 'package/dist/sdk');

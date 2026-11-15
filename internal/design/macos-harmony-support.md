@@ -1,5 +1,7 @@
 # macOS 与鸿蒙平台支持技术方案
 
+> 2026-11-14：鸿蒙部分的最新调研与实施设计见 [原生鸿蒙支持调研与技术设计](harmonyos-native-support.md)。新文按当前工作区的协议 1.5、插件 schema 2、路由保活及虚拟列表重新核对；本文继续保留 macOS 实施与历史设计记录。鸿蒙仍未实现。
+
 - 日期：2026-11-09
 - 状态：macOS AppKit 首期已实现并验证；鸿蒙仍为待实施方案。下文保留原始设计与分阶段验收，当前实现以 `packages/render-macos/README.md` 为准。
 - 适用项目：AnseronUI，当前共享 TSX → scriptc AOT Core → 平台原生 Renderer 架构。
@@ -246,7 +248,7 @@ scripts/templates/app/platforms/harmony/
 | --- | --- | --- |
 | View | Native 容器/自定义布局节点 | 子节点顺序、绝对 frame、背景、边框、裁剪 |
 | Text | Native 文本节点与平台文本测量 | 换行、字体缩放、宽高约束与测量结果一致 |
-| Button | 原生按钮或具备完整按钮语义的组合节点 | 点击、禁用、焦点、标题测量 |
+| Button | 共享 View/Text 组合，保留按钮无障碍语义 | 点击、禁用、焦点、标题测量 |
 | TextInput | Native 输入节点 | 编辑、组合输入、选区、焦点、受控值回写 |
 | ScrollView | Native 滚动节点及显式内容容器 | 内容尺寸、偏移单位、嵌套滚动与事件 |
 | Image | 原生图片加载与显示 | 本地/网络资源、缩放模式、取消与错误 |

@@ -26,6 +26,13 @@ class WasmModule {
     const wasi = {
       environ_sizes_get(count: number, size: number) { view().setUint32(count, 0, true); view().setUint32(size, 0, true); return 0; },
       environ_get() { return 0; },
+      random_get(pointer: number, length: number) {
+        const bytes = new Uint8Array(api.memory.buffer, pointer, length);
+        // Web Crypto limits each call to 64 KiB. Each Core instance needs
+        // independent entropy, including when pages mount in the same ms.
+        for (let offset = 0; offset < length; offset += 65536) crypto.getRandomValues(bytes.subarray(offset, offset + 65536));
+        return 0;
+      },
       clock_time_get(clock: number, _precision: bigint, result: number) {
         if (clock !== 0 && clock !== 1) return 28;
         const ms = clock === 0 ? Date.now() : performance.now();
@@ -63,6 +70,7 @@ class WasmModule {
     api._initialize();
     return new WasmModule(api, prefix);
   }
+  get memoryBytes(): number { return this.api.memory.buffer.byteLength; }
   call(name: string, ...args: number[]): number {
     const fn = this.api[this.prefix + name];
     if (typeof fn !== 'function') throw new Error('BUNDLE_EXPORT_MISSING: ' + this.prefix + name);
@@ -126,6 +134,10 @@ export class WasmRuntime implements BrowserRuntimeAdapter {
     }
     business.call('create');
     return new WasmRuntime(business, framework, bundleBuildId);
+  }
+  /** Linear-memory capacity, including allocator free space; not live object size. */
+  getMemoryStats(): { businessMemoryBytes: number; frameworkMemoryBytes: number } {
+    return { businessMemoryBytes: this.business.memoryBytes, frameworkMemoryBytes: this.framework.memoryBytes };
   }
   post(input: Envelope<InputPayload>): void {
     if (this.disposed) throw new Error('CORE_DISPOSED');

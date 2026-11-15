@@ -15,6 +15,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.anseronui.render.AndroidCoreTransport
+import org.anseronui.render.AndroidHost
 import org.anseronui.render.AnseronUIRenderView
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
@@ -23,6 +24,110 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class RenderViewTest {
+    @Test fun textLineHeightAndDarkImageSource() {
+        val testActivity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        val base = instrumentation.targetContext
+        val config = android.content.res.Configuration(base.resources.configuration)
+        config.uiMode = (config.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or android.content.res.Configuration.UI_MODE_NIGHT_NO
+        val context = base.createConfigurationContext(config)
+        lateinit var renderer: AndroidRenderer
+        val directory = java.io.File(base.cacheDir, "image-theme-test").apply { mkdirs() }
+        fun image(name: String, width: Int): String {
+            val file = java.io.File(directory, name + ".png")
+            val bitmap = android.graphics.Bitmap.createBitmap(width, 4, android.graphics.Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(android.graphics.Color.BLUE)
+            file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+            return file.toURI().toString()
+        }
+        val light = image("light", 8); val dark = image("dark", 12)
+        try {
+            instrumentation.runOnMainSync {
+                val root = FrameLayout(context); testActivity.setContentView(root)
+                renderer = AndroidRenderer(root)
+                renderer.applyJson(JSONObject().put("type", "Commit").put("revision", 1).put("commands", org.json.JSONArray()
+                    .put(JSONObject().put("type", "CreateNode").put("nodeId", 1).put("kind", "Image"))
+                    .put(JSONObject().put("type", "SetProps").put("nodeId", 1).put("props", JSONObject().put("src", light).put("dmSrc", dark)))).toString())
+                val measured = renderer.measure("Text", "first\nsecond", 16f, 200f, JSONObject().put("text", "first\nsecond").put("fontSize", 16).put("lineHeight", 30))
+                assertEquals(60f, measured.height, 1f)
+            }
+            fun waitWidth(width: Int) {
+                val until = SystemClock.uptimeMillis() + 5000
+                var actual = 0
+                do { instrumentation.runOnMainSync { actual = ((renderer.viewFor(1) as android.widget.ImageView).drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap?.width ?: 0 }; if (actual == width) return; SystemClock.sleep(25) } while (SystemClock.uptimeMillis() < until)
+                assertEquals(width, actual)
+            }
+            waitWidth(8)
+            instrumentation.runOnMainSync {
+                config.uiMode = (config.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or android.content.res.Configuration.UI_MODE_NIGHT_YES
+                context.resources.updateConfiguration(config, context.resources.displayMetrics); renderer.appearanceChanged()
+            }
+            waitWidth(12)
+            instrumentation.runOnMainSync {
+                config.uiMode = (config.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or android.content.res.Configuration.UI_MODE_NIGHT_NO
+                context.resources.updateConfiguration(config, context.resources.displayMetrics); renderer.appearanceChanged()
+            }
+            waitWidth(8)
+        } finally { instrumentation.runOnMainSync { renderer.clear(); testActivity.finish() }; directory.deleteRecursively() }
+    }
+    @Test fun primitiveButtonBindsAndUnbindsClicksWithoutMakingLabelClickable() = ui {
+        val root = FrameLayout(instrumentation.targetContext)
+        val events = mutableListOf<RendererEvent>()
+        val renderer = AndroidRenderer(root, onEvent = { events.add(it) })
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+            {"type":"CreateNode","nodeId":1,"kind":"View"},
+            {"type":"CreateNode","nodeId":2,"kind":"Text"},
+            {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+            {"type":"InsertChild","nodeId":2,"parentId":1,"index":0},
+            {"type":"SetProps","nodeId":1,"props":{"accessibilityRole":"button"}},
+            {"type":"SetProps","nodeId":2,"props":{"text":"Confirm"}},
+            {"type":"BindEvent","nodeId":1,"event":"tap","enabled":true},
+            {"type":"BindEvent","nodeId":1,"event":"longPress","enabled":true}
+        ]}""")
+        val button = renderer.viewFor(1)!!
+        val label = renderer.viewFor(2)!!
+        assertTrue(button is android.view.ViewGroup)
+        assertTrue(button.isClickable); assertTrue(button.isLongClickable)
+        assertFalse(label.isClickable); assertFalse(label.isLongClickable)
+        button.performClick(); button.performLongClick()
+        assertEquals(listOf("Tap", "NativeEvent"), events.map { it.type })
+        renderer.applyJson("""{"type":"Commit","revision":2,"commands":[
+            {"type":"SetProps","nodeId":1,"props":{"accessibilityRole":"button","disabled":true}},
+            {"type":"BindEvent","nodeId":1,"event":"tap","enabled":false},
+            {"type":"BindEvent","nodeId":1,"event":"longPress","enabled":false}
+        ]}""")
+        assertFalse(button.isEnabled); assertFalse(button.isClickable); assertFalse(button.isLongClickable)
+        button.performClick(); button.performLongClick(); assertEquals(2, events.size)
+        renderer.applyJson("""{"type":"Commit","revision":3,"commands":[
+            {"type":"SetProps","nodeId":1,"props":{"accessibilityRole":"button"}},
+            {"type":"BindEvent","nodeId":1,"event":"tap","enabled":true}
+        ]}""")
+        button.performClick(); assertEquals(3, events.size)
+        renderer.clear()
+    }
+    @Test fun recycledTextResetsVisualStateAndEventIdentity() = ui {
+        val root = FrameLayout(instrumentation.targetContext)
+        val events = mutableListOf<RendererEvent>()
+        val renderer = AndroidRenderer(root, onEvent = { events.add(it) })
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+            {"type":"CreateNode","nodeId":1,"kind":"Text"},
+            {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+            {"type":"SetProps","nodeId":1,"props":{"text":"old","fontStyle":"italic","lineHeight":40,"numberOfLines":1,"testID":"old"}},
+            {"type":"BindEvent","nodeId":1,"event":"tap","enabled":true}
+        ]}""")
+        val text = renderer.viewFor(1) as TextView
+        renderer.applyJson("""{"type":"Commit","revision":2,"commands":[
+            {"type":"RemoveNode","nodeId":1},
+            {"type":"CreateNode","nodeId":2,"kind":"Text"},
+            {"type":"InsertChild","nodeId":2,"parentId":0,"index":0},
+            {"type":"SetProps","nodeId":2,"props":{"text":"new"}},
+            {"type":"BindEvent","nodeId":2,"event":"tap","enabled":true}
+        ]}""")
+        assertSame(text, renderer.viewFor(2))
+        assertEquals("new", text.text.toString()); assertEquals(Int.MAX_VALUE, text.maxLines)
+        assertFalse(text.typeface.isItalic); assertNull(text.transitionName); assertTrue(text.includeFontPadding)
+        text.performClick(); assertEquals(listOf(2L), events.map { it.nodeId })
+        renderer.clear()
+    }
     @Test fun darkStylesShadowPixelsAndInputSurviveAppearanceChanges() = ui {
         val configuration = android.content.res.Configuration(instrumentation.targetContext.resources.configuration)
         configuration.uiMode = (configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or android.content.res.Configuration.UI_MODE_NIGHT_NO
@@ -76,6 +181,30 @@ class RenderViewTest {
     private fun layout(view: View, width: Int, height: Int) {
         view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
         view.layout(0, 0, width, height)
+    }
+
+    @Test fun scrollViewportClipsOverscanRowsOutsideItsBounds() = ui {
+        val root = FrameLayout(instrumentation.targetContext).apply { setBackgroundColor(android.graphics.Color.BLUE) }
+        val renderer = AndroidRenderer(root)
+        val density = root.resources.displayMetrics.density
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+            {"type":"CreateNode","nodeId":1,"kind":"ScrollView"},
+            {"type":"CreateNode","nodeId":2,"kind":"View"},
+            {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+            {"type":"InsertChild","nodeId":2,"parentId":1,"index":0},
+            {"type":"SetProps","nodeId":1,"props":{"showsVerticalScrollIndicator":false}},
+            {"type":"SetProps","nodeId":2,"props":{"backgroundColor":"#ff0000"}},
+            {"type":"SetFrame","nodeId":1,"frame":{"x":0,"y":100,"width":200,"height":200}},
+            {"type":"SetFrame","nodeId":2,"frame":{"x":0,"y":0,"width":200,"height":1000}}
+        ]}""")
+        layout(root, (320 * density).toInt(), (480 * density).toInt())
+        (renderer.viewFor(1) as ScrollView).scrollTo(0, (300 * density).toInt())
+        val bitmap = android.graphics.Bitmap.createBitmap(root.width, root.height, android.graphics.Bitmap.Config.ARGB_8888)
+        root.draw(android.graphics.Canvas(bitmap))
+        assertEquals("overscan must not paint above the viewport", android.graphics.Color.BLUE, bitmap.getPixel((50 * density).toInt(), (50 * density).toInt()))
+        assertEquals(android.graphics.Color.RED, bitmap.getPixel((50 * density).toInt(), (150 * density).toInt()))
+        assertEquals("overscan must not paint below the viewport", android.graphics.Color.BLUE, bitmap.getPixel((50 * density).toInt(), (350 * density).toInt()))
+        renderer.clear(); bitmap.recycle()
     }
 
     @Test fun richTextParsesCoreSpanPayloadAndDisabledButtonHasDistinctStyle() = ui {
@@ -316,6 +445,334 @@ class RenderViewTest {
         renderer.clear()
     }
 
+    @Test fun compiledVariableListMeasuresScrollsAndSuspendsVisibleWork() {
+        lateinit var view: AnseronUIRenderView
+        val errors = ConcurrentLinkedQueue<String>()
+        fun descendants(root: android.view.View): List<android.view.View> = if (root is android.view.ViewGroup) (0 until root.childCount).flatMap { listOf(root.getChildAt(it)) + descendants(root.getChildAt(it)) } else emptyList()
+        val intent = android.content.Intent(instrumentation.targetContext, MainActivity::class.java).apply { addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK); putExtra("page", "virtual-list") }
+        val activity = instrumentation.startActivitySync(intent)
+        ui {
+            view = descendants(activity.window.decorView).filterIsInstance<AnseronUIRenderView>().first()
+            view.onFailure = { errors.add(it.toString()) }
+            view.onDiagnostic = { code, message -> errors.add("$code: $message") }
+        }
+        fun waitUi(message: String, condition: () -> Boolean) {
+            val end = SystemClock.uptimeMillis() + 10000
+            var done = false
+            while (!done && errors.isEmpty() && SystemClock.uptimeMillis() < end) { ui { done = condition() }; if (!done) SystemClock.sleep(10) }
+            var snapshot = ""
+            if (!done) ui { snapshot = descendants(view).filterIsInstance<TextView>().take(20).joinToString { it.text.toString().take(60) } + "; scroll=" + descendants(view).filterIsInstance<ScrollView>().map { "${it.scrollY}/${it.height}/${it.getChildAt(0)?.height}" } }
+            assertTrue("$message: $errors $snapshot", done && errors.isEmpty())
+        }
+        fun button(title: String) = descendants(view).filterIsInstance<android.widget.Button>().first { it.text.toString() == title }
+        try {
+            waitUi("compiled list first frame") { descendants(view).filterIsInstance<android.widget.Button>().any { it.text.toString() == "展开" } }
+            var initial = 0
+            ui { val first = descendants(view).filterIsInstance<android.widget.Button>().first { it.text.toString() == "展开" }; initial = descendants(view).first { it.transitionName == "list-row-0" }.height; first.performClick() }
+            waitUi("variable row expands") { descendants(view).filterIsInstance<android.widget.Button>().any { it.text.toString() == "收起" && (descendants(view).firstOrNull { row -> row.transitionName == "list-row-0" }?.height ?: 0) > initial } }
+            ui { button("跳到第 4000 项").performClick() }
+            waitUi("deep virtual window") { descendants(view).filterIsInstance<TextView>().any { it.text.toString().replace(" ", "") == "第4000项" } }
+            ui { assertTrue(descendants(view).filterIsInstance<android.widget.Button>().size < 60); button("头部插入").performClick() }
+            waitUi("prepend retains visible target") { descendants(view).filterIsInstance<TextView>().any { it.text.toString().replace(" ", "") == "第4000项" } }
+            lateinit var ticks: TextView; var before = ""
+            val hidden = java.util.concurrent.atomic.AtomicBoolean(false)
+            ui {
+                ticks = descendants(view).filterIsInstance<TextView>().first { it.text.toString().startsWith("可见秒数：") }
+                view.onRuntimeStats = { hidden.set(it.getInt("hiddenSurfaces") == 1 && it.getInt("pendingRenders") == 0) }
+                view.setVisibility(false); view.inspectRuntime(enabled = false)
+            }
+            val hiddenDeadline = SystemClock.uptimeMillis() + 5000
+            while (!hidden.get() && SystemClock.uptimeMillis() < hiddenDeadline) { SystemClock.sleep(25); ui { view.inspectRuntime(enabled = false) } }
+            assertTrue("hidden render drained", hidden.get())
+            ui { before = ticks.text.toString() }
+            SystemClock.sleep(1200)
+            ui { assertEquals(before, ticks.text.toString()); view.setVisibility(true) }
+            waitUi("visible timer resumes") { ticks.text.toString() != before }
+            ui { val density = view.resources.displayMetrics.density; layout(view, (240 * density).toInt(), (700 * density).toInt()) }
+            waitUi("bounded viewport after resize") { descendants(view).filterIsInstance<ScrollView>().first().height <= view.height && descendants(view).filterIsInstance<android.widget.Button>().size < 60 }
+        } finally { ui { view.destroy(); activity.finish() } }
+    }
+
+    @Test fun compiledVariableListCatchesUpToFastScrollWithoutReplayingOldWindows() {
+        fun descendants(root: View): List<View> = if (root is android.view.ViewGroup) (0 until root.childCount).flatMap { listOf(root.getChildAt(it)) + descendants(root.getChildAt(it)) } else emptyList()
+        val intent = android.content.Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK); putExtra("page", "virtual-list")
+        }
+        val activity = instrumentation.startActivitySync(intent)
+        lateinit var view: AnseronUIRenderView
+        lateinit var scroll: ScrollView
+        val errors = ConcurrentLinkedQueue<String>()
+        ui {
+            view = descendants(activity.window.decorView).filterIsInstance<AnseronUIRenderView>().first()
+            view.onFailure = { errors.add(it.toString()) }
+            view.onDiagnostic = { code, message -> errors.add("$code: $message") }
+        }
+        fun waitFor(message: String, timeout: Long = 10000, condition: () -> Boolean) {
+            val started = SystemClock.uptimeMillis()
+            val end = started + timeout
+            var done = false
+            while (!done && errors.isEmpty() && SystemClock.uptimeMillis() < end) {
+                ui { done = condition() }; if (!done) SystemClock.sleep(10)
+            }
+            var snapshot = ""
+            if (!done) ui {
+                snapshot = descendants(view).filterIsInstance<ScrollView>().joinToString { "scroll=${it.scrollY}, viewport=${it.height}, content=${it.getChildAt(0)?.height}" } +
+                    "; rows=" + descendants(view).filter { it.transitionName?.startsWith("list-row-") == true }.joinToString { row ->
+                        val point = IntArray(2); row.getLocationOnScreen(point); "${row.transitionName}:${point[1]}..${point[1] + row.height}"
+                    }
+            }
+            assertTrue("$message: $errors $snapshot", done && errors.isEmpty())
+            android.util.Log.i("AnseronUIListTest", "$message: ${SystemClock.uptimeMillis() - started} ms")
+        }
+        fun coversViewport(): Boolean {
+            val location = IntArray(2); scroll.getLocationOnScreen(location)
+            val top = location[1]; val bottom = top + scroll.height
+            val rows = descendants(scroll).filter { it.transitionName?.startsWith("list-row-") == true }
+                .map { row -> val point = IntArray(2); row.getLocationOnScreen(point); point[1] to point[1] + row.height }.sortedBy { it.first }
+            var covered = top
+            for ((start, end) in rows) {
+                if (end <= covered) continue
+                if (start > covered + 2) return false
+                covered = end
+                if (covered >= bottom) return true
+            }
+            return false
+        }
+        try {
+            waitFor("first list frame") {
+                val candidate = descendants(view).filterIsInstance<ScrollView>().firstOrNull()
+                if (candidate == null) false else { scroll = candidate; coversViewport() }
+            }
+            // Let initial onLayout/ref corrections finish before starting input.
+            SystemClock.sleep(500)
+            // Deliver offsets faster than an asynchronous Core can measure/commit.
+            // Old behavior re-rendered all 60 abandoned windows and stayed blank.
+            var requested = 0
+            ui {
+                requested = (24000 * view.resources.displayMetrics.density).toInt()
+                for (i in 1..60) scroll.scrollTo(0, (i * 400 * view.resources.displayMetrics.density).toInt())
+            }
+            waitFor("latest viewport filled after scroll burst", 2000) { scroll.scrollY >= requested - scroll.height && coversViewport() }
+            // Real touch movement followed by a held finger stops the fling at the
+            // native position; verify every pixel of the viewport receives rows.
+            val point = IntArray(2); var x = 0f; var fromY = 0f; var toY = 0f
+            ui { scroll.getLocationOnScreen(point); x = point[0] + scroll.width * 0.85f; fromY = point[1] + scroll.height * 0.8f; toY = point[1] + scroll.height * 0.2f }
+            var down = SystemClock.uptimeMillis()
+            fun touch(action: Int, y: Float) {
+                val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0)
+                event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                instrumentation.sendPointerSync(event); event.recycle()
+            }
+            touch(MotionEvent.ACTION_DOWN, fromY)
+            for (i in 1..12) { SystemClock.sleep(10); touch(MotionEvent.ACTION_MOVE, fromY + (toY - fromY) * i / 12) }
+            touch(MotionEvent.ACTION_UP, toY)
+            SystemClock.sleep(250)
+            down = SystemClock.uptimeMillis(); touch(MotionEvent.ACTION_DOWN, toY)
+            SystemClock.sleep(150); touch(MotionEvent.ACTION_UP, toY)
+            var stoppedOffset = 0
+            ui { stoppedOffset = scroll.scrollY }
+            waitFor("latest viewport filled after touch scroll", 2000) { scroll.scrollY >= stoppedOffset - scroll.height && coversViewport() }
+            // A queued old correction must not rewind the viewport after it fills.
+            SystemClock.sleep(500)
+            ui { assertTrue("viewport stays at latest position", scroll.scrollY >= stoppedOffset - scroll.height); assertTrue("viewport stays filled", coversViewport()) }
+            ui { assertTrue("bounded mounted rows", descendants(scroll).count { it.transitionName?.startsWith("list-row-") == true } <= 32) }
+        } finally { ui { view.destroy(); activity.finish() } }
+    }
+
+    @Test fun scrollAnchorAdjustsTheLatestNativePositionInTheSameLayout() = ui {
+        val root = FrameLayout(instrumentation.targetContext)
+        val renderer = AndroidRenderer(root)
+        val density = root.resources.displayMetrics.density
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+          {"type":"CreateNode","nodeId":1,"kind":"ScrollView"},
+          {"type":"CreateNode","nodeId":2,"kind":"View"},
+          {"type":"CreateNode","nodeId":3,"kind":"View"},
+          {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+          {"type":"InsertChild","nodeId":2,"parentId":1,"index":0},
+          {"type":"InsertChild","nodeId":3,"parentId":2,"index":0},
+          {"type":"SetProps","nodeId":1,"props":{"scrollAnchorOffset":0}},
+          {"type":"SetFrame","nodeId":1,"frame":{"x":0,"y":0,"width":320,"height":480}},
+          {"type":"SetFrame","nodeId":2,"frame":{"x":0,"y":0,"width":320,"height":3000}},
+          {"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":400,"width":320,"height":100}}
+        ]}""")
+        layout(root, (320*density).toInt(), (480*density).toInt())
+        val scroll = renderer.viewFor(1) as ScrollView
+        scroll.scrollTo(0,(300*density).toInt())
+        val before = renderer.viewFor(3)!!.top - scroll.scrollY
+        renderer.applyJson("""{"type":"Commit","revision":2,"commands":[
+          {"type":"SetProps","nodeId":1,"props":{"scrollAnchorOffset":80}},
+          {"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":480,"width":320,"height":100}}
+        ]}""")
+        // Native movement may continue between receipt of the commit and layout.
+        scroll.scrollTo(0,(340*density).toInt())
+        layout(root, (320*density).toInt(), (480*density).toInt())
+        assertEquals((420*density).toInt(), scroll.scrollY)
+        assertEquals(before - (40*density).toInt(), renderer.viewFor(3)!!.top - scroll.scrollY)
+        renderer.clear()
+    }
+
+    @Test fun compiledVariableListSustainsBidirectionalFlings() {
+        fun descendants(root: View): List<View> = if (root is android.view.ViewGroup) (0 until root.childCount).flatMap { listOf(root.getChildAt(it)) + descendants(root.getChildAt(it)) } else emptyList()
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK); putExtra("page", "virtual-list")
+        })
+        lateinit var view: AnseronUIRenderView; lateinit var scroll: ScrollView
+        val errors = ConcurrentLinkedQueue<String>()
+        ui {
+            view = descendants(activity.window.decorView).filterIsInstance<AnseronUIRenderView>().first()
+            view.onFailure = { errors.add(it.toString()) }
+            view.onDiagnostic = { code, message -> errors.add("$code: $message") }
+        }
+        try {
+            val deadline = SystemClock.uptimeMillis() + 10000
+            var mounted = false
+            while (!mounted && SystemClock.uptimeMillis() < deadline) {
+                ui { val candidate = descendants(view).filterIsInstance<ScrollView>().firstOrNull(); if (candidate != null && descendants(candidate).any { it.transitionName == "list-row-3" }) { scroll = candidate; mounted = true } }
+                SystemClock.sleep(20)
+            }
+            assertTrue(mounted); SystemClock.sleep(500)
+            ui { scroll.scrollTo(0, (30000 * view.resources.displayMetrics.density).toInt()) }
+            // Start the fling after the preceding deep jump has actually
+            // settled, rather than assuming a fixed sleep finishes layout.
+            val jumpDeadline = SystemClock.uptimeMillis() + 10000
+            var stableSince = 0L; var lastOffset = -1
+            while (SystemClock.uptimeMillis() < jumpDeadline) {
+                var covered = false; var offset = 0
+                ui {
+                    offset = scroll.scrollY
+                    val origin = IntArray(2); scroll.getLocationOnScreen(origin)
+                    var edge = origin[1]
+                    val rows = descendants(scroll).filter { it.transitionName?.startsWith("list-row-") == true }.map {
+                        val point = IntArray(2); it.getLocationOnScreen(point); point[1] to point[1] + it.height
+                    }.sortedBy { it.first }
+                    for (row in rows) { if (row.second <= edge) continue; if (row.first > edge + 2) break; edge = row.second }
+                    covered = edge >= origin[1] + scroll.height
+                }
+                val now = SystemClock.uptimeMillis()
+                if (!covered || offset != lastOffset) stableSince = 0
+                else if (stableSince == 0L) stableSince = now
+                lastOffset = offset
+                if (stableSince != 0L && now - stableSince >= 300) break
+                SystemClock.sleep(20)
+            }
+            assertTrue("deep jump did not settle before fling", stableSince != 0L && SystemClock.uptimeMillis() - stableSince >= 300)
+            for (velocity in listOf(20000, -20000, 20000, -20000, 20000, -20000)) {
+                var samples = 0; var blankSamples = 0; var longestBlank = 0L; var blankSince = 0L; var backwards = 0
+                var previous = emptyMap<String, Int>(); var stop = false
+                val sampler = object : Runnable {
+                    override fun run() {
+                        if (stop) return
+                        val location = IntArray(2); scroll.getLocationOnScreen(location)
+                        val top = location[1]; val bottom = top + scroll.height
+                        val rows = descendants(scroll).filter { it.transitionName?.startsWith("list-row-") == true }.map {
+                            val point = IntArray(2); it.getLocationOnScreen(point); Triple(it.transitionName, point[1], point[1] + it.height)
+                        }.sortedBy { it.second }
+                        var covered = top
+                        for (row in rows) { if (row.third <= covered) continue; if (row.second > covered + 2) break; covered = row.third }
+                        val now = SystemClock.uptimeMillis(); samples++
+                        if (covered < bottom) { blankSamples++; if (blankSince == 0L) blankSince = now; longestBlank = maxOf(longestBlank, now - blankSince) } else blankSince = 0
+                        val visible = rows.filter { it.third > top && it.second < bottom }
+                        for (row in visible) previous[row.first]?.let { old ->
+                            val reversed = if (velocity > 0) row.second - old else old - row.second
+                            backwards = maxOf(backwards, reversed)
+                        }
+                        previous = visible.take(1).associate { it.first to it.second }
+                        scroll.postOnAnimation(this)
+                    }
+                }
+                var initialTravel = 0.0; var finalTravel = 0.0
+                fun travelPosition(): Double {
+                    val document = (scroll.getChildAt(0) as android.view.ViewGroup).getChildAt(0) as android.view.ViewGroup
+                    val row = (0 until document.childCount).map { document.getChildAt(it) }.first { it.bottom > scroll.scrollY }
+                    val content = row as android.view.ViewGroup
+                    val index = content.getChildAt(0).transitionName.removePrefix("list-row-").toInt()
+                    return index + (scroll.scrollY - row.top).toDouble() / maxOf(1, row.height)
+                }
+                ui { initialTravel = travelPosition(); scroll.fling(velocity); scroll.postOnAnimation(sampler) }
+                SystemClock.sleep(2500)
+                ui { stop = true; scroll.removeCallbacks(sampler); finalTravel = travelPosition() }
+                val travelledRows = (finalTravel - initialTravel) * if (velocity > 0) 1 else -1
+                android.util.Log.i("AnseronUIListTest", "fling=$velocity frames=$samples blankFrames=$blankSamples longestBlankMs=$longestBlank reversePixels=$backwards travelledRows=$travelledRows")
+                assertTrue("fling diagnostics: $errors", errors.isEmpty())
+                assertTrue("fling $velocity must keep sampling frames: $samples", samples >= 60)
+                assertTrue("fling $velocity left a persistent blank: $longestBlank ms", longestBlank <= 150)
+                assertTrue("fling $velocity exposed $blankSamples / $samples blank frames", blankSamples <= samples / 10)
+                assertTrue("fling $velocity moved the visible anchor backwards by $backwards px", backwards <= 2)
+                assertTrue("fling $velocity must actually travel through the list: $travelledRows rows", travelledRows >= 10)
+            }
+        } finally { ui { view.destroy(); activity.finish() } }
+    }
+
+    @Test fun hostCoalescesScrollBeforeEncodingAndPreservesDiscreteBarriers() {
+        val core = RecordingCore()
+        val entered = CountDownLatch(1); val release = CountDownLatch(1)
+        val transport = object : AndroidCoreTransport by core {
+            override fun post(input: ByteArray) {
+                if (JSONObject(String(input, Charsets.UTF_8)).getJSONObject("payload").getString("type") == "Resize") {
+                    entered.countDown(); check(release.await(5, TimeUnit.SECONDS))
+                }
+                core.post(input)
+            }
+        }
+        lateinit var host: AndroidHost
+        ui { host = AndroidHost(FrameLayout(instrumentation.targetContext), { transport }); host.start("test", 320f, 480f) }
+        try {
+            assertTrue(core.committed.await(5, TimeUnit.SECONDS))
+            host.resize(320f, 480f); assertTrue(entered.await(5, TimeUnit.SECONDS))
+            ui {
+                for (y in 1..60) host.renderer.onEvent?.invoke(RendererEvent("NativeEvent", 1, 1, event = "scroll", y = y.toDouble()))
+                host.renderer.onEvent?.invoke(RendererEvent("Tap", 1, 1))
+                for (y in 61..120) host.renderer.onEvent?.invoke(RendererEvent("NativeEvent", 1, 1, event = "scroll", y = y.toDouble()))
+            }
+            release.countDown()
+            val deadline = SystemClock.uptimeMillis() + 5000
+            while (core.messages.none { it.optDouble("y") == 120.0 } && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(10)
+            val events = core.messages.filter { it.optString("event") == "scroll" || it.optString("type") == "Tap" }
+            assertEquals(listOf("scroll:60", "tap", "scroll:120"), events.map { if (it.getString("type") == "Tap") "tap" else "scroll:${it.getInt("y")}" })
+        } finally { release.countDown(); ui { host.destroy() } }
+    }
+
+    @Test fun visibilityRetentionAndMemoryPressurePreserveRouteSnapshots() {
+        val cores = ConcurrentLinkedQueue<RecordingCore>()
+        lateinit var view: AnseronUIRenderView
+        ui {
+            view = AnseronUIRenderView(instrumentation.targetContext, createCore = { RecordingCore().also { cores.add(it) } })
+            view.setVisibility(false)
+            view.load("counter", JSONObject().put("origin", "root")); layout(view, 320, 480)
+        }
+        fun waitFor(message: String, condition: () -> Boolean) {
+            val end = SystemClock.uptimeMillis() + 5000
+            while (!condition() && SystemClock.uptimeMillis() < end) SystemClock.sleep(10)
+            assertTrue(message, condition())
+        }
+        try {
+            waitFor("first core") { cores.size == 1 }
+            val first = cores.first()
+            assertTrue(first.committed.await(5, TimeUnit.SECONDS))
+            assertFalse(first.messages.first { it.optString("type") == "CreateSurface" }.getBoolean("visible"))
+            ui { view.setVisibility(true) }
+            waitFor("visible notification") { first.messages.any { it.optString("type") == "SurfaceVisibility" && it.getBoolean("visible") } }
+            ui { view.push("timers"); layout(view, 320, 480) }
+            waitFor("second core") { cores.size == 2 }
+            assertTrue(cores.last().committed.await(5, TimeUnit.SECONDS))
+            waitFor("covered notification") { first.messages.any { it.optString("type") == "SurfaceVisibility" && !it.getBoolean("visible") } }
+            ui { view.trimMemory(); assertEquals(listOf("counter", "timers"), view.routeStack) }
+            assertTrue(first.disposed.await(5, TimeUnit.SECONDS))
+            ui { assertTrue(view.pop()); layout(view, 320, 480); assertEquals("root", view.routeParams.getString("origin")) }
+            waitFor("evicted route remounted") { cores.size == 3 }
+            val restored = cores.last(); assertTrue(restored.committed.await(5, TimeUnit.SECONDS))
+            val inspected = CountDownLatch(1)
+            ui {
+                view.onRuntimeStats = { assertEquals(1, it.getInt("nodes")); assertTrue(it.has("bridgeInputBytes")); inspected.countDown() }
+                view.inspectRuntime()
+            }
+            assertTrue(inspected.await(5, TimeUnit.SECONDS))
+            ui { view.maxRetainedPages = 1; view.push("timers"); layout(view, 320, 480) }
+            assertTrue(restored.disposed.await(5, TimeUnit.SECONDS))
+        } finally { ui { view.destroy() } }
+        cores.forEach { assertTrue(it.disposed.await(5, TimeUnit.SECONDS)) }
+    }
+
     private class RecordingCore : AndroidCoreTransport {
         override val bundleBuildId = "container-test"
         override val runtimeEpoch = 1L
@@ -337,6 +794,7 @@ class RenderViewTest {
                     commit.getJSONArray("commands").getJSONObject(1).getJSONObject("props").put("text", payload.getString("page"))
                     emit(commit, envelope)
                 }
+                "InspectRuntime" -> emit(JSONObject().put("type", "RuntimeStats").put("values", JSONObject().put("nodes", 1)), envelope)
                 "CommitAck" -> committed.countDown()
                 "Resize" -> resized.countDown()
                 "DestroySurface" -> emit(JSONObject().put("type", "SurfaceDisposed"), envelope)

@@ -29,6 +29,7 @@ export function buildMacOS({ framework, app, config, core, standalone = false, r
   const executable = join(bundle, 'Contents/MacOS/App');
   mkdirSync(resources, { recursive: true }); mkdirSync(join(bundle, 'Contents/MacOS'), { recursive: true });
   const manifest = JSON.parse(readFileSync(join(core, 'manifest.json'), 'utf8'));
+  if (release && manifest.devtools?.enabled) throw new Error('Release cannot link a Debug-instrumented Core; rebuild with --release.');
   if (manifest.target !== 'macos-arm64' || manifest.targetIdentity?.arch !== 'arm64') throw new Error('Core is not a macOS arm64 build.');
   const swift = join(framework, 'packages/render-macos/Sources/AnseronUIRenderMacOS');
   const native = join(framework, 'packages/core/native');

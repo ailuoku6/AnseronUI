@@ -10,6 +10,7 @@ const buildCommand = target === 'ios-device' ? 'npm run build:ios-device' : 'npm
 try {
   const directory = resolve(root, '.verification/core-' + target);
   const manifest = JSON.parse(readFileSync(resolve(directory, 'manifest.json'), 'utf8'));
+  if (process.env.CONFIGURATION === 'Release' && manifest.devtools?.enabled) throw new Error('Release cannot link a Debug-instrumented Core; rebuild with --release.');
   if (!existsSync(resolve(directory, 'entry.lib.a')) || manifest.sourceFingerprint !== coreFingerprint(root, manifest.configPath)) {
     throw new Error('Core library is missing or out of date');
   }

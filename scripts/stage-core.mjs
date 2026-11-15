@@ -1,3 +1,4 @@
+import { debugBuildOptions, instrumentSource } from '../packages/devtools/instrumentation/index.mjs';
 import { readdir, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { resolve, relative, dirname, join } from 'node:path';
@@ -14,7 +15,8 @@ for (const page of config.pages) {
 const mode = process.argv[3] ?? 'business';
 if (!['framework', 'business'].includes(mode)) throw new Error('Invalid bundle mode');
 const stageTarget = process.argv[4];
-if (stageTarget && !['native','macos-arm64','ios-simulator','ios-device','android','wasm'].includes(stageTarget)) throw new Error('Invalid staging target');
+if (stageTarget && !['native','macos-arm64','ios-simulator','ios-device','android','harmony','wasm'].includes(stageTarget)) throw new Error('Invalid staging target');
+const devtools = debugBuildOptions(stageTarget);
 const stage = resolve(stageTarget ? '.verification/source-' + stageTarget + '/' + mode : '.verification/' + mode + '-source');
 await rm(stage, {recursive:true, force:true});
 await mkdir(stage, {recursive:true});
@@ -47,6 +49,7 @@ for (const plugin of config.npmPlugins ?? []) aliases.set(plugin.name, stagedPat
 async function copy(path, outputPath = stagedPath(path)) {
  const absolute = resolve(root, path);
  for (const item of await readdir(absolute,{withFileTypes:true})) {
+  if (item.isFile() && item.name === 'devtools-log.ts' && !devtools.enabled) continue;
   const name=join(path,item.name);
   const target=join(outputPath,item.name);
   if(item.isDirectory()) await copy(name, target);
@@ -54,9 +57,16 @@ async function copy(path, outputPath = stagedPath(path)) {
    let text=await readFile(join(root,name),'utf8');
    const output=join(stage,target.replace(/\.tsx$/,'.ts'));
    if(item.name.endsWith('.tsx')) {
-    const lowered=lowerTSX(text,name); if(lowered.diagnostics.length) throw new Error(JSON.stringify(lowered.diagnostics)); text=lowered.source;
+    const lowered=lowerTSX(text,name,{devtools:devtools.enabled}); if(lowered.diagnostics.length) throw new Error(JSON.stringify(lowered.diagnostics)); text=lowered.source;
    }
    if (mode === 'business' && !(relative(root, absolute).startsWith('packages/'))) text = lowerTimers(text, output);
+   text = instrumentSource(name.replaceAll('\\', '/'), text, devtools);
+   if (devtools.enabled && text.includes('__anseronuiDevtoolsLog(') && !name.endsWith('packages/core/src/devtools-log.ts')) {
+    const logModule = join(stage, 'packages/core/src/devtools-log.ts');
+    let logImport = relative(dirname(output), logModule).replace(/\\/g, '/').replace(/\.ts$/, '.js');
+    if (!logImport.startsWith('.')) logImport = './' + logImport;
+    text = `import { __anseronuiDevtoolsLog } from ${JSON.stringify(logImport)};\n` + text;
+   }
    for(const [alias,target] of aliases) {
     let rel=relative(dirname(output),join(stage,target)).replace(/\.ts$/,'.js'); if(!rel.startsWith('.')) rel='./'+rel;
     text=text.replaceAll('"'+alias+'"','"'+rel+'"').replaceAll("'"+alias+"'","'"+rel+"'");
@@ -76,7 +86,7 @@ ${imports}
 let runtime: BusinessRuntime | null = null;
 let outputs: Envelope<OutputPayload>[] = [];
 export function version(): number { return CORE_ABI_VERSION; }
-export function create(): void { if (runtime !== null) throw new Error('RUNTIME_ALREADY_CREATED'); runtime = new BusinessRuntime({bundleBuildId:${JSON.stringify(config.buildId)}, pages:[${config.pages.map((_, i) => 'page' + i).join(',')}]}); }
+export function create(): void { if (runtime !== null) throw new Error('RUNTIME_ALREADY_CREATED'); runtime = new BusinessRuntime({bundleBuildId:${JSON.stringify(config.buildId)}, profile:${!!config.performance?.enabled}, pages:[${config.pages.map((_, i) => 'page' + i).join(',')}]}); }
 export function post(input: string): void { if (runtime === null) throw new Error('RUNTIME_NOT_CREATED'); runtime.post(JSON.parse(input) as Envelope<InputPayload>); }
 export function advance(): void { outputs.push(...(runtime?.step(1) ?? [])); }
 export function step(): string { outputs.push(...(runtime?.takeOutputs() ?? [])); const result = JSON.stringify(outputs); outputs = []; return result; }

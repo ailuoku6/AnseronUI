@@ -38,12 +38,21 @@ internal class NodeAnimation(private val view: View) : Choreographer.FrameCallba
     private var from = defaults.toMap()
     private val staged = mutableMapOf<String, Double>()
     private var mounted = false
+    private var paintedEnabled = view.isEnabled
     var options: AnimationOptions? = null
     private var running: AnimationOptions? = null
+    private var active = true
+    private var pausedAt = 0.0
     private var started = 0.0
     private var completion: ((Boolean) -> Unit)? = null
     private val clock = Choreographer.getInstance()
     private val density get() = view.resources.displayMetrics.density.toDouble()
+    fun setActive(value: Boolean) {
+        if (active == value) return
+        active = value
+        if (!value) { pausedAt = System.nanoTime()/1e6; clock.removeFrameCallback(this) }
+        else { started += System.nanoTime()/1e6 - pausedAt; if (running != null) clock.postFrameCallback(this) }
+    }
     fun stage(values: Map<String, Double>) {
         for ((key, value) in values) if (declared[key] != value) { declared[key] = value; staged[key] = value }
     }
@@ -53,7 +62,7 @@ internal class NodeAnimation(private val view: View) : Choreographer.FrameCallba
             val config = options
             if (mounted && config != null) begin(next, config)
             else { cancel(); target = next; current.clear(); current.putAll(next); paint() }
-        } else paint()
+        } else if (paintedEnabled != view.isEnabled) paint()
         mounted = true
     }
     fun animate(args: Any?, complete: (Boolean) -> Unit) {
@@ -83,7 +92,7 @@ internal class NodeAnimation(private val view: View) : Choreographer.FrameCallba
     private fun begin(next: MutableMap<String, Double>, config: AnimationOptions, complete: ((Boolean) -> Unit)? = null) {
         cancel(); target = next; from = current.toMap(); running = config; completion = complete
         started = System.nanoTime()/1e6 + config.delay
-        clock.postFrameCallback(this)
+        if (active) clock.postFrameCallback(this) else pausedAt = System.nanoTime()/1e6
     }
     override fun doFrame(frameTimeNanos: Long) {
         val config = running ?: return
@@ -106,6 +115,7 @@ internal class NodeAnimation(private val view: View) : Choreographer.FrameCallba
         else clock.postFrameCallback(this)
     }
     private fun paint() {
+        paintedEnabled = view.isEnabled
         val v = current
         if (v.containsKey("x")) {
             val width = (max(0.0,v.getValue("width"))*density).roundToInt(); val height = (max(0.0,v.getValue("height"))*density).roundToInt()
@@ -115,12 +125,7 @@ internal class NodeAnimation(private val view: View) : Choreographer.FrameCallba
                 view.layoutParams = FrameLayout.LayoutParams(width,height).apply { leftMargin = left; topMargin = top }
             }
         }
-        // Android's default Button background is replaced by the shared
-        // GradientDrawable above, so disabled state does not get the platform
-        // tint/alpha treatment automatically. Keep the shared opacity semantics
-        // while making disabled buttons visibly distinct from enabled buttons.
-        val disabledFactor = if (view is android.widget.Button && !view.isEnabled) 0.5 else 1.0
-        view.alpha = (v.getValue("opacity") * disabledFactor).coerceIn(0.0,1.0).toFloat()
+        view.alpha = v.getValue("opacity").coerceIn(0.0,1.0).toFloat()
         view.translationX = (v.getValue("translateX")*density).toFloat(); view.translationY = (v.getValue("translateY")*density).toFloat()
         view.scaleX = v.getValue("scaleX").toFloat(); view.scaleY = v.getValue("scaleY").toFloat(); view.rotation = v.getValue("rotate").toFloat()
         val color = Color.argb((v.getValue("a")*255).roundToInt().coerceIn(0,255),v.getValue("r").roundToInt().coerceIn(0,255),v.getValue("g").roundToInt().coerceIn(0,255),v.getValue("b").roundToInt().coerceIn(0,255))

@@ -24,7 +24,7 @@ function drain(): void {
           width: Math.min(payload.maxWidth, Math.max(1, payload.text.length * 8)), height: 18, baseline: 14 });
       } else if (payload.type === "Commit") {
         for (const command of payload.commands) {
-          if (command.type === "CreateNode" && command.kind === "Button") buttonId = command.nodeId;
+          if (command.type === "SetProps" && command.props.accessibilityRole === "button") buttonId = command.nodeId;
           if (command.type === "SetProps" && command.props.text !== undefined) console.log("text:" + command.props.text);
         }
         post({ type: "CommitAck", revision: payload.revision });

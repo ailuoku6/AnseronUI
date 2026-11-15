@@ -36,6 +36,8 @@ AnseronUI 不是把任意 TypeScript 原样交给 JavaScript 引擎运行。共�
 | 模块顶层调用 `useState/useServices` | 报 `HOOK_OUTSIDE_COMPONENT` | 在函数组件或自定义 Hook 内获取 |
 | React 专用组件/插件 | 不会因为语法相似就兼容 | 使用 `@anseronui/ui` API，先移植依赖的运行时语义 |
 
+自定义 Hook、具名组件 HOC、组件作为属性、JSX 插槽和 render prop 已有示例及回归验证，见[自定义 Hook 与组件组合](component-composition.md)。HOC 返回的具名组件具有独立的 Hook 检查作用域；普通嵌套回调仍不能调用 Hook。属性需显式转发，不能照搬带 JSX spread 的 React HOC。
+
 这些是本项目 [UI compiler](../packages/ui-compiler/src/index.ts) 的约束，不等于 scriptc 原生 JSX 功能的全部范围。JSX 属性展开受限，也不等于所有普通对象展开都被禁用。
 
 ```tsx

@@ -1,6 +1,6 @@
 # 标准系统能力
 
-`useServices()` 直接提供以下系统能力，iOS、Android、macOS 与 Web 宿主默认接入，无需逐个注册 Module。示例 App 的「扩展」页面下半部分包含可点击用例：基础信息、存储、剪贴板、弹窗、分享、环境监听、HTTP、文件传输、权限和定位。
+`useServices()` 直接提供以下系统能力，iOS、Android、macOS、HarmonyOS 与 Web 宿主接入，无需逐个注册 Module。示例 App 的「扩展」页面下半部分包含可点击用例：基础信息、存储、剪贴板、弹窗、分享、环境监听、HTTP、文件传输、权限和定位。
 
 ```tsx
 const services = useServices();
@@ -20,7 +20,7 @@ const response = await services.http.request({
 | --- | --- | --- |
 | `http` | `request({url,method?,headers?,body?,timeout?})`、原有 `getText(url)` | timeout 单位毫秒，默认 30000；request 返回 `{status,headers,body}`；Web 受 CORS 限制 |
 | `storage` | `get/set/remove/keys/clear` | 值为字符串，namespace 默认 `default`，clear 仅清理指定命名空间 |
-| `secureStorage` | 同 storage | Apple Keychain；Android Keystore AES-GCM；Web 不支持，不回退到普通存储 |
+| `secureStorage` | 同 storage | Apple Keychain；Android Keystore AES-GCM；Harmony Asset（设备解锁时可访问、不云同步）；Web 不支持，不回退到普通存储 |
 | `app` | `getInfo()` | 名称、版本、构建号、应用 ID；Web 使用 document.title、origin，版本为 `web`，构建号为空 |
 | `device` | `getInfo()` | 平台、系统版本、设备型号；不读取永久设备标识 |
 | `locale` | `getInfo()` | 语言标签、时区 |
@@ -82,13 +82,13 @@ Android 在 Manifest 按实际需求声明 ACCESS_COARSE_LOCATION/ACCESS_FINE_LO
 
 支付按本次需求暂不接入，生物识别不在本次范围。新增服务通过 `useServices()` 获得，所有跨端参数和结果仍为 JSON；调用前使用 `capabilities.has(module, method)` 检查具体方法。
 
-| 服务 | iOS | Android | macOS | Web |
-| --- | --- | --- | --- | --- |
-| `notifications.register` | APNs，需签名 entitlement 与 delegate 回调 | FCM／厂商 SDK 提供 tokenProvider 后启用 | APNs，需签名配置与 delegate 回调 | 活跃 Service Worker + VAPID 公钥 |
-| 本地通知 | 系统调度，至少延迟 1 秒 | AlarmManager 非精确调度；需通知权限 | 系统调度，至少延迟 1 秒 | Service Worker 即时通知，`delaySeconds: 0` |
-| `background` | BGProcessingTask，宿主启动时注册 | JobScheduler，Application 注册处理器 | 不支持 | Background Sync，依浏览器；无延迟与取消 API |
-| BLE | CoreBluetooth | Bluetooth LE / GATT | CoreBluetooth | Web Bluetooth 系统选择器；依浏览器与安全上下文 |
-| NFC | CoreNFC NDEF；需真机及 entitlement | NFC Reader Mode / NDEF | 不支持 | Web NFC；依浏览器、设备与安全上下文 |
+| 服务 | iOS | Android | macOS | Web | HarmonyOS |
+| --- | --- | --- | --- | --- | --- |
+| `notifications.register` | APNs，需签名 entitlement 与 delegate 回调 | FCM／厂商 SDK 提供 tokenProvider 后启用 | APNs，需签名配置与 delegate 回调 | 活跃 Service Worker + VAPID 公钥 | 配置 tokenProvider 后启用 |
+| 本地通知 | 系统调度，至少延迟 1 秒 | AlarmManager 非精确调度；需通知权限 | 系统调度，至少延迟 1 秒 | Service Worker 即时通知，`delaySeconds: 0` | ReminderAgent，需代理提醒资格/配额和通知权限 |
+| `background` | BGProcessingTask，宿主启动时注册 | JobScheduler，Application 注册处理器 | 不支持 | Background Sync，依浏览器；无延迟与取消 API | WorkScheduler，最少两小时时间条件，原生处理器 |
+| BLE | CoreBluetooth | Bluetooth LE / GATT | CoreBluetooth | Web Bluetooth 系统选择器；依浏览器与安全上下文 | BLE/GATT，需蓝牙权限与硬件 |
+| NFC | CoreNFC NDEF；需真机及 entitlement | NFC Reader Mode / NDEF | 不支持 | Web NFC；依浏览器、设备与安全上下文 | NFC Tag/NDEF，需权限与硬件 |
 
 ### 通知与消息消费
 
@@ -197,3 +197,15 @@ await services.nfc.writeText('AnseronUI');
 iOS 必须配置 `NFCReaderUsageDescription` 与 `com.apple.developer.nfc.readersession.formats` entitlement 的 `NDEF` 值，并启用开发者账号 NFC Tag Reading capability；这要求真机、有效签名与配置文件。示例 entitlement 文件见 `examples/native/ios/DeviceServices.entitlements.example`，需与自己的应用签名配置合并。Android Manifest 需 `android.permission.NFC` 及可选 NFC 硬件声明。Web 需支持 NDEFReader 的浏览器、NFC 硬件、安全上下文和用户许可。macOS／无 NFC 的平台通过能力查询降级。
 
 Extensions 页面末尾的「通知、后台任务与设备连接」包含上述完整操作入口。默认 BLE 用例读取电池服务，写入和订阅需要改成目标设备支持的特征；NFC 写入按钮会修改靠近标签的内容。
+
+## HarmonyOS 接入约束
+
+HarmonyOS 6.0.1/API 21 使用 HarmonyAbility 转发 Want、前后台、配置变化和内存压力，继承者必须调用 super。生成的 EntryAbility 与 WorkAbility 都调用 ServiceSetup.configureServices；后台处理器注册不能只放在 UI 页面。HarmonyBackground.register(identifier, handler) 的 handler 接收 Context 和 complete，返回可选取消函数；它不运行已卸载 TSX 闭包。
+
+推送 SDK 由应用选择并配置 HarmonyNotifications.tokenProvider；消息/点击转给 HarmonyNotifications.receive(context,payload,opened)，token 变化转给 tokenChanged。未注册 provider 时远程注册能力为 false。代理提醒是系统调度，delaySeconds 至少 1；权限获准不代表已有使用资格。当前模拟器返回 1700002，提醒投递未通过实测，不能用定时器替代。
+
+WorkScheduler 的有限定时任务设置 repeatCount:1，时间条件至少两小时；系统可延后，应用需容忍未执行。后台完成与到期清理、持久收件箱由原生桥处理。调度/查询/取消已在 API 21 模拟器验证，真实后台唤醒仍需验收。
+
+BLE/NFC 需在 harmony.permissions 声明 ACCESS_BLUETOOTH / NFC_TAG（带 ohos.permission. 前缀）；默认 BLE 写入最多 20 字节。隐藏页停止扫描、断开连接、释放 NFC 会话。状态订阅合并最新值；BLE 与 linking 保留最多 64 条有序事件。定位/传输监听按订阅所有权取消；文件选择器返回的引用只在创建它的 Host 内有效。
+
+构建权限、原生扩展、验证命令、系统约束来源与完整设备验收边界见[鸿蒙支持](harmonyos.md)。

@@ -1,0 +1,7 @@
+{
+  "maxMountedNodes": 200,
+  "maxMeasureCacheEntries": 1024,
+  "maxMessageBytes": 1048576,
+  "latencyRatio": 1.3,
+  "latencySlackMs": 2
+}

@@ -60,7 +60,7 @@ settings = {
     'CORE_LIBRARY[sdk=iphonesimulator*]': '$(SRCROOT)/../../.verification/core-ios-simulator/entry.lib.a',
 }
 settings['OTHER_LDFLAGS'] = ['$(inherited)'] + [flag for name in plugins['frameworks'] for flag in ['-framework', name]]
-configs = [add('XCBuildConfiguration', name=name, buildSettings={**settings, 'SWIFT_OPTIMIZATION_LEVEL': '-Onone' if name=='Debug' else '-O', 'ENABLE_TESTABILITY': 'YES' if name=='Debug' else 'NO'}) for name in ['Debug', 'Release']]
+configs = [add('XCBuildConfiguration', name=name, buildSettings={**settings, 'SWIFT_OPTIMIZATION_LEVEL': '-Onone' if name=='Debug' else '-O', 'ENABLE_TESTABILITY': 'YES' if name=='Debug' else 'NO', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS': 'DEBUG' if name=='Debug' else 'RELEASE'}) for name in ['Debug', 'Release']]
 config_list = add('XCConfigurationList', buildConfigurations=configs, defaultConfigurationIsVisible='0', defaultConfigurationName='Release')
 core_ref = add('PBXFileReference', lastKnownFileType='archive.ar', path='$(CORE_LIBRARY)', sourceTree='<absolute>')
 objects[group]['children'].append(core_ref)

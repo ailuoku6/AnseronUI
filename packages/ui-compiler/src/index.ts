@@ -4,7 +4,7 @@ export interface CompileDiagnostic { code: string; message: string; line: number
 export interface CompileResult { source: string; diagnostics: CompileDiagnostic[] }
 
 /** P0 TSX lowering. It preserves TS type syntax for the subsequent static compiler. */
-export function lowerTSX(source: string, fileName = "page.tsx"): CompileResult {
+export function lowerTSX(source: string, fileName = "page.tsx", options: { devtools?: boolean } = {}): CompileResult {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
   const diagnostics: CompileDiagnostic[] = [];
   let usedJSX = false;
@@ -14,21 +14,35 @@ export function lowerTSX(source: string, fileName = "page.tsx"): CompileResult {
   };
 
   const inspectHooks = (node: ts.Node, inFunction = false, guarded = false): void => {
+    const isFunction = ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node);
+    if (isFunction) {
+      const name = node.name && ts.isIdentifier(node.name) ? node.name.text
+        : ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name) ? node.parent.name.text : "";
+      // A named component/custom Hook returned by a factory has its own Hook
+      // order. Ordinary nested callbacks still cannot call Hooks.
+      const ownScope = !inFunction || /^[A-Z]/.test(name) || /^use[A-Z]/.test(name);
+      ts.forEachChild(node, child => inspectHooks(child, true, !ownScope));
+      return;
+    }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && /^use[A-Z]/.test(node.expression.text)) {
       if (!inFunction) report(node, "HOOK_OUTSIDE_COMPONENT", "Hooks require a component or custom Hook");
       else if (guarded) report(node, "HOOK_NOT_TOP_LEVEL", "Hooks must run in a fixed top-level order");
     }
-    const isFunction = ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node);
     const isGuard = ts.isIfStatement(node) || ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node) || ts.isWhileStatement(node) || ts.isDoStatement(node) || ts.isSwitchStatement(node) || ts.isConditionalExpression(node) || ts.isTryStatement(node);
-    ts.forEachChild(node, child => inspectHooks(child, inFunction || isFunction, guarded || isGuard || (inFunction && isFunction)));
+    ts.forEachChild(node, child => inspectHooks(child, inFunction, guarded || isGuard));
   };
   inspectHooks(file);
 
   const transformer: ts.TransformerFactory<ts.SourceFile> = context => {
     const factory = context.factory;
     const visit: ts.Visitor = node => {
-      if (ts.isJsxElement(node)) return makeElement(node.openingElement.tagName, node.openingElement.attributes, node.children);
-      if (ts.isJsxSelfClosingElement(node)) return makeElement(node.tagName, node.attributes, []);
+      if (options.devtools && ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "definePage" && node.arguments.length === 2) {
+        const component = node.arguments[1];
+        const name = ts.isIdentifier(component) || ts.isPropertyAccessExpression(component) ? component.getText(file) : "PageComponent";
+        return factory.updateCallExpression(node, node.expression, node.typeArguments, [...node.arguments, factory.createStringLiteral(name)]);
+      }
+      if (ts.isJsxElement(node)) return makeElement(node.openingElement.tagName, node.openingElement.attributes, node.children, node.openingElement.typeArguments);
+      if (ts.isJsxSelfClosingElement(node)) return makeElement(node.tagName, node.attributes, [], node.typeArguments);
       if (ts.isJsxFragment(node)) return makeElement(undefined, undefined, node.children);
       return ts.visitEachChild(node, visit, context);
     };
@@ -57,7 +71,7 @@ export function lowerTSX(source: string, fileName = "page.tsx"): CompileResult {
       if (values.length === 0) return undefined;
       return values.length === 1 ? values[0] : factory.createArrayLiteralExpression(values);
     };
-    const makeElement = (name: ts.JsxTagNameExpression | undefined, attributes: ts.JsxAttributes | undefined, children: readonly ts.JsxChild[]): ts.Expression => {
+    const makeElement = (name: ts.JsxTagNameExpression | undefined, attributes: ts.JsxAttributes | undefined, children: readonly ts.JsxChild[], typeArguments?: readonly ts.TypeNode[]): ts.Expression => {
       usedJSX = true;
       const fields: ts.ObjectLiteralElementLike[] = [];
       let key: ts.Expression | undefined;
@@ -82,8 +96,11 @@ export function lowerTSX(source: string, fileName = "page.tsx"): CompileResult {
       }
       const content = makeChildren(children);
       if (content) fields.push(factory.createPropertyAssignment("children", content));
-      const argumentsList: ts.Expression[] = [tagExpression(name), factory.createObjectLiteralExpression(fields, true)];
-      if (key) argumentsList.push(key);
+      const tag = tagExpression(name);
+      const component = typeArguments?.length ? factory.createExpressionWithTypeArguments(tag, [...typeArguments]) : tag;
+      const argumentsList: ts.Expression[] = [component, factory.createObjectLiteralExpression(fields, true)];
+      if (key || options.devtools) argumentsList.push(key ?? factory.createIdentifier("undefined"));
+      if (options.devtools) argumentsList.push(factory.createStringLiteral(name?.getText(file) ?? "Fragment"));
       return factory.createCallExpression(factory.createIdentifier("__anseronuiJSX"), undefined, argumentsList);
     };
     return sourceFile => {

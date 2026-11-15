@@ -12,7 +12,6 @@ public struct RenderFrame: Decodable, Sendable {
 public struct RenderProps: Decodable, Sendable {
     public let text: String?
     public var spans: String?
-    public let title: String?
     public let inputRevision: UInt32?
     public let value: String?
     public let placeholder: String?
@@ -36,6 +35,7 @@ public struct RenderProps: Decodable, Sendable {
     public let scaleY: Double?
     public let rotate: Double?
     public let opacity: Double?
+    public let lineHeight: Double?
     public let fontSize: Double?
     public let fontWeight: String?
     public let fontStyle: String?
@@ -56,11 +56,14 @@ public struct RenderProps: Decodable, Sendable {
     public let autoCorrect: Bool?
     public var placeholderTextColor: String?
     public let accessibilityLabel: String?
+    public let accessibilityRole: String?
     public let textDecorationLine: String?
     public let scrollEnabled: Bool?
+    public let scrollAnchorOffset: Double?
     public let showsVerticalScrollIndicator: Bool?
     public let testID: String?
-    public let src: String?
+    public var src: String?
+    public let dmSrc: String?
     public let placeholderSrc: String?
     public let resizeMode: String?
     public let controls: Bool?
@@ -75,6 +78,7 @@ public struct RenderProps: Decodable, Sendable {
     func themed(_ dark: Bool) -> RenderProps {
         guard dark else { return self }
         var p = self
+        p.src = dmSrc ?? src
         p.backgroundColor = dmBackgroundColor ?? backgroundColor
         p.color = dmColor ?? color
         p.borderColor = dmBorderColor ?? borderColor

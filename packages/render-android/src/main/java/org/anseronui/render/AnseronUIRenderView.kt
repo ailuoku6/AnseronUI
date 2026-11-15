@@ -22,6 +22,8 @@ class AnseronUIRenderView @JvmOverloads constructor(
     private val extensions: AndroidPlatformExtensions = AndroidPlatformExtensions()
 ) : FrameLayout(context, attrs, defStyleAttr) {
     var onReady: () -> Unit = {}
+    var onRuntimeStats: (JSONObject) -> Unit = {}
+    fun inspectRuntime(enabled: Boolean = true, reset: Boolean = false) { requireMainThread(); host?.inspectRuntime(enabled, reset) }
     /** Lets the owning app extend the page background into system bars and insets. */
     var onPageBackgroundColor: (Int) -> Unit = {}
     var onDiagnostic: (String, String) -> Unit = { _, _ -> }
@@ -43,6 +45,11 @@ class AnseronUIRenderView @JvmOverloads constructor(
         var disposed = false
         var color: Int? = null
     }
+    var maxRetainedPages: Int = Int.MAX_VALUE
+        set(value) { requireMainThread(); require(value >= 1); field = value; evictHidden(value - 1) }
+    var onPageEvicted: (String) -> Unit = {}
+    private var externallyVisible = true
+    private var windowActive = true
     private val routes = mutableListOf<Route>()
     private fun snapshot(params: JSONObject): String {
         val encoded = params.toString()
@@ -63,6 +70,7 @@ class AnseronUIRenderView @JvmOverloads constructor(
     @JvmOverloads fun push(page: String, params: JSONObject = JSONObject()) {
         requireMainThread(); check(!isDestroyed); require(page.isNotBlank())
         val entry = Route(page, snapshot(params))
+        host?.setVisibility(false)
         renderRoot?.let { removeView(it) }; routes.add(entry); loadCurrentPage()
     }
 
@@ -90,6 +98,7 @@ class AnseronUIRenderView @JvmOverloads constructor(
         if (root.parent == null) addView(root, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         host?.renderer?.appearanceChanged()
         entry.color?.let { onPageBackgroundColor(it) }
+        updateVisibility(); evictHidden(maxRetainedPages - 1)
         requestLayout()
     }
 
@@ -115,6 +124,24 @@ class AnseronUIRenderView @JvmOverloads constructor(
         isDestroyed = true
         retireAllPages()
         page = null
+    }
+
+    fun setVisibility(visible: Boolean) { requireMainThread(); externallyVisible = visible; updateVisibility() }
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        windowActive = visibility == android.view.View.VISIBLE
+        // The Android View constructor can invoke this before subclass fields are initialized.
+        if (routes != null) updateVisibility()
+    }
+    private fun updateVisibility() { routes.forEach { it.host?.setVisibility(it === routes.lastOrNull() && externallyVisible && windowActive) } }
+    /** Wire Activity.onTrimMemory/ComponentCallbacks2 to this method. */
+    fun trimMemory() { requireMainThread(); evictHidden(0) }
+    private fun evictHidden(keeping: Int) {
+        val hidden = routes.dropLast(1).filter { it.host != null }
+        hidden.take((hidden.size - keeping).coerceAtLeast(0)).forEach { entry ->
+            val index = routes.indexOf(entry)
+            retirePage(entry); routes[index] = Route(entry.page, entry.params); onPageEvicted(entry.page)
+        }
     }
 
     private fun retirePage(entry: Route) {
@@ -172,11 +199,13 @@ class AnseronUIRenderView @JvmOverloads constructor(
                     if (routes.lastOrNull() === entry) onFailure(error)
                 }
             })
+        nextHost.onRuntimeStats = { values -> if (!isDestroyed && routes.lastOrNull() === entry) onRuntimeStats(values) }
         entry.host = nextHost
         nextHost.renderer.onPageBackgroundColor = { color ->
             if (!entry.disposed) { entry.color = color; if (!isDestroyed && routes.lastOrNull() === entry) onPageBackgroundColor(color) }
         }
         entry.lastSize = size
+        nextHost.setVisibility(externallyVisible && windowActive)
         nextHost.start(page, size.first, size.second)
     }
 

@@ -233,6 +233,45 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
         await fulfillment(of: [firstDisposed], timeout: 5)
     }
 
+    func testVisibilityAndMemoryPressureRemountWithOriginalParams() async throws {
+        let committed = expectation(description: "three instances mounted"); committed.expectedFulfillmentCount = 3
+        let disposed = expectation(description: "three instances disposed"); disposed.expectedFulfillmentCount = 3
+        var cores: [RecordingCore] = []
+        let lock = NSLock()
+        let view = AnseronUIRenderView(frame: CGRect(x:0,y:0,width:320,height:480), createCore: {
+            let core = RecordingCore(disposed: disposed, committed: committed)
+            lock.lock(); cores.append(core); lock.unlock()
+            return core
+        })
+        defer { view.destroy() }
+        func until(_ condition: () -> Bool) async {
+            let deadline = Date(timeIntervalSinceNow: 5)
+            while !condition() && Date() < deadline { try? await Task.sleep(nanoseconds: 10_000_000) }
+            XCTAssertTrue(condition())
+        }
+        func instances() -> [RecordingCore] { lock.lock(); defer { lock.unlock() }; return cores }
+        view.setVisibility(false)
+        view.load(page:"counter",params:["origin":"root"])
+        await until { instances().first?.messages.contains { $0["type"] as? String == "CreateSurface" } == true }
+        let first = try XCTUnwrap(instances().first)
+        XCTAssertEqual(first.messages.first { $0["type"] as? String == "CreateSurface" }?["visible"] as? Bool, false)
+        view.setVisibility(true)
+        await until { first.messages.contains { $0["type"] as? String == "SurfaceVisibility" && $0["visible"] as? Bool == true } }
+        await until { first.messages.contains { $0["type"] as? String == "CommitAck" } }
+        view.push(page:"timers"); view.layoutIfNeeded()
+        await until { instances().count == 2 && instances()[1].messages.contains { $0["type"] as? String == "CommitAck" } }
+        var evicted: [String] = []; view.onPageEvicted = { evicted.append($0) }
+        NotificationCenter.default.post(name:UIApplication.didReceiveMemoryWarningNotification, object:nil)
+        XCTAssertEqual(evicted,["counter"])
+        XCTAssertEqual(view.routeStack,["counter","timers"])
+        XCTAssertTrue(view.pop()); view.layoutIfNeeded()
+        XCTAssertEqual(view.routeParams["origin"] as? String,"root")
+        await until { instances().count == 3 }
+        await fulfillment(of:[committed],timeout:5)
+        view.destroy()
+        await fulfillment(of:[disposed],timeout:5)
+    }
+
     func testRouteParameterSnapshotsAndBackRestoration() {
         let view = AnseronUIRenderView(createCore: { XCTFail("Zero-sized view must defer Core startup"); throw HostError.invalidOutput })
         defer { view.destroy() }
@@ -365,6 +404,45 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
         renderer.clear(); XCTAssertEqual(outcomes,[false,true,false]); XCTAssertTrue(root.subviews.isEmpty)
     }
 
+    func testTextLineHeightAndDarkImageSource() throws {
+        let root = UIView(); root.overrideUserInterfaceStyle = .light
+        let renderer = IOSRenderer(root: root)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { renderer.clear(); try? FileManager.default.removeItem(at: directory) }
+        func image(_ name: String, _ size: CGSize) throws -> String {
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            let image = UIGraphicsImageRenderer(size: size, format: format).image { context in UIColor.blue.setFill(); context.fill(CGRect(origin: .zero, size: size)) }
+            let url = directory.appendingPathComponent(name + ".png"); try image.pngData()!.write(to: url); return url.absoluteString
+        }
+        let light = try image("light", CGSize(width: 8, height: 4)), dark = try image("dark", CGSize(width: 12, height: 6))
+        try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type": "Commit", "revision": 1, "commands": [
+            ["type": "CreateNode", "nodeId": 1, "kind": "Image"],
+            ["type": "SetProps", "nodeId": 1, "props": ["src": light, "dmSrc": dark]],
+            ["type": "CreateNode", "nodeId": 2, "kind": "Text"],
+            ["type": "SetProps", "nodeId": 2, "props": ["text": "first\nsecond", "fontSize": 16, "lineHeight": 30]],
+        ]]))
+        let view = try XCTUnwrap(renderer.view(for: 1) as? UIImageView)
+        XCTAssertEqual(view.image?.size.width, 8)
+        root.overrideUserInterfaceStyle = .dark; renderer.appearanceChanged()
+        XCTAssertEqual(view.image?.size.width, 12)
+        root.overrideUserInterfaceStyle = .light; renderer.appearanceChanged()
+        XCTAssertEqual(view.image?.size.width, 8)
+        let props = try JSONDecoder().decode(RenderProps.self, from: Data("{\"lineHeight\":30}".utf8))
+        let measured = try renderer.measure(kind: "Text", text: "first\nsecond", fontSize: 16, maxWidth: 200, props: props)
+        XCTAssertEqual(measured.height, 60, accuracy: 1)
+        let label = try XCTUnwrap(renderer.view(for: 2) as? UILabel)
+        let paragraph = try XCTUnwrap(label.attributedText?.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertEqual(paragraph.minimumLineHeight, 30)
+        try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type": "Commit", "revision": 2, "commands": [
+            ["type": "SetProps", "nodeId": 1, "props": ["src": light]],
+            ["type": "SetProps", "nodeId": 2, "props": ["text": "reset"]],
+        ]]))
+        root.overrideUserInterfaceStyle = .dark; renderer.appearanceChanged()
+        XCTAssertEqual(view.image?.size.width, 8)
+        XCTAssertEqual((label.attributedText?.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.maximumLineHeight ?? 0, 0)
+    }
+
     func testButtonDoesNotPublishAnUntouchedControlledInputWithZeroRevision() throws {
         let renderer = IOSRenderer(root: UIView())
         var events: [RendererEvent] = []
@@ -373,12 +451,12 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
             ["type": "CreateNode", "nodeId": 1, "kind": "TextInput"],
             ["type": "SetProps", "nodeId": 1, "props": ["value": "预填文本"]],
             ["type": "BindEvent", "nodeId": 1, "event": "changeText", "enabled": true],
-            ["type": "CreateNode", "nodeId": 2, "kind": "Button"],
-            ["type": "SetProps", "nodeId": 2, "props": ["title": "read"]],
+            ["type": "CreateNode", "nodeId": 2, "kind": "View"],
+            ["type": "SetProps", "nodeId": 2, "props": ["accessibilityRole": "button", "accessibilityLabel": "read"]],
             ["type": "BindEvent", "nodeId": 2, "event": "tap", "enabled": true],
         ]]))
-        let button = try XCTUnwrap(renderer.view(for: 2) as? UIButton)
-        button.sendActions(for: .touchUpInside)
+        let button = try XCTUnwrap(renderer.view(for: 2))
+        XCTAssertTrue(button.accessibilityActivate())
         XCTAssertEqual(events.map { $0.type }, ["Tap"])
     }
 

@@ -1,5 +1,6 @@
 import { DOMRenderer } from '../src/renderer.js';
 import type { RenderCommand, RenderProps } from '@anseronui/protocol';
+import { measureBrowserText } from '../src/reference-host.js';
 
 export async function verifyStyles(): Promise<void> {
   const assert = (value: unknown, message: string) => { if (!value) throw new Error(message); };
@@ -13,7 +14,7 @@ export async function verifyStyles(): Promise<void> {
   const renderer = new DOMRenderer(root, () => {}, { Test: () => ({ element:document.createElement('div'), setProps() { nativeUpdates++; } }) });
   const base: RenderProps = { backgroundColor:'#ffffff', dmBackgroundColor:'#111111', borderColor:'#123456', dmBorderColor:'#abcdef', borderWidth:2, borderRadius:12, shadowColor:'#000000', dmShadowColor:'#ffffff', shadowOpacity:0.5, shadowRadius:8, shadowOffsetX:-2, shadowOffsetY:4 };
   const commands: RenderCommand[] = [];
-  const create = (nodeId:number, kind:'View'|'Text'|'RichText'|'TextInput'|'Native'|'Video', props:RenderProps, parentId=0) => {
+  const create = (nodeId:number, kind:'View'|'Text'|'RichText'|'TextInput'|'Native'|'Video'|'Image', props:RenderProps, parentId=0) => {
     commands.push({ type:'CreateNode', nodeId, kind, ...(kind === 'Native' ? { nativeName:'Test' } : {}) }, { type:'SetProps', nodeId, props }, { type:'InsertChild',nodeId,parentId,index:parentId === 0 ? 0 : nodeId-2 }, { type:'SetFrame',nodeId,frame:{ x:20,y:20+(nodeId-1)*40,width:300,height:32 } });
   };
   create(1,'View',base); create(2,'Text',{text:'Theme',color:'#112233',dmColor:'#ddeeff'},1);
@@ -21,9 +22,16 @@ export async function verifyStyles(): Promise<void> {
   create(4,'TextInput',{ value:'declared',placeholder:'Placeholder',placeholderTextColor:'#666666',dmPlaceholderTextColor:'#aaaaaa',color:'#000000',dmColor:'#ffffff' },1);
   create(5,'Native',{},1);
   create(6,'Video',{playControl:'pause'},1);
+  create(7,'Image',{src:'asset://theme-light.png',dmSrc:'asset://theme-dark.png'},1);
+  create(8,'Text',{text:'first\nsecond',fontSize:16,lineHeight:30},1);
   try {
     renderer.apply(1,commands);
     const card = renderer.getNode(1)!, text = renderer.getNode(2)!, rich = renderer.getNode(3)!, input = renderer.getNode(4)! as HTMLInputElement;
+    const image = renderer.getNode(7)! as HTMLImageElement;
+    assert(image.getAttribute('src') === '/assets/theme-light.png','light image source');
+    assert(getComputedStyle(renderer.getNode(8)!).lineHeight === '30px','lineHeight rendering');
+    const measured = await measureBrowserText(root)('Text','first\nsecond',16,200,{lineHeight:30});
+    assert(measured.height === 60,'lineHeight must affect native text measurement');
     assert(getComputedStyle(card).backgroundColor === 'rgb(255, 255, 255)','light background');
     assert(card.style.boxShadow.includes('16px') && card.style.boxShadow.includes('0.5'),'shadow radius/opacity');
     input.value = 'local composition'; input.dispatchEvent(new CompositionEvent('compositionstart'));
@@ -33,6 +41,7 @@ export async function verifyStyles(): Promise<void> {
     video.play = async () => { mediaCommands++; };
     const frame = card.getBoundingClientRect();
     dark = true; query.dispatchEvent(new Event('change'));
+    assert(image.getAttribute('src') === '/assets/theme-dark.png','dark image source');
     assert(getComputedStyle(card).backgroundColor === 'rgb(17, 17, 17)','dark background');
     assert(getComputedStyle(card).borderColor === 'rgb(171, 205, 239)','dark border');
     assert(getComputedStyle(text).color === 'rgb(221, 238, 255)','dark text');
@@ -47,8 +56,13 @@ export async function verifyStyles(): Promise<void> {
     renderer.apply(2,[{type:'SetProps',nodeId:1,props:{backgroundColor:'#eeeeee'}}]);
     assert(getComputedStyle(card).backgroundColor === 'rgb(238, 238, 238)' && card.style.boxShadow === 'none','removed dark/shadow reset');
     dark = false; query.dispatchEvent(new Event('change'));
+    assert(image.getAttribute('src') === '/assets/theme-light.png','image returns to light source');
     assert(getComputedStyle(text).color === 'rgb(17, 34, 51)','light restored');
     assert(input.style.getPropertyValue('--placeholder-color') === '#666666','placeholder restored');
+    dark = true; query.dispatchEvent(new Event('change'));
+    renderer.apply(3,[{type:'SetProps',nodeId:7,props:{src:'asset://fallback.png'}},{type:'SetProps',nodeId:8,props:{text:'reset'}}]);
+    assert(image.getAttribute('src') === '/assets/fallback.png','missing dmSrc falls back to src');
+    assert(renderer.getNode(8)!.style.lineHeight === 'normal','removed lineHeight resets');
     renderer.dispose(); dark = true; query.dispatchEvent(new Event('change')); assert(root.children.length === 0,'disposed theme listener');
   } finally { renderer.dispose(); root.remove(); window.matchMedia = original; }
 }

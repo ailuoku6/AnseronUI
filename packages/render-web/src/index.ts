@@ -10,4 +10,4 @@ export { installNativeServiceWorker } from './service-worker-services.js';
 
 export { BrowserRouter } from './router.js';
 export { BrowserPageStack } from './page-stack.js';
-export type { BrowserStackPage } from './page-stack.js';
+export type { BrowserStackPage, PageRetentionOptions } from './page-stack.js';

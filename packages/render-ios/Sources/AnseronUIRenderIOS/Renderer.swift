@@ -12,7 +12,6 @@ public struct RenderFrame: Decodable {
 public struct RenderProps: Decodable {
     public let text: String?
     public var spans: String?
-    public let title: String?
     public let inputRevision: UInt32?
     public let value: String?
     public let placeholder: String?
@@ -36,6 +35,7 @@ public struct RenderProps: Decodable {
     public let scaleY: Double?
     public let rotate: Double?
     public let opacity: Double?
+    public let lineHeight: Double?
     public let fontSize: Double?
     public let fontWeight: String?
     public let fontStyle: String?
@@ -56,11 +56,14 @@ public struct RenderProps: Decodable {
     public let autoCorrect: Bool?
     public var placeholderTextColor: String?
     public let accessibilityLabel: String?
+    public let accessibilityRole: String?
     public let textDecorationLine: String?
     public let scrollEnabled: Bool?
+    public let scrollAnchorOffset: Double?
     public let showsVerticalScrollIndicator: Bool?
     public let testID: String?
-    public let src: String?
+    public var src: String?
+    public let dmSrc: String?
     public let placeholderSrc: String?
     public let resizeMode: String?
     public let controls: Bool?
@@ -75,6 +78,7 @@ public struct RenderProps: Decodable {
     func themed(_ dark: Bool) -> RenderProps {
         guard dark else { return self }
         var p = self
+        p.src = dmSrc ?? src
         p.backgroundColor = dmBackgroundColor ?? backgroundColor
         p.color = dmColor ?? color
         p.borderColor = dmBorderColor ?? borderColor
@@ -145,7 +149,13 @@ public enum RenderError: Error {
     case wrongThread, invalidRevision, invalidCommit, invalidCommand
 }
 
+private final class TSPrimitiveView: UIView {
+    var activate: (() -> Bool)?
+    override func accessibilityActivate() -> Bool { activate?() ?? false }
+}
+
 private final class NodeRecord {
+    var anchorOffset: Double = 0
     var declaredProps: RenderProps?
     var pageBackgroundColor = UIColor.clear
     let view: UIView
@@ -157,10 +167,12 @@ private final class NodeRecord {
     var lastInputValue = ""
     var maxLength: Int?
     var applyingValue = false
+    var imageGeneration = UUID()
     var mediaSource = ""
     var spanRanges: [NSRange] = []
     var videoLoop = false
     var videoRate: Float = 1
+    var suspendedRate: Float = 0
     var player: AVPlayer?
     var timeObserver: Any?
     var endObserver: NSObjectProtocol?
@@ -240,6 +252,17 @@ private final class TouchSession {
     /// The first surface child's target background, after a successful commit.
     public var onPageBackgroundColor: ((UIColor) -> Void)?
     private var nodes: [UInt32: NodeRecord] = [:]
+    private var pageActive = true
+    public func setPageActive(_ active: Bool) {
+        guard pageActive != active else { return }
+        pageActive = active
+        for record in nodes.values {
+            record.animation.setActive(active)
+            if !active { record.suspendedRate = record.player?.rate ?? 0; record.player?.pause() }
+            else if record.suspendedRate != 0 { record.player?.playImmediately(atRate: record.suspendedRate); record.suspendedRate = 0 }
+        }
+    }
+
     private var revision: UInt32 = 0
     private let extensions: IOSPlatformExtensions
     private var touchSessions: [ObjectIdentifier: TouchSession] = [:]
@@ -266,7 +289,7 @@ private final class TouchSession {
         try validate(commit.commands)
         do {
             for command in commit.commands { try applyOne(command) }
-            for record in nodes.values { record.animation.commit() }
+            for record in nodes.values { record.animation.setActive(pageActive); record.animation.commit() }
             revision = commit.revision
             updateScrollExtents()
             let page = root.subviews.first
@@ -318,14 +341,11 @@ private final class TouchSession {
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
             color.getRed(&r, green: &g, blue: &b, alpha: &a)
             record.animation.stage(["r":Double(r)*255,"g":Double(g)*255,"b":Double(b)*255,"a":Double(a)])
-            record.animation.commit()
+            record.animation.setActive(pageActive); record.animation.commit()
             record.view.layer.borderColor = parseColor(p.borderColor)?.cgColor
             record.view.layer.shadowColor = (parseColor(p.shadowColor) ?? .black).cgColor
             if let label = record.view as? UILabel { configureLabel(label, text:p.text ?? "", fontSize:CGFloat(p.fontSize ?? 14), props:p) }
-            if let button = record.view as? UIButton {
-                button.setTitleColor(parseColor(p.color) ?? .tintColor, for:.normal)
-                button.setTitleColor(parseColor(p.color)?.withAlphaComponent(0.4) ?? .secondaryLabel, for:.disabled)
-            }
+            updateImage(record, props: p)
             if let field = record.view as? UITextField {
                 field.textColor = parseColor(p.color) ?? .label
                 field.attributedPlaceholder = p.placeholder.map { NSAttributedString(string:$0, attributes:[.foregroundColor:parseColor(p.placeholderTextColor) ?? .placeholderText]) }
@@ -345,11 +365,6 @@ private final class TouchSession {
             let label = UILabel()
             configureLabel(label, text: text.isEmpty ? " " : text, fontSize: fontSize, props: props)
             view = label
-        case "Button":
-            let button = UIButton(type: .system)
-            button.titleLabel?.font = font
-            button.setTitle(text, for: .normal)
-            view = button
         case "TextInput":
             let field = UITextField()
             field.font = font
@@ -369,7 +384,7 @@ private final class TouchSession {
             guard command.nodeId != 0 else { throw RenderError.invalidCommand }
             switch command.type {
             case "CreateNode":
-                guard !known.contains(command.nodeId), ["View", "Text", "RichText", "Button", "TextInput", "ScrollView", "Image", "Video", "Native"].contains(command.kind ?? "") else { throw RenderError.invalidCommand }
+                guard !known.contains(command.nodeId), ["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video", "Native"].contains(command.kind ?? "") else { throw RenderError.invalidCommand }
                 known.insert(command.nodeId)
             case "InsertChild", "MoveChild":
                 guard known.contains(command.nodeId), let parent = command.parentId, parent == 0 || known.contains(parent), parent != command.nodeId, let index = command.index, index >= 0 else { throw RenderError.invalidCommand }
@@ -393,17 +408,13 @@ private final class TouchSession {
             var native: IOSNativeComponent?
             let extensionToken = UUID()
             switch command.kind {
-            case "View": view = UIView(); content = view
+            case "View": view = TSPrimitiveView(); content = view
             case "Text":
                 let label = UILabel(); label.numberOfLines = 0
                 view = label; content = label
             case "RichText":
                 let label = UILabel(); label.numberOfLines = 0
                 view = label; content = label
-            case "Button":
-                let button = UIButton(type: .system)
-                button.addTarget(self, action: #selector(tapped(_:)), for: .touchUpInside)
-                view = button; content = button
             case "TextInput":
                 let field = UITextField()
                 field.autocapitalizationType = .none
@@ -450,9 +461,15 @@ private final class TouchSession {
             record.native = native
             record.extensionToken = extensionToken
             nodes[command.nodeId] = record
+            if let control = view as? TSPrimitiveView {
+                control.activate = { [weak self, weak record] in
+                    guard let self, let record, record.events.contains("tap"), record.declaredProps?.disabled != true else { return false }
+                    self.emitTap(command.nodeId, record: record); return true
+                }
+            }
             view.isUserInteractionEnabled = true
             view.isMultipleTouchEnabled = true
-            if !(view is UIButton) {
+            do {
                 let tap = UITapGestureRecognizer(target: self, action: #selector(viewTapped(_:)))
                 tap.name = "anseronui.tap"; tap.isEnabled = false
                 view.addGestureRecognizer(tap)
@@ -494,12 +511,7 @@ private final class TouchSession {
         case "SetFrame":
             guard let frame = command.frame else { throw RenderError.invalidCommand }
             record.animation.stage(["x": frame.x, "y": frame.y, "width": frame.width, "height": frame.height])
-            if record.events.contains("layout") {
-                DispatchQueue.main.async { [weak self] () -> Void in
-                    guard let self, self.nodes[command.nodeId] === record else { return }
-                    self.onEvent?(RendererEvent(type: "NativeEvent", nodeId: command.nodeId, revision: self.revision, event: "layout", x: frame.x, y: frame.y, contentWidth: frame.width, contentHeight: frame.height))
-                }
-            }
+            // Core dispatches the committed layout after CommitAck.
         case "BindEvent":
             guard let event = command.event, let enabled = command.enabled else { throw RenderError.invalidCommand }
             if enabled { record.events.insert(event) } else { record.events.remove(event) }
@@ -539,56 +551,30 @@ private final class TouchSession {
         view.accessibilityIdentifier = props.testID
         record.touchAction = props.touchAction ?? "auto"
         view.accessibilityLabel = props.accessibilityLabel
+        if record.kind == "View" {
+            view.isAccessibilityElement = props.accessibilityRole == "button"
+            view.accessibilityTraits = props.accessibilityRole == "button" ? (props.disabled == true ? [.button, .notEnabled] : .button) : []
+            view.isUserInteractionEnabled = props.disabled != true
+        }
         if let scroll = view as? UIScrollView {
             scroll.isScrollEnabled = props.scrollEnabled ?? true
             scroll.showsVerticalScrollIndicator = props.showsVerticalScrollIndicator ?? true
         }
-        if let image = view as? UIImageView {
-            image.contentMode = resizeMode(props.resizeMode)
-            image.accessibilityLabel = props.accessibilityLabel
-            let source = props.src ?? ""
-            if source != record.mediaSource {
-                record.mediaSource = source
-                image.image = nil
-                if let placeholder = props.placeholderSrc, let url = mediaURL(placeholder) { image.image = UIImage(contentsOfFile: url.path) }
-                guard let url = mediaURL(source) else {
-                    DispatchQueue.main.async { [weak self, weak record] in
-                        guard let self, let record, record.mediaSource == source else { return }
-                        self.emitMedia("loadFailure", id: self.nodeId(for: record), source: source, errorCode: 1)
-                    }
-                    return
-                }
-                if url.isFileURL {
-                    image.image = UIImage(contentsOfFile: url.path)
-                    DispatchQueue.main.async { [weak self, weak record] in
-                        guard let self, let record, record.mediaSource == source else { return }
-                        if image.image != nil { self.emitMedia("loadSuccess", id: self.nodeId(for: record), source: source) }
-                        else { self.emitMedia("loadFailure", id: self.nodeId(for: record), source: source, errorCode: 1) }
-                    }
-                } else {
-                    URLSession.shared.dataTask(with: url) { [weak image, weak record, weak self] data, _, error in
-                        DispatchQueue.main.async {
-                            guard let image, let record, let self, record.mediaSource == source else { return }
-                            if let data, let loaded = UIImage(data: data) { image.image = loaded; self.emitMedia("loadSuccess", id: self.nodeId(for: record), source: source) }
-                            else { self.emitMedia("loadFailure", id: self.nodeId(for: record), source: source, errorCode: 1) }
-                        }
-                    }.resume()
-                }
-            }
-        }
+        updateImage(record, props: props)
         if let video = view as? TSVideoView {
             record.videoLoop = props.loop ?? false
             record.videoRate = Float(props.rate ?? 1)
             video.playerLayer.videoGravity = resizeGravity(props.resizeMode)
             video.playButton.isHidden = props.controls == false
             video.onToggle = { [weak self, weak record] in
-                guard let self, let record, let player = record.player else { return }
+                guard let self, self.pageActive, let record, let player = record.player else { return }
                 let playing = player.rate == 0
                 if playing { player.playImmediately(atRate: record.videoRate) } else { player.pause() }
                 self.emitMedia("playStateDidChanged", id: self.nodeId(for: record), source: record.mediaSource, state: playing ? "playing" : "paused")
             }
             let source = props.src ?? ""
             if source != record.mediaSource {
+                record.suspendedRate = 0
                 if let old = record.timeObserver, let player = record.player { player.removeTimeObserver(old); record.timeObserver = nil }
                 if let old = record.endObserver { NotificationCenter.default.removeObserver(old); record.endObserver = nil }
                 record.player?.pause()
@@ -615,7 +601,7 @@ private final class TouchSession {
                     }
                     record.endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self, weak record, weak player] _ in
                             guard let self, let record, record.mediaSource == source else { return }
-                            if record.videoLoop { player?.seek(to: .zero); player?.playImmediately(atRate: record.videoRate); return }
+                            if record.videoLoop { player?.seek(to: .zero); if self.pageActive { player?.playImmediately(atRate: record.videoRate) } else { record.suspendedRate = record.videoRate }; return }
                             self.emitMedia("playStateDidChanged", id: self.nodeId(for: record), source: source, state: "ended")
                     }
                     record.timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self, weak record] time in
@@ -624,7 +610,7 @@ private final class TouchSession {
                         self.emitMedia("playTimeDidChanged", id: self.nodeId(for: record), source: source, time: time.seconds, duration: duration)
                         if player.rate > 0 { self.emitMedia("playStateDidChanged", id: self.nodeId(for: record), source: source, state: "playing") }
                     }
-                    if props.autoplay == true { player.playImmediately(atRate: record.videoRate) }
+                    if props.autoplay == true { if self.pageActive { player.playImmediately(atRate: record.videoRate) } else { record.suspendedRate = record.videoRate } }
                 } else {
                     DispatchQueue.main.async { [weak self, weak record] in
                         guard let self, let record, record.mediaSource == source else { return }
@@ -633,9 +619,9 @@ private final class TouchSession {
                 }
             }
             record.player?.isMuted = props.muted ?? false
-            if props.playControl == "play" { record.player?.playImmediately(atRate: record.videoRate); emitMedia("playStateDidChanged", id: nodeId(for: record), source: source, state: "playing") }
-            else if props.playControl == "pause" { record.player?.pause(); emitMedia("playStateDidChanged", id: nodeId(for: record), source: source, state: "paused") }
-            else if props.playControl == "stop" { record.player?.pause(); record.player?.seek(to: .zero); emitMedia("playStateDidChanged", id: nodeId(for: record), source: source, state: "paused") }
+            if props.playControl == "play" { if pageActive { record.player?.playImmediately(atRate: record.videoRate) } else { record.suspendedRate = record.videoRate }; emitMedia("playStateDidChanged", id: nodeId(for: record), source: source, state: "playing") }
+            else if props.playControl == "pause" { record.suspendedRate = 0; record.player?.pause(); emitMedia("playStateDidChanged", id: nodeId(for: record), source: source, state: "paused") }
+            else if props.playControl == "stop" { record.suspendedRate = 0; record.player?.pause(); record.player?.seek(to: .zero); emitMedia("playStateDidChanged", id: nodeId(for: record), source: source, state: "paused") }
         }
         let fontSize = CGFloat(props.fontSize ?? 16)
         if let label = view as? UILabel {
@@ -649,13 +635,6 @@ private final class TouchSession {
                     offset += length
                 }
             }
-        } else if let button = view as? UIButton {
-            button.setTitle(props.title ?? "", for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: fontSize)
-            button.setTitleColor(parseColor(props.color) ?? .tintColor, for: .normal)
-            button.setTitleColor(parseColor(props.color)?.withAlphaComponent(0.4) ?? .secondaryLabel, for: .disabled)
-            button.isEnabled = !(props.disabled ?? false)
-            button.accessibilityLabel = props.accessibilityLabel
         } else if let field = view as? UITextField {
             record.applyingValue = true
             if (props.inputRevision ?? 0) >= record.inputRevision && field.markedTextRange == nil {
@@ -682,6 +661,7 @@ private final class TouchSession {
 
     private func releaseMedia(_ record: NodeRecord) {
         record.animation.cancel()
+        record.imageGeneration = UUID()
         record.native?.dispose(); record.native = nil
         record.player?.pause()
         if let token = record.timeObserver { record.player?.removeTimeObserver(token) }
@@ -707,6 +687,43 @@ private final class TouchSession {
         return UIFont(descriptor: descriptor, size: size)
     }
 
+    private func updateImage(_ record: NodeRecord, props: RenderProps) {
+        if let image = record.view as? UIImageView {
+            image.contentMode = resizeMode(props.resizeMode)
+            image.accessibilityLabel = props.accessibilityLabel
+            let source = props.src ?? ""
+            if source != record.mediaSource {
+                record.mediaSource = source
+                let generation = UUID(); record.imageGeneration = generation
+                image.image = nil
+                if let placeholder = props.placeholderSrc, let url = mediaURL(placeholder) { image.image = UIImage(contentsOfFile: url.path) }
+                guard let url = mediaURL(source) else {
+                    DispatchQueue.main.async { [weak self, weak record] in
+                        guard let self, let record, record.imageGeneration == generation else { return }
+                        self.emitMedia("loadFailure", id: self.nodeId(for: record), source: source, errorCode: 1)
+                    }
+                    return
+                }
+                if url.isFileURL {
+                    image.image = UIImage(contentsOfFile: url.path)
+                    DispatchQueue.main.async { [weak self, weak record] in
+                        guard let self, let record, record.imageGeneration == generation else { return }
+                        if image.image != nil { self.emitMedia("loadSuccess", id: self.nodeId(for: record), source: source) }
+                        else { self.emitMedia("loadFailure", id: self.nodeId(for: record), source: source, errorCode: 1) }
+                    }
+                } else {
+                    URLSession.shared.dataTask(with: url) { [weak image, weak record, weak self] data, _, error in
+                        DispatchQueue.main.async {
+                            guard let image, let record, let self, record.imageGeneration == generation else { return }
+                            if let data, let loaded = UIImage(data: data) { image.image = loaded; self.emitMedia("loadSuccess", id: self.nodeId(for: record), source: source) }
+                            else { self.emitMedia("loadFailure", id: self.nodeId(for: record), source: source, errorCode: 1) }
+                        }
+                    }.resume()
+                }
+            }
+        }
+    }
+
     private func configureLabel(_ label: UILabel, text: String, fontSize: CGFloat, props: RenderProps?) {
         label.attributedText = nil
         label.font = textFont(size: fontSize, weight: props?.fontWeight, style: props?.fontStyle)
@@ -730,6 +747,13 @@ private final class TouchSession {
             let key: NSAttributedString.Key = props?.textDecorationLine == "underline" ? .underlineStyle : .strikethroughStyle
             label.attributedText = NSAttributedString(string: text, attributes: [.font: label.font!, .foregroundColor: label.textColor!, key: NSUnderlineStyle.single.rawValue])
         } else { label.text = text }
+        if let lineHeight = props?.lineHeight {
+            let value = NSMutableAttributedString(attributedString: label.attributedText ?? NSAttributedString(string: text, attributes: [.font: label.font!, .foregroundColor: label.textColor!]))
+            let paragraph = NSMutableParagraphStyle(); paragraph.alignment = label.textAlignment; paragraph.lineBreakMode = label.lineBreakMode
+            paragraph.minimumLineHeight = lineHeight; paragraph.maximumLineHeight = lineHeight
+            value.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: value.length))
+            label.attributedText = value
+        }
     }
 
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -761,6 +785,12 @@ private final class TouchSession {
 
     private func emitTap(_ id: UInt32, record: NodeRecord) {
         guard record.events.contains("tap") else { return }
+        if record.declaredProps?.accessibilityRole == "button" {
+            root.endEditing(true)
+            for input in nodes.values where input.kind == "TextInput" {
+                if let field = input.view as? UITextField { publishInput(field, record: input, force: true) }
+            }
+        }
         onEvent?(RendererEvent(type: "Tap", nodeId: id, revision: revision))
     }
 
@@ -774,15 +804,7 @@ private final class TouchSession {
         onEvent?(RendererEvent(type: "InputChange", nodeId: found.key, revision: revision, value: value, inputRevision: record.inputRevision))
     }
 
-    @objc private func tapped(_ sender: UIButton) {
-        // Commit any IME marked text before the following action enters the Core queue.
-        root.endEditing(true)
-        for record in nodes.values where record.kind == "TextInput" {
-            if let field = record.view as? UITextField { publishInput(field, record: record, force: true) }
-        }
-        guard let (id, record) = nodes.first(where: { $0.value.view === sender }), record.events.contains("tap") else { return }
-        onEvent?(RendererEvent(type: "Tap", nodeId: id, revision: revision, value: nil, inputRevision: nil))
-    }
+
 
     @objc private func inputChanged(_ sender: UITextField) {
         guard let record = nodes.values.first(where: { $0.view === sender }), !record.applyingValue else { return }
@@ -898,11 +920,16 @@ private final class TouchSession {
     private func updateScrollExtents() {
         for record in nodes.values where record.kind == "ScrollView" {
             guard let scroll = record.view as? UIScrollView else { continue }
+            let anchor = record.declaredProps?.scrollAnchorOffset ?? 0
+            let delta = anchor - record.anchorOffset
+            record.anchorOffset = anchor
+            let offset = scroll.contentOffset
             let children = nodes.values.filter { $0.view.superview === record.content }
             let width = children.map { ($0.animation.declared["x"] ?? 0) + ($0.animation.declared["width"] ?? 0) }.max() ?? 0
             let height = children.map { ($0.animation.declared["y"] ?? 0) + ($0.animation.declared["height"] ?? 0) }.max() ?? 0
             record.content.frame = CGRect(x: 0, y: 0, width: max(scroll.bounds.width, width), height: max(scroll.bounds.height, height))
             scroll.contentSize = record.content.bounds.size
+            if delta != 0 { scroll.contentOffset = CGPoint(x: offset.x, y: max(0, min(offset.y + delta, scroll.contentSize.height - scroll.bounds.height))) }
         }
     }
 }

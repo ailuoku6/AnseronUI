@@ -18,7 +18,7 @@ type StateSlot = { kind: "state" | "reducer"; value: unknown; pending: PendingUp
 type RefSlot = { kind: "ref"; ref: RefCell };
 type MemoSlot = { kind: "memo"; value: unknown; deps: readonly unknown[] };
 type EffectSlot = { kind: "effect"; setup: EffectSetup; deps?: readonly unknown[]; cleanup?: () => void };
-type ServiceSlot = { kind: "services"; facade: Services; active: boolean; subscriptions: Set<() => void> };
+type ServiceSlot = { kind: "services"; facade: Services; active: boolean; subscriptions: Set<() => void>; pageListeners: Set<(visible: boolean) => void> };
 type Slot = StateSlot | RefSlot | MemoSlot | EffectSlot | ServiceSlot;
 type DraftSlot =
   | { kind: "state" | "reducer"; slot: StateSlot; value: unknown; watermark: number }
@@ -34,8 +34,8 @@ type EventCallbacks = {
   tap?: () => void | Promise<void>; changeText?: (value: string) => void | Promise<void>;
   longPress?: () => void | Promise<void>; backPress?: () => boolean; focus?: () => void | Promise<void>; blur?: () => void | Promise<void>;
   submit?: (value: string) => void | Promise<void>;
-  scroll?: (offset: number, event: { x: number; y: number; contentWidth: number; contentHeight: number }) => void | Promise<void>;
-  scrollEnd?: (event: { x: number; y: number; contentWidth: number; contentHeight: number }) => void | Promise<void>;
+  scroll?: (offset: number, event: { x: number; y: number; contentWidth: number; contentHeight: number; scrollAdjustment?: number }) => void | Promise<void>;
+  scrollEnd?: (event: { x: number; y: number; contentWidth: number; contentHeight: number; scrollAdjustment?: number }) => void | Promise<void>;
   layout?: (frame: Frame) => void | Promise<void>;
   loadSuccess?: (source: string) => void | Promise<void>;
   loadFailure?: (source: string, errorCode: number) => void | Promise<void>;
@@ -55,10 +55,10 @@ type EventCallbacks = {
 type UIInput = Extract<InputPayload, { type: "Tap" | "InputChange" | "NativeEvent" }>;
 const EVENT_NAMES: EventKind[] = ["nativeComponent", "tap", "changeText", "longPress", "backPress", "focus", "blur", "submit", "scroll", "scrollEnd", "layout", "touchDown", "touchMove", "touchUp", "touchCancel", "spanClick", "loadSuccess", "loadFailure", "playStateDidChanged", "playTimeDidChanged", "firstFrameDidDisplay"];
 type HostNode = { id: number; path: string; kind: NodeKind; props: RenderProps; style: Style; children: HostNode[]; frame: Frame; events: EventCallbacks; nativeName?: string; ref?: import("@anseronui/ui").RefTarget<import("@anseronui/ui").NodeHandle> };
-type MeasureQuery = { requestId: number; nodeId: number; kind: "Text" | "RichText" | "Button" | "TextInput"; text: string; fontSize: number; maxWidth: number; props: RenderProps; key: string };
-type Draft = { revision: number; tree: HostNode[]; frames: Map<string, DraftFrame>; measures: Map<number, MeasureQuery>; measureRound: number; readyForAck: boolean; corePending: boolean };
+type MeasureQuery = { requestId: number; nodeId: number; kind: "Text" | "RichText" | "TextInput"; text: string; fontSize: number; maxWidth: number; props: RenderProps; key: string };
+type Draft = { revision: number; tree: HostNode[]; frames: Map<string, DraftFrame>; measures: Map<number, MeasureQuery>; measureRound: number; readyForAck: boolean; corePending: boolean; coreStarted?: number; commitStarted?: number };
 type Surface = {
-  timerScope: TimerScope; timers: Map<number, { id: number; callback: () => void }>;
+  visible: boolean; timerScope: TimerScope; timers: Map<number, { id: number; callback: () => void; remaining: number; started: number; suspended: boolean }>;
   id: number; generation: number; page: Page<any>; width: number; height: number;
   revision: number; frames: Map<string, ComponentFrame>; tree: HostNode[];
   pending: Draft | null; dirty: boolean; nodeIds: Map<string, number>;
@@ -70,7 +70,7 @@ type Surface = {
   inputRevisions: Map<number, number>;
 };
 
-export interface RuntimeOptions { renderCore?: (request: CoreRequest) => CoreResult; bundleBuildId: string; pages: Page<any>[]; runtimeEpoch?: number; onWake?: () => void }
+export interface RuntimeOptions { renderCore?: (request: CoreRequest) => CoreResult; bundleBuildId: string; pages: Page<any>[]; runtimeEpoch?: number; onWake?: () => void; profile?: boolean }
 
 function sameDeps(a: readonly unknown[] | undefined, b: readonly unknown[] | undefined): boolean {
   if (a === undefined || b === undefined || a.length !== b.length) return false;
@@ -86,7 +86,9 @@ function sameFrame(a: Frame, b: Frame): boolean {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 function finiteDimension(value: number): boolean { return Number.isFinite(value) && value >= 0; }
-const MAX_MEASURE_ROUNDS = 3;
+// Nested intrinsic containers can reveal another text constraint after each
+// measurement pass. Allow bounded convergence for composed controls and lists.
+const MAX_MEASURE_ROUNDS = 8;
 
 /** Shared UI runtime, executed directly in JS or AOT compiled into native libraries and Wasm. */
 export class BusinessRuntime {
@@ -105,10 +107,24 @@ export class BusinessRuntime {
   private readonly onWake?: () => void;
   private readonly renderCore?: (request: CoreRequest) => CoreResult;
   private coreRequests: CoreRequest[] = [];
+  private profiling = false;
+  private metrics: Record<string, number> = {};
+  private countMetric(name: string, value = 1): void { if (this.profiling) this.metrics[name] = (this.metrics[name] ?? 0) + Math.max(0, value); }
+  /** Counts are live; phase durations/traffic are collected only when profiling is enabled. */
+  getStats(): Record<string, number> {
+    let nodes = 0, frames = 0, timers = 0, modules = 0, measurements = 0, hidden = 0, pendingRenders = 0;
+    for (const surface of this.surfaces.values()) {
+      nodes += this.flatten(surface.tree).length; frames += surface.frames.size; timers += surface.timers.size;
+      modules += surface.modules.size; measurements += surface.measureCache.size; if (!surface.visible) hidden++; if (surface.pending) pendingRenders++;
+    }
+    return { ...this.metrics, pendingRenders, surfaces: this.surfaces.size, hiddenSurfaces: hidden, nodes, frames, timers, modules,
+      measureCacheEntries: measurements, incoming: this.incoming.length, outgoing: this.outgoing.length, coreRequests: this.coreRequests.length };
+  }
 
   constructor(options: RuntimeOptions) {
     if (!options.bundleBuildId || options.bundleBuildId.length > 128) throw new Error("Invalid build ID");
     this.bundleBuildId = options.bundleBuildId;
+    this.profiling = options.profile ?? false;
     this.onWake = options.onWake;
     this.renderCore = options.renderCore;
     this.runtimeEpoch = options.runtimeEpoch ?? 1;
@@ -147,16 +163,21 @@ export class BusinessRuntime {
     let count = 0;
     while (this.incoming.length > 0 && count++ < maxMessages) this.handle(this.incoming.shift()!);
     for (const surface of this.surfaces.values()) {
-      if (!surface.dirty && !surface.pending && surface.deferredEvents.length > 0) {
+      if (surface.visible && !surface.pending && surface.deferredEvents.length > 0) {
         const events = surface.deferredEvents;
         surface.deferredEvents = [];
+        let blocked = false;
         for (const event of events) {
           if (event.type !== "Tap" && event.type !== "NativeEvent") continue;
-          if (surface.dirty) surface.deferredEvents.push(event);
+          // Measurement effects can keep a variable-height list dirty for
+          // several commits. Apply current viewport state before that next
+          // render, otherwise continuous scrolling starves behind refinement.
+          const scroll = event.type === "NativeEvent" && event.event === "scroll";
+          if (blocked || surface.dirty && !scroll) { blocked = true; surface.deferredEvents.push(event); }
           else this.invokeEvent(surface, { ...event, revision: surface.revision });
         }
       }
-      if (surface.dirty && !surface.pending) this.beginRender(surface);
+      if (surface.visible && surface.dirty && !surface.pending) this.beginRender(surface);
     }
     return this.takeOutputs();
   }
@@ -165,7 +186,7 @@ export class BusinessRuntime {
   takeCoreRequest(): CoreRequest | null { return this.coreRequests.shift() ?? null; }
 
   hasPendingWork(): boolean {
-    return this.coreRequests.length > 0 || this.incoming.length > 0 || this.outgoing.length > 0 || [...this.surfaces.values()].some(s => s.dirty && !s.pending);
+    return this.coreRequests.length > 0 || this.incoming.length > 0 || this.outgoing.length > 0 || [...this.surfaces.values()].some(s => s.visible && s.dirty && !s.pending);
   }
 
   dispose(): void {
@@ -198,7 +219,7 @@ export class BusinessRuntime {
   private handle(input: Envelope<InputPayload>): void {
     const payload = input.payload;
     if (payload.type === "Handshake") {
-      const supportedNodes: NodeKind[] = ["View", "Text", "RichText", "Button", "TextInput", "ScrollView", "Image", "Video", "Native"];
+      const supportedNodes: NodeKind[] = ["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video", "Native"];
       if (payload.requiredNodes.some(kind => !supportedNodes.includes(kind))) {
         this.emit({ id: input.surfaceId, generation: input.surfaceGeneration }, { type: "Diagnostic", code: "UNSUPPORTED_NODE", message: "Required node is unavailable" });
       } else this.emit({ id: input.surfaceId, generation: input.surfaceGeneration }, { type: "Ready", supportedNodes });
@@ -220,8 +241,8 @@ export class BusinessRuntime {
           if (!surface || surface.generation !== input.surfaceGeneration) throw new Error("SURFACE_DISPOSED");
           const requestId = surface.nextRequestId++;
           if (!isU32(requestId)) throw new Error("REQUEST_ID_OVERFLOW");
-          surface.timers.set(requestId, { id, callback });
-          this.emit(surface, { type: "InvokeModule", requestId, module: "timer", method: "sleep", argument: String(milliseconds) });
+          surface.timers.set(requestId, { id, callback, remaining: milliseconds, started: Date.now(), suspended: !surface.visible });
+          if (surface.visible) this.emit(surface, { type: "InvokeModule", requestId, module: "timer", method: "sleep", argument: String(milliseconds) });
         },
         cancel: id => {
           const surface = this.surfaces.get(input.surfaceId);
@@ -234,7 +255,7 @@ export class BusinessRuntime {
       };
       registerTimerScope(timerScope);
       this.surfaces.set(input.surfaceId, {
-        timerScope, timers: new Map(),
+        visible: payload.visible !== false, timerScope, timers: new Map(),
         id: input.surfaceId, generation: input.surfaceGeneration, page,
         width: payload.width, height: payload.height, revision: 0,
         frames: new Map(), tree: [], pending: null, dirty: true,
@@ -245,13 +266,19 @@ export class BusinessRuntime {
     }
     const surface = this.surfaces.get(input.surfaceId);
     if (!surface || surface.generation !== input.surfaceGeneration) return;
-    if (payload.type === "DestroySurface") {
+    if (payload.type === "InspectRuntime") {
+      if (payload.enabled !== undefined) this.profiling = payload.enabled;
+      if (payload.reset) this.metrics = {};
+      this.emit(surface, { type: "RuntimeStats", values: this.getStats() });
+    } else if (payload.type === "DestroySurface") {
       this.disposeSurface(surface);
       this.surfaces.delete(surface.id);
       this.emit(surface, { type: "SurfaceDisposed" });
       const identity = surface.id + ":" + surface.generation;
       this.inputSequences.delete(identity);
       this.outputSequences.delete(identity);
+    } else if (payload.type === "SurfaceVisibility") {
+      this.setVisibility(surface, payload.visible);
     } else if (payload.type === "BackPress") {
       this.emit(surface, { type: "BackPressResult", consumed: this.invokeBackPress(surface) });
     } else if (payload.type === "Resize") {
@@ -268,13 +295,21 @@ export class BusinessRuntime {
         this.emit(surface, { type: "Diagnostic", code: "RENDERER_LOST", message: payload.reason });
       }
     } else if (payload.type === "Tap" || payload.type === "InputChange" || payload.type === "NativeEvent") {
-      if ((payload.type === "Tap" || payload.type === "NativeEvent") && (surface.pending || surface.dirty) &&
-          (payload.revision === surface.revision || payload.revision === surface.pending?.revision)) surface.deferredEvents.push(payload);
-      else if (surface.pending && payload.revision === surface.pending.revision) surface.deferredEvents.push(payload);
+      if (!surface.visible) return;
+      if (payload.type === "NativeEvent" && (payload.event === "scroll" || payload.event === "scrollEnd") && payload.revision <= surface.revision) {
+        // Unlike a tap, an offset remains the native viewport's current state
+        // when a commit overtakes its event on the Core owner thread. Node IDs
+        // are not reused; invokeEvent still rejects nodes that were unmounted.
+        if (surface.pending || surface.dirty) this.deferEvent(surface, payload);
+        else this.invokeEvent(surface, { ...payload, revision: surface.revision });
+      } else if ((payload.type === "Tap" || payload.type === "NativeEvent") && (surface.pending || surface.dirty) &&
+          (payload.revision === surface.revision || payload.revision === surface.pending?.revision)) this.deferEvent(surface, payload);
+      else if (surface.pending && payload.revision === surface.pending.revision) this.deferEvent(surface, payload);
       else this.invokeEvent(surface, payload);
     } else if (payload.type === "ModuleResult") {
       const timer = surface.timers.get(payload.requestId);
       if (timer) {
+        if (timer.suspended) return;
         surface.timers.delete(payload.requestId); forgetTimeout(timer.id);
         if (payload.ok) {
           try {
@@ -294,10 +329,51 @@ export class BusinessRuntime {
     }
   }
 
+  private deferEvent(surface: Surface, event: UIInput): void {
+    // Scroll offsets describe current viewport state. Replaying old offsets after
+    // an asynchronous layout makes virtual lists chase a fling for seconds.
+    // Discrete events are barriers: never move a scroll update across a tap/input.
+    if (event.type === "NativeEvent" && event.event === "scroll") {
+      for (let i = surface.deferredEvents.length - 1; i >= 0; i--) {
+        const previous = surface.deferredEvents[i];
+        if (previous.type !== "NativeEvent" || previous.event !== "scroll") break;
+        if (previous.nodeId === event.nodeId) { surface.deferredEvents.splice(i, 1); break; }
+      }
+    }
+    surface.deferredEvents.push(event);
+  }
+
+  private setVisibility(surface: Surface, visible: boolean): void {
+    if (surface.visible === visible) return;
+    surface.visible = visible;
+    if (!visible) surface.deferredEvents = [];
+    for (const [requestId, timer] of [...surface.timers]) {
+      if (!visible && !timer.suspended) {
+        timer.remaining = Math.max(0, timer.remaining - Math.max(0, Date.now() - timer.started));
+        timer.suspended = true;
+        this.emit(surface, { type: "CancelRequest", requestId });
+      } else if (visible && timer.suspended) {
+        surface.timers.delete(requestId);
+        const next = surface.nextRequestId++;
+        if (!isU32(next)) throw new Error("REQUEST_ID_OVERFLOW");
+        timer.started = Date.now(); timer.suspended = false;
+        surface.timers.set(next, timer);
+        this.emit(surface, { type: "InvokeModule", requestId: next, module: "timer", method: "sleep", argument: String(timer.remaining) });
+      }
+    }
+    for (const frame of surface.frames.values()) for (const slot of frame.slots) if (slot.kind === "services") {
+      for (const listener of [...slot.pageListeners]) {
+        try { withTimerScope(surface.timerScope, () => listener(visible)); }
+        catch (error) { this.emit(surface, { type: "Diagnostic", code: "PAGE_LIFECYCLE_ERROR", message: String(error) }); }
+      }
+    }
+  }
+
   private invokeEvent(surface: Surface, event: UIInput): void {
     withTimerScope(surface.timerScope, () => this.invokeScopedEvent(surface, event));
   }
   private invokeScopedEvent(surface: Surface, event: UIInput): void {
+    if (!surface.visible) return;
     if (event.type !== "InputChange" && event.revision !== surface.revision) return;
     if (event.type === "InputChange" && (event.revision > surface.revision || event.inputRevision <= (surface.inputRevisions.get(event.nodeId) ?? 0))) return;
     const touchInput = event.type === "NativeEvent" && ["touchDown", "touchMove", "touchUp", "touchCancel"].includes(event.event);
@@ -312,7 +388,7 @@ export class BusinessRuntime {
         if (event.event === "nativeComponent") result = node.events.nativeComponent?.(JSON.parse(event.value ?? "{}"));
         else if (event.event === "submit") result = node.events.submit?.(event.value ?? "");
         else if (event.event === "scroll" || event.event === "scrollEnd") {
-          const data = { x: event.x!, y: event.y!, contentWidth: event.contentWidth!, contentHeight: event.contentHeight! };
+          const data = { x: event.x!, y: event.y!, contentWidth: event.contentWidth!, contentHeight: event.contentHeight!, scrollAdjustment: event.scrollAdjustment };
           result = event.event === "scroll" ? node.events.scroll?.(data.y, data) : node.events.scrollEnd?.(data);
         } else if (event.event === "layout") result = node.events.layout?.({ x: event.x!, y: event.y!, width: event.contentWidth!, height: event.contentHeight! });
         else if (event.event === "loadSuccess") result = node.events.loadSuccess?.(event.source ?? "");
@@ -406,7 +482,10 @@ export class BusinessRuntime {
     const draft: Draft = { revision: surface.revision + 1, tree: [], frames: new Map(), measures: new Map(), measureRound: 0, readyForAck: false, corePending: false };
     try {
       const root: UIElement = { kind: "component", component: surface.page.component, props: {}, key: null };
+      const started = this.profiling ? Date.now() : 0;
       draft.tree = this.visit(surface, draft, root, "root", new Map(), 0);
+      this.countMetric("evaluateMs", this.profiling ? Date.now() - started : 0);
+      this.countMetric("renders");
       surface.pending = draft;
       this.layout(surface, draft);
     } catch (error) {
@@ -543,7 +622,6 @@ export class BusinessRuntime {
         clickable: allSpansClickable || typeof span.onClick === "function",
       })));
     }
-    if (element.tag === "Button") outputProps.title = String(props.title ?? "");
     if (typeof props.touchAction === "string") outputProps.touchAction = props.touchAction;
     if (element.tag === "TextInput") {
       outputProps.value = String(props.value ?? "");
@@ -553,6 +631,7 @@ export class BusinessRuntime {
     if (element.tag === "Image" || element.tag === "Video") {
       outputProps.src = String(props.src ?? "");
       if (typeof props.resizeMode === "string") outputProps.resizeMode = props.resizeMode;
+      if (element.tag === "Image" && typeof props.dmSrc === "string") outputProps.dmSrc = props.dmSrc;
       if (element.tag === "Image" && typeof props.placeholderSrc === "string") outputProps.placeholderSrc = props.placeholderSrc;
       if (element.tag === "Video") {
         for (const key of ["controls", "autoplay", "loop", "muted", "rate"] as const) {
@@ -564,11 +643,11 @@ export class BusinessRuntime {
     }
     if (props.animation !== undefined) { validateAnimationOptions(props.animation); outputProps.animation = JSON.stringify(props.animation); }
     if (typeof props.disabled === "boolean") outputProps.disabled = props.disabled;
-    for (const key of ["translateX", "translateY", "scaleX", "scaleY", "rotate", "backgroundColor", "color", "dmBackgroundColor", "dmColor", "dmBorderColor", "shadowColor", "dmShadowColor", "shadowOpacity", "shadowRadius", "shadowOffsetX", "shadowOffsetY", "placeholderTextColor", "dmPlaceholderTextColor", "opacity", "fontSize", "borderWidth", "borderColor", "borderRadius", "overflow", "visibility", "fontWeight", "fontStyle", "textAlign", "textDecorationLine"] as const) {
+    for (const key of ["translateX", "translateY", "scaleX", "scaleY", "rotate", "backgroundColor", "color", "dmBackgroundColor", "dmColor", "dmBorderColor", "shadowColor", "dmShadowColor", "shadowOpacity", "shadowRadius", "shadowOffsetX", "shadowOffsetY", "placeholderTextColor", "dmPlaceholderTextColor", "opacity", "fontSize", "lineHeight", "borderWidth", "borderColor", "borderRadius", "overflow", "visibility", "fontWeight", "fontStyle", "textAlign", "textDecorationLine"] as const) {
       const value = style[key];
       if (value !== undefined) outputProps[key] = value;
     }
-    for (const key of ["testID", "accessibilityLabel", "numberOfLines", "ellipsizeMode", "editable", "secureTextEntry", "maxLength", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "placeholderTextColor", "dmPlaceholderTextColor", "scrollEnabled", "showsVerticalScrollIndicator"]) {
+    for (const key of ["testID", "accessibilityLabel", "accessibilityRole", "numberOfLines", "ellipsizeMode", "editable", "secureTextEntry", "maxLength", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "placeholderTextColor", "dmPlaceholderTextColor", "scrollEnabled", "showsVerticalScrollIndicator", "scrollAnchorOffset"]) {
       const value = props[key];
       if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") outputProps[key] = value;
     }
@@ -603,7 +682,7 @@ export class BusinessRuntime {
     if (typeof props.onTimeUpdate === "function") events.playTimeDidChanged = props.onTimeUpdate as EventCallbacks["playTimeDidChanged"];
     if (typeof props.onFirstFrame === "function") events.firstFrameDidDisplay = props.onFirstFrame as EventCallbacks["firstFrameDidDisplay"];
     if (typeof props.onNativeEvent === "function") events.nativeComponent = props.onNativeEvent as EventCallbacks["nativeComponent"];
-    const children = element.tag === "Text" || element.tag === "RichText" || element.tag === "Button" || element.tag === "TextInput" || element.tag === "Image" || element.tag === "Video"
+    const children = element.tag === "Text" || element.tag === "RichText" || element.tag === "TextInput" || element.tag === "Image" || element.tag === "Video"
       ? [] : this.visitChildren(surface, draft, element.children, hostPath, context, depth + 1);
     return [{ id, path: hostPath, kind: element.tag, props: outputProps, style, children, frame: { x: 0, y: 0, width: 0, height: 0 }, events, nativeName: element.tag === "Native" ? String(props.name) : undefined, ref: props.ref as HostNode["ref"] }];
   }
@@ -674,8 +753,17 @@ export class BusinessRuntime {
       void next();
       return stop;
     };
-    const slot: ServiceSlot = { kind: "services", active: true, subscriptions: new Set(), facade: {
+    const slot: ServiceSlot = { kind: "services", active: true, subscriptions: new Set(), pageListeners: new Set(), facade: {
       ...createNativeServices(invokeJSON, subscribe), subscribe,
+      page: {
+        isVisible: () => surface.visible,
+        subscribe: listener => {
+          if (this.rendering) throw new Error("SERVICE_DURING_RENDER");
+          if (!slot.active) throw new Error("SURFACE_DISPOSED");
+          slot.pageListeners.add(listener);
+          return () => { slot.pageListeners.delete(listener); };
+        },
+      },
       timers: { setTimeout: (callback, delay = 0) => timeoutInScope(surface.timerScope, callback, delay), clearTimeout },
       invoke: async <T>(module: string, method: string, args?: unknown): Promise<T> => {
         if (module === "events" || module === "__view" || module === "http" || module === "timer" || module === "router") throw new Error("RESERVED_MODULE");
@@ -727,10 +815,15 @@ export class BusinessRuntime {
     draft.measureRound++;
     draft.corePending = true;
     draft.measures.clear();
+    if (this.profiling) draft.coreStarted = Date.now();
     const request: RenderRequest = { type: "Render", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation,
       revision: draft.revision, round: draft.measureRound, width: surface.width, height: surface.height,
-      tree: this.renderNodes(draft.tree), previous: this.renderNodes(surface.tree), nextRequestId: surface.nextRequestId,
+      profile: this.profiling, tree: this.renderNodes(draft.tree), previous: this.renderNodes(surface.tree), nextRequestId: surface.nextRequestId,
       measureCache: [...surface.measureCache].map(([key, value]) => ({key, ...value})) };
+    if (this.profiling) {
+      const started = Date.now(); this.countMetric("coreRequestUnits", JSON.stringify(request).length);
+      this.countMetric("serializeMs", Date.now() - started); this.countMetric("layoutRounds");
+    }
     if (this.renderCore) this.acceptCoreResult(this.renderCore(request));
     else this.coreRequests.push(request);
   }
@@ -741,6 +834,9 @@ export class BusinessRuntime {
     const draft = surface?.pending;
     if (!surface || surface.generation !== result.generation || !draft || !draft.corePending || draft.revision !== result.revision || draft.measureRound !== result.round) return;
     draft.corePending = false;
+    if (draft.coreStarted !== undefined) this.countMetric("coreRoundTripMs", Date.now() - draft.coreStarted);
+    this.countMetric("measureRequests", result.measures.length);
+    if (result.timings) { this.countMetric("syncMs", result.timings.syncMs); this.countMetric("layoutMs", result.timings.layoutMs); this.countMetric("diffMs", result.timings.diffMs); }
     surface.nextRequestId = Math.max(surface.nextRequestId, result.nextRequestId);
     const frames = new Map(result.frames.map(item => [item.nodeId, item.frame]));
     for (const host of this.flatten(draft.tree)) {
@@ -754,6 +850,8 @@ export class BusinessRuntime {
     }
     if (draft.measures.size === 0) {
       draft.readyForAck = true;
+      if (this.profiling) draft.commitStarted = Date.now();
+      this.countMetric("commands", result.commands.length);
       this.emit(surface, { type: "Commit", revision: draft.revision, commands: result.commands });
     }
   }
@@ -762,6 +860,7 @@ export class BusinessRuntime {
     const draft = surface.pending;
     const query = draft?.measures.get(result.requestId);
     if (!draft || !query || query.nodeId !== result.nodeId || !finiteDimension(result.width) || !finiteDimension(result.height)) return;
+    surface.measureCache.delete(query.key);
     surface.measureCache.set(query.key, { width: result.width, height: result.height, baseline: result.baseline });
     draft.measures.delete(result.requestId);
     if (draft.measures.size === 0) this.layout(surface, draft);
@@ -825,8 +924,24 @@ export class BusinessRuntime {
     const oldNodes = new Map(this.flatten(surface.tree).map(node => [node.id, node]));
     surface.tree = draft.tree;
     surface.revision = revision;
+    this.countMetric("commits");
+    if (draft.commitStarted !== undefined) this.countMetric("commitRoundTripMs", Date.now() - draft.commitStarted);
     surface.pending = null;
     const nextNodes = new Map(this.flatten(surface.tree).map(node => [node.id, node]));
+    // Never evict measurements mid-layout: later rounds can reuse earlier constraints.
+    // Retire offscreen identities after ACK, then bound the idle cache.
+    for (const key of surface.measureCache.keys()) {
+      const nodeId = Number(key.slice(1, key.indexOf(',')));
+      if (!nextNodes.has(nodeId)) surface.measureCache.delete(key);
+    }
+    while (surface.measureCache.size > 1024) {
+      const oldest = surface.measureCache.keys().next().value;
+      if (oldest === undefined) break;
+      surface.measureCache.delete(oldest);
+    }
+    const livePaths = new Set(this.flatten(surface.tree).map(node => node.path));
+    for (const path of surface.nodeIds.keys()) if (!livePaths.has(path)) surface.nodeIds.delete(path);
+    for (const id of surface.inputRevisions.keys()) if (!nextNodes.has(id)) surface.inputRevisions.delete(id);
     for (const old of oldNodes.values()) {
       const next = nextNodes.get(old.id);
       if (!next || old.ref !== next.ref) this.assignRef(surface, old.ref, null);
@@ -905,7 +1020,7 @@ export class BusinessRuntime {
     for (const slot of frame.slots) {
       if (slot.kind === "state" || slot.kind === "reducer") slot.active = false;
       if (slot.kind === "effect" && slot.cleanup) this.runCleanup(surface, slot.cleanup);
-      if (slot.kind === "services") {
+      if (slot.kind === "services") { slot.pageListeners.clear();
         for (const stop of slot.subscriptions) stop();
         slot.active = false;
         for (const [requestId, request] of surface.modules) if (request.owner === slot) {

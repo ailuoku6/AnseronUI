@@ -1,3 +1,4 @@
+import { debugBuildOptions } from '../packages/devtools/instrumentation/index.mjs';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, copyFileSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -15,7 +16,7 @@ const args = rawArgs.filter(arg => !['--framework-only','--business-only'].inclu
 if (args.length > 2 || args.some(arg => arg.startsWith('--'))) throw new Error('Expected target [config] [--framework-only|--business-only]');
 const target = args[0] ?? 'native';
 const configPath = args[1] ?? process.env.ANSERONUI_CONFIG;
-const targets = { native:'', 'macos-arm64':'', 'ios-simulator':'aarch64-apple-ios-simulator', 'ios-device':'aarch64-apple-ios', android:'aarch64-linux-android', wasm:'wasm32-wasi' };
+const targets = { native:'', 'macos-arm64':'', 'ios-simulator':'aarch64-apple-ios-simulator', 'ios-device':'aarch64-apple-ios', android:'aarch64-linux-android', harmony:'aarch64-linux-ohos', wasm:'wasm32-wasi' };
 if (target === 'macos-arm64' && (process.platform !== 'darwin' || process.arch !== 'arm64')) throw new Error('macOS currently requires an Apple Silicon Mac and Xcode.');
 if (!(target in targets)) throw new Error(`Unknown target ${target}: ${Object.keys(targets).join(', ')}`);
 function run(command, args, env = process.env) {
@@ -45,7 +46,9 @@ if (target === 'android') {
   const ndks = join(sdk,'ndk');
   env.ANDROID_NDK_ROOT ??= join(ndks, readdirSync(ndks).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}))[0]);
 }
-const targetIdentity = target === 'macos-arm64' ? { platform: 'macos', arch: 'arm64', deploymentTarget: '14.0', sdk: output('xcrun',['--sdk','macosx','--show-sdk-version']), xcode: output('xcodebuild',['-version']), compiler: output('xcrun',['clang','--version']) } : null;
+const harmonySDK = process.env.HARMONY_NATIVE_SDK ?? '/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native';
+const targetIdentity = target === 'harmony' ? {platform:'harmony', arch:'arm64', minimumApi:21, sdk:JSON.parse(readFileSync(join(harmonySDK,'oh-uni-package.json'),'utf8')), compiler:output(join(harmonySDK,'llvm/bin/clang'),['--version']), llvm:output(process.env.HARMONY_LLVM_CLANG ?? '/opt/homebrew/opt/llvm/bin/clang',['--version'])} : target === 'macos-arm64' ? { platform: 'macos', arch: 'arm64', deploymentTarget: '14.0', sdk: output('xcrun',['--sdk','macosx','--show-sdk-version']), xcode: output('xcodebuild',['-version']), compiler: output('xcrun',['clang','--version']) } : null;
+const devtools = debugBuildOptions(target);
 const configuration = configPath ?? 'anseronui.config.json';
 const destination = resolve('.verification/core-' + target);
 mkdirSync(destination, {recursive:true});
@@ -62,7 +65,7 @@ for (const kind of (frameworkOnly ? ['framework'] : ['framework', 'business'])) 
   let cached = false;
   try {
     const manifest = JSON.parse(readFileSync(stamp, 'utf8'));
-    cached = JSON.stringify(manifest.targetIdentity ?? null) === JSON.stringify(targetIdentity) && manifest.kind === kind && manifest.target === target && manifest.abiVersion === 2 &&
+    cached = JSON.stringify(manifest.devtools ?? null) === JSON.stringify(devtools) && JSON.stringify(manifest.targetIdentity ?? null) === JSON.stringify(targetIdentity) && manifest.kind === kind && manifest.target === target && manifest.abiVersion === 2 &&
       manifest.sourceFingerprint === fingerprints[kind] && manifest.artifactSha256 === digest(artifact);
   } catch {}
   if (cached) console.log(`Reusing ${kind}: ${artifact}`);
@@ -72,10 +75,10 @@ for (const kind of (frameworkOnly ? ['framework'] : ['framework', 'business'])) 
     rmSync(stamp, {force:true});
     console.log(`Compiling ${kind}: ${target}`);
     run(process.execPath, ['--import','tsx','scripts/stage-core.mjs', configuration, kind, target]);
-    run(process.execPath, ['internal/toolchain/build-library.mjs', `.verification/source-${target}/${kind}/profile${target==='wasm'?'-wasm':''}.json`, directory], env);
+    run(process.execPath, [target === 'harmony' ? 'scripts/harmony-library.mjs' : 'internal/toolchain/build-library.mjs', `.verification/source-${target}/${kind}/profile${target==='wasm'?'-wasm':''}.json`, directory], env);
     const after = kind === 'framework' ? frameworkFingerprint(root) : businessFingerprint(root, configuration);
     if (after !== fingerprints[kind]) throw new Error(`${kind} sources changed during compilation`);
-    writeFileSync(stamp, JSON.stringify({kind,target,targetIdentity,abiVersion:2,sourceFingerprint:after,artifactSha256:digest(artifact)},null,2)+'\n');
+    writeFileSync(stamp, JSON.stringify({kind,target,targetIdentity,devtools,abiVersion:2,sourceFingerprint:after,artifactSha256:digest(artifact)},null,2)+'\n');
   }
   artifacts[kind] = artifact;
 }
@@ -91,6 +94,10 @@ if (target === 'wasm') {
     const sdkName = target === 'ios-device' ? 'iphoneos' : 'iphonesimulator';
     compiler = output('xcrun', ['--sdk',sdkName,'--find','clang']);
     compileFlags = ['-isysroot',output('xcrun',['--sdk',sdkName,'--show-sdk-path']),'-target',target === 'ios-device' ? 'arm64-apple-ios15.0' : 'arm64-apple-ios15.0-simulator'];
+  } else if (target === 'harmony') {
+    compiler = join(harmonySDK,'llvm/bin/clang');
+    archiver = join(harmonySDK,'llvm/bin/llvm-ar');
+    compileFlags = ['--target=aarch64-linux-ohos', '--sysroot='+join(harmonySDK,'sysroot')];
   } else if (target === 'android') {
     const prebuilt = join(env.ANDROID_NDK_ROOT,'toolchains/llvm/prebuilt');
     const host = readdirSync(prebuilt).find(name=>name.startsWith(process.platform==='darwin'?'darwin':'linux'));
@@ -101,7 +108,7 @@ if (target === 'wasm') {
   run(compiler, [...compileFlags,'-fPIC','-I','packages/core/native/include','-c','packages/core/native/split_bridge.c','-o',object],env);
   const combined = join(destination,'entry.lib.a');
   rmSync(combined,{force:true});
-  if (process.platform === 'darwin' && target !== 'android') {
+  if (process.platform === 'darwin' && !['android','harmony'].includes(target)) {
     run('xcrun',['libtool','-static','-o',combined,object,artifacts.framework,artifacts.business],env);
   } else {
     // MRI adds archive members rather than embedding nested archive files.
@@ -112,7 +119,7 @@ if (target === 'wasm') {
 }
 if (sourceFingerprint !== coreFingerprint(root, configuration)) throw new Error('Sources changed during build; rebuild');
 const config = JSON.parse(readFileSync(configuration,'utf8'));
-const manifest = {buildId:config.buildId,target,targetIdentity,protocolMajor:1,runtimeEpoch:1,abiVersion:2,format:'split-v1',
+const manifest = {buildId:config.buildId,target,targetIdentity,devtools,protocolMajor:1,runtimeEpoch:1,abiVersion:2,format:'split-v1',
   pages:config.pages.map(page=>({...page,name:page.name??page.source.split('/').slice(-2,-1)[0]})),
   configPath:configuration,sourceFingerprint,frameworkFingerprint:fingerprints.framework,businessFingerprint:fingerprints.business,
   frameworkSha256:digest(artifacts.framework),businessSha256:digest(artifacts.business)};

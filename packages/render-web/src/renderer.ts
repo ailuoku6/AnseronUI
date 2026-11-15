@@ -13,6 +13,7 @@ type NodeRecord = {
   pendingInputRevision: number;
   pendingValue: string | null;
   props?: RenderProps;
+  anchorOffset?: number;
 };
 export type RendererEvent = { type: "Tap"; nodeId: number; revision: number } |
   { type: "InputChange"; nodeId: number; revision: number; value: string; inputRevision: number } |
@@ -23,13 +24,26 @@ export class DOMRenderer {
   private records = new Map<number, NodeRecord>();
   private revision = 0;
   private disposed = false;
+  private pageActive = true;
+  private resumeVideos = new Set<HTMLVideoElement>();
+  setPageActive(active: boolean): void {
+    if (this.pageActive === active) return;
+    this.pageActive = active;
+    for (const record of this.records.values()) {
+      record.animation.setActive(active);
+      if (record.kind !== 'Video') continue;
+      const video = record.element as HTMLVideoElement;
+      if (!active && !video.paused) { this.resumeVideos.add(video); video.pause(); }
+      else if (active && this.resumeVideos.delete(video)) void video.play().catch(() => {});
+    }
+  }
   private pointers = new Map<number, { target: number; owner: number; clientX: number; clientY: number }>();
   private readonly pointerListeners: [string, EventListener][] = [];
   private readonly appearance?: MediaQueryList;
   private readonly appearanceChanged = () => {
     for (const record of this.records.values()) if (record.props) {
       this.setProps(record, record.props, this.revision, true);
-      record.animation.commit();
+      record.animation.setActive(this.pageActive); record.animation.commit();
     }
   };
 
@@ -98,8 +112,14 @@ export class DOMRenderer {
     this.validate(commands);
     try {
       for (const command of commands) this.applyOne(command, revision);
-      for (const record of this.records.values()) record.animation.commit();
+      for (const record of this.records.values()) { record.animation.setActive(this.pageActive); record.animation.commit(); }
       this.revision = revision;
+      for (const record of this.records.values()) if (record.kind === 'ScrollView') {
+        const anchor = Number(record.props?.scrollAnchorOffset ?? 0);
+        const delta = anchor - (record.anchorOffset ?? 0);
+        record.anchorOffset = anchor;
+        if (delta) record.element.scrollTop += delta;
+      }
     } catch (error) {
       this.clear();
       throw error;
@@ -107,11 +127,17 @@ export class DOMRenderer {
   }
 
   clear(): void {
+    this.resumeVideos.clear();
     this.pointers.clear();
-    for (const record of this.records.values()) { record.animation.cancel(); record.native?.dispose?.(); }
+    for (const record of this.records.values()) { record.animation.cancel(); this.releaseMedia(record); record.native?.dispose?.(); }
     this.root.replaceChildren();
     this.records.clear();
     this.revision = 0;
+  }
+  private releaseMedia(record: NodeRecord): void {
+    if (record.kind !== 'Video') return;
+    const video = record.element as HTMLVideoElement;
+    this.resumeVideos.delete(video); video.pause(); video.removeAttribute('src'); video.load();
   }
   dispose(): void { if (!this.disposed) { this.clear(); this.appearance?.removeEventListener('change', this.appearanceChanged); for (const [name, listener] of this.pointerListeners) this.root.removeEventListener(name, listener, true); this.disposed = true; } }
   getNode(nodeId: number): HTMLElement | undefined { return this.records.get(nodeId)?.element; }
@@ -173,10 +199,10 @@ export class DOMRenderer {
           });
         } });
       }
-      const element = native?.element ?? this.root.ownerDocument.createElement(({ View: "div", Text: "div", RichText: "div", Button: "button", TextInput: "input", ScrollView: "div", Image: "img", Video: "video", Native: "div" })[command.kind]);
+      const element = native?.element ?? this.root.ownerDocument.createElement(({ View: "div", Text: "div", RichText: "div", TextInput: "input", ScrollView: "div", Image: "img", Video: "video", Native: "div" })[command.kind]);
       element.style.position = "absolute";
       element.style.boxSizing = "border-box";
-      if (command.kind === "ScrollView") element.style.overflow = "auto";
+      if (command.kind === "ScrollView") { element.style.overflow = "auto"; element.style.overflowAnchor = "none"; }
       if (command.kind === "Image") {
         const image = element as HTMLImageElement;
         image.addEventListener("load", () => record.enabled.has("loadSuccess") && this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "loadSuccess", source: image.dataset.originalSrc ?? image.src }));
@@ -202,14 +228,6 @@ export class DOMRenderer {
         video.addEventListener("loadedmetadata", () => record.enabled.has("loadSuccess") && this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "loadSuccess", source: video.currentSrc || video.src }));
         video.addEventListener("loadeddata", () => record.enabled.has("firstFrameDidDisplay") && this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "firstFrameDidDisplay" }));
         video.addEventListener("timeupdate", () => record.enabled.has("playTimeDidChanged") && this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "playTimeDidChanged", x: Math.round(video.currentTime * 1000), duration: Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : 0 }));
-      }
-      if (command.kind === "Button") {
-        element.setAttribute("type", "button");
-        Object.assign(element.style, {
-          appearance: "none", boxSizing: "border-box", border: "0", borderRadius: "0",
-          background: "transparent", padding: "6px 12px", color: "#007aff",
-          font: "16px system-ui, -apple-system, BlinkMacSystemFont, sans-serif", cursor: "pointer",
-        });
       }
       if (command.kind === "TextInput") {
         Object.assign(element.style, {
@@ -280,7 +298,7 @@ export class DOMRenderer {
       const record = this.records.get(command.nodeId)!;
       const descendants = new Set<HTMLElement>([record.element]);
       for (const child of record.element.querySelectorAll("*")) descendants.add(child as HTMLElement);
-      for (const [id, item] of this.records) if (descendants.has(item.element)) { this.records.delete(id); item.animation.cancel(); item.native?.dispose?.(); }
+      for (const [id, item] of this.records) if (descendants.has(item.element)) { this.records.delete(id); item.animation.cancel(); this.releaseMedia(item); item.native?.dispose?.(); }
       record.element.remove();
       return;
     }
@@ -295,7 +313,7 @@ export class DOMRenderer {
       this.setProps(record, command.props, revision);
     } else if (command.type === "SetFrame") {
       record.animation.stage(command.frame);
-      if (record.enabled.has("layout")) queueMicrotask(() => this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "layout", x: command.frame.x, y: command.frame.y, contentWidth: command.frame.width, contentHeight: command.frame.height }));
+      // Core delivers onLayout once after CommitAck; echoing frames here replays stale geometry.
     } else if (command.type === "BindEvent") {
       if (command.enabled) record.enabled.add(command.event);
       else record.enabled.delete(command.event);
@@ -306,7 +324,7 @@ export class DOMRenderer {
     record.props = raw;
     const props = { ...raw };
     const dark = this.appearance?.matches === true;
-    if (dark) for (const key of ['backgroundColor', 'color', 'borderColor', 'shadowColor', 'placeholderTextColor']) {
+    if (dark) for (const key of ['backgroundColor', 'color', 'borderColor', 'shadowColor', 'placeholderTextColor', 'src']) {
       const value = raw['dm' + key[0].toUpperCase() + key.slice(1)];
       if (value !== undefined) props[key] = value;
     }
@@ -314,6 +332,18 @@ export class DOMRenderer {
     const element = record.element;
     if (typeof props.testID === "string") element.dataset.testid = props.testID;
     if (typeof props.accessibilityLabel === "string") element.setAttribute("aria-label", props.accessibilityLabel);
+    if (record.kind === "View") {
+      if (props.accessibilityRole === "button") {
+        element.setAttribute("role", "button");
+        element.setAttribute("aria-disabled", String(props.disabled === true));
+        element.tabIndex = props.disabled === true ? -1 : 0;
+        element.onkeydown = event => {
+          if ((event.key === "Enter" || event.key === " ") && !event.repeat && props.disabled !== true) {
+            event.preventDefault(); element.click();
+          }
+        };
+      } else { element.removeAttribute("role"); element.removeAttribute("aria-disabled"); element.removeAttribute("tabindex"); element.onkeydown = null; }
+    }
     if (record.kind === "Text") element.textContent = String(props.text ?? "");
     if (record.kind === "RichText") {
       const spans = JSON.parse(String(props.spans ?? "[]")) as { text?: string; color?: string; dmColor?: string; fontSize?: number; fontWeight?: string; fontStyle?: string; textDecorationLine?: string }[];
@@ -330,10 +360,6 @@ export class DOMRenderer {
       }));
       element.style.whiteSpace = "pre-wrap";
     }
-    if (record.kind === "Button") {
-      element.textContent = String(props.title ?? "");
-      (element as HTMLButtonElement).disabled = props.disabled === true;
-    }
     if (record.kind === "TextInput" && !appearanceOnly) {
       const input = element as HTMLInputElement;
       input.placeholder = String(props.placeholder ?? "");
@@ -344,7 +370,7 @@ export class DOMRenderer {
         else { if (input.value !== nextValue) input.value = nextValue; record.pendingValue = null; }
       }
     }
-    if (record.kind === "Image" && !appearanceOnly) {
+    if (record.kind === "Image") {
       const image = element as HTMLImageElement;
       image.alt = String(props.accessibilityLabel ?? "");
       image.style.objectFit = props.resizeMode === "stretch" ? "fill" : String(props.resizeMode ?? "cover");
@@ -359,7 +385,7 @@ export class DOMRenderer {
     if (record.kind === "Video" && !appearanceOnly) {
       const video = element as HTMLVideoElement;
       video.controls = props.controls !== false;
-      video.autoplay = props.autoplay === true;
+      video.autoplay = props.autoplay === true && this.pageActive;
       video.loop = props.loop === true;
       video.muted = props.muted === true;
       video.playbackRate = Number(props.rate ?? 1);
@@ -369,17 +395,18 @@ export class DOMRenderer {
       video.style.backgroundColor = "#000";
       const source = String(props.src ?? "");
       const resolvedSource = source.startsWith("asset://") ? "/assets/" + source.slice(8) : source;
-      if (video.getAttribute("src") !== resolvedSource) { video.src = resolvedSource; video.load(); }
-      if (props.playControl === "play") void video.play().catch(() => {});
-      else if (props.playControl === "pause") video.pause();
-      else if (props.playControl === "stop") { video.pause(); video.currentTime = 0; }
+      if (video.getAttribute("src") !== resolvedSource) { this.resumeVideos.delete(video); video.src = resolvedSource; video.load(); if (props.autoplay === true && !this.pageActive) this.resumeVideos.add(video); }
+      if (props.playControl === "play") { if (this.pageActive) void video.play().catch(() => {}); else this.resumeVideos.add(video); }
+      else if (props.playControl === "pause") { this.resumeVideos.delete(video); video.pause(); }
+      else if (props.playControl === "stop") { this.resumeVideos.delete(video); video.pause(); video.currentTime = 0; }
     }
     record.animation.options = props.animation ? JSON.parse(String(props.animation)) : undefined;
     const visual = { ...visualDefaults, ...colorValues(String(props.backgroundColor ?? "transparent")) };
     for (const key of ["opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius"]) if (typeof props[key] === "number") visual[key] = props[key] as number;
     record.animation.stage(visual);
-    element.style.color = String(props.color ?? (record.kind === "Button" ? (props.disabled === true ? "#8e8e93" : "#007aff") : ""));
-    element.style.fontSize = props.fontSize === undefined ? (record.kind === "Button" ? "16px" : "") : props.fontSize + "px";
+    element.style.color = String(props.color ?? "");
+    element.style.lineHeight = props.lineHeight === undefined ? "normal" : props.lineHeight + "px";
+    element.style.fontSize = props.fontSize === undefined ? "" : props.fontSize + "px";
     element.style.fontWeight = String(props.fontWeight ?? "");
     element.style.fontStyle = String(props.fontStyle ?? "");
     element.style.textAlign = String(props.textAlign ?? "");
@@ -393,6 +420,7 @@ export class DOMRenderer {
     element.style.boxShadow = opacity > 0
       ? `${Number(props.shadowOffsetX ?? 0)}px ${Number(props.shadowOffsetY ?? 0)}px ${2 * Number(props.shadowRadius ?? 0)}px rgba(${shadow.r},${shadow.g},${shadow.b},${shadow.a * opacity})`
       : 'none';
+    element.style.overflowAnchor = 'none';
     element.style.overflow = String(props.overflow ?? (record.kind === "ScrollView" ? "auto" : ""));
     element.style.visibility = String(props.visibility ?? "");
     element.style.touchAction = String(props.touchAction ?? "");

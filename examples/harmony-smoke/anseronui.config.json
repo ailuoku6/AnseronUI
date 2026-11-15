@@ -1,0 +1,34 @@
+{
+  "buildId": "anseronui-harmony-smoke",
+  "sourceDirs": [
+    "examples/harmony-smoke"
+  ],
+  "pages": [
+    {
+      "name": "harmony-smoke",
+      "source": "examples/harmony-smoke/page.tsx",
+      "export": "harmonySmokePage"
+    },
+    {
+      "name": "harmony-details",
+      "source": "examples/harmony-smoke/page.tsx",
+      "export": "harmonyDetailsPage"
+    },
+    {
+      "name": "harmony-parity",
+      "source": "examples/harmony-smoke/parity.tsx",
+      "export": "harmonyParityPage"
+    },
+    {
+      "name": "harmony-media",
+      "source": "examples/harmony-smoke/media.tsx",
+      "export": "harmonyMediaPage"
+    }
+  ],
+  "harmony": {
+    "initialPage": "harmony-smoke",
+    "permissions": [
+      "ohos.permission.PUBLISH_AGENT_REMINDER"
+    ]
+  }
+}

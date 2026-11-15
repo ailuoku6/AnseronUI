@@ -20,6 +20,18 @@ export class NodeAnimation {
   private mounted = false;
   options?: AnimationOptions;
   private frame = 0;
+  private active = true;
+  private pausedAt = 0;
+  private pausedTotal = 0;
+  private runner?: FrameRequestCallback;
+  setActive(value: boolean): void {
+    if (this.active === value) return;
+    this.active = value;
+    if (!value) { this.pausedAt = this.clock.now(); if (this.frame) this.clock.cancel(this.frame); this.frame = 0; }
+    else { this.pausedTotal += this.clock.now() - this.pausedAt; if (this.runner) this.requestFrame(this.runner); }
+  }
+  private time(): number { return (this.active ? this.clock.now() : this.pausedAt) - this.pausedTotal; }
+  private requestFrame(tick: FrameRequestCallback): number { this.runner = tick; return this.active ? this.clock.request(tick) : 0; }
   private completion?: (result: AnimationResult) => void;
   constructor(private paint: (values: Values) => void,
     private clock = { now: () => performance.now(), request: (callback: FrameRequestCallback) => requestAnimationFrame(callback), cancel: (id: number) => cancelAnimationFrame(id) }) {}
@@ -43,18 +55,19 @@ export class NodeAnimation {
   }
   cancel(): void {
     if (this.frame) this.clock.cancel(this.frame);
-    this.frame = 0;
+    this.frame = 0; this.runner = undefined;
     const complete = this.completion; this.completion = undefined;
     this.target = { ...this.current };
     complete?.({ finished: false });
   }
   private start(next: Values, options: AnimationOptions, complete?: (result: AnimationResult) => void): void {
     this.cancel(); this.target = next; this.completion = complete;
-    const from = { ...this.current }, start = this.clock.now() + (options.delay ?? 0), duration = options.duration ?? 300;
+    const from = { ...this.current }, start = this.time() + (options.delay ?? 0), duration = options.duration ?? 300;
     const legs = options.autoreverse ? 2 : 1, iterations = options.iterations ?? 1;
-    const tick = (now: number) => {
+    const tick = (_now: number) => {
+      const now = this.time();
       this.frame = 0;
-      if (now < start) { this.frame = this.clock.request(tick); return; }
+      if (now < start) { this.frame = this.requestFrame(tick); return; }
       const elapsed = now-start;
       const done = duration === 0 || (iterations !== -1 && elapsed >= duration*legs*iterations);
       const progress = duration === 0 ? 1 : elapsed/duration;
@@ -65,11 +78,11 @@ export class NodeAnimation {
       for (const key of Object.keys(next)) this.current[key] = (from[key] ?? next[key]) + (next[key]-(from[key] ?? next[key]))*amount;
       this.paint(this.current);
       if (done) {
-        this.target = { ...this.current }; const callback = this.completion; this.completion = undefined; callback?.({ finished: true });
-      } else this.frame = this.clock.request(tick);
+        this.runner = undefined; this.target = { ...this.current }; const callback = this.completion; this.completion = undefined; callback?.({ finished: true });
+      } else this.frame = this.requestFrame(tick);
     };
     // Always use the platform frame clock, including zero duration, to preserve ordering.
-    this.frame = this.clock.request(tick);
+    this.frame = this.requestFrame(tick);
   }
 }
 export function colorValues(color: string): Values {

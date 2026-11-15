@@ -13,12 +13,33 @@ describe("protocol envelope", () => {
     surfaceGeneration: 3, sequence: 1, ackSequence: 0,
     payload: { type: "CreateSurface", page: "home", width: 320, height: 640 },
   };
+  it("rejects removed Button nodes and accepts image theme sources and absolute line heights", () => {
+    for (const payload of [
+      { type: 'Handshake', requiredNodes: ['Button'] },
+      { type: 'Commit', revision: 1, commands: [{ type: 'CreateNode', nodeId: 1, kind: 'Button' }] },
+      { type: 'MeasureRequest', requestId: 1, nodeId: 1, kind: 'Button', text: 'old', fontSize: 16, maxWidth: 100 },
+    ]) expect(() => encodeEnvelope({ ...envelope, payload } as Envelope<InputPayload>)).toThrow('PROTOCOL_PAYLOAD');
+    expect(validProps({ src: 'light.png', dmSrc: 'dark.png', lineHeight: 24 })).toBe(true);
+    for (const props of [{ dmSrc: 1 }, { lineHeight: -1 }, { lineHeight: NaN }, { lineHeight: '24px' }, { title: 'old' }]) expect(validProps(props)).toBe(false);
+  });
   it("validates registered extension envelopes", () => {
     expect(() => encodeEnvelope({ ...envelope, payload: { type: "InvokeModule", requestId: 1, module: "device", method: "info", argument: '{"nested":[true,null]}' } })).not.toThrow();
     expect(() => encodeEnvelope({ ...envelope, payload: { type: "InvokeModule", requestId: 1, module: "invalid name", method: "info", argument: "null" } })).toThrow("PROTOCOL_PAYLOAD");
     expect(() => encodeEnvelope({ ...envelope, payload: { type: "Commit", revision: 1, commands: [{ type: "CreateNode", nodeId: 1, kind: "Native", nativeName: "MapView" }] } })).not.toThrow();
     expect(() => encodeEnvelope({ ...envelope, payload: { type: "Commit", revision: 1, commands: [{ type: "CreateNode", nodeId: 1, kind: "Native" }] } })).toThrow("PROTOCOL_PAYLOAD");
     expect(() => encodeEnvelope({ ...envelope, payload: { type: "NativeEvent", nodeId: 1, revision: 1, event: "nativeComponent", value: '{"name":"change","data":1}' } })).not.toThrow();
+  });
+  it("validates visibility and finite diagnostic counters", () => {
+    for (const payload of [{ type: "SurfaceVisibility", visible: false }, { type: "InspectRuntime", enabled: true, reset: true }, { type: "RuntimeStats", values: { nodes: 12, layoutMs: 0.5 } }]) {
+      expect(() => encodeEnvelope({ ...envelope, payload })).not.toThrow();
+    }
+    expect(() => encodeEnvelope({ ...envelope, payload: { type: "SurfaceVisibility", visible: 1 } })).toThrow("PROTOCOL_PAYLOAD");
+    expect(() => encodeEnvelope({ ...envelope, payload: { type: "RuntimeStats", values: { layoutMs: Infinity } } })).toThrow("PROTOCOL_PAYLOAD");
+    expect(validProps({ scrollAnchorOffset: -80.5 })).toBe(true);
+    expect(validProps({ scrollAnchorOffset: Infinity })).toBe(false);
+    const scroll = { type: "NativeEvent", nodeId: 1, revision: 1, event: "scroll", x: 0, y: 800, contentWidth: 320, contentHeight: 10000, scrollAdjustment: -80.5 };
+    expect(decodeEnvelope(encodeEnvelope({ ...envelope, payload: scroll })).payload).toEqual(scroll);
+    expect(() => encodeEnvelope({ ...envelope, payload: { ...scroll, scrollAdjustment: Infinity } })).toThrow("PROTOCOL_PAYLOAD");
   });
   it("round trips UTF-8 bytes", () => {
     expect(decodeEnvelope(encodeEnvelope(envelope))).toEqual(envelope);

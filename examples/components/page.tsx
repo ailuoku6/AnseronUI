@@ -1,4 +1,5 @@
 import { View, Text, RichText, Button, TextInput, ScrollView, Image, Video, definePage, useState } from "@anseronui/ui";
+import { CompositionShowcase } from './composition-showcase.js';
 import type { UIElement, ScrollEvent, TouchEvent, LayoutEvent } from "@anseronui/ui";
 import { LayoutShowcase } from "./layout-showcase.js";
 import { AnimationShowcase } from "./animation-showcase.js";
@@ -113,6 +114,7 @@ export function Components(): UIElement {
             <Text testID="video-state" style={{ fontSize: 14 }}>Video: {video}</Text>
             <Text testID="video-progress" style={{ fontSize: 14 }}>进度: {seconds}s · 首帧: {frame ? "yes" : "no"}</Text>
           </View>
+          <CompositionShowcase />
           </View>}
           <Text testID="scroll-footer" style={{ fontSize: 14, color: "#5c667a", marginBottom: 24 }}>ScrollView 已到底 · 上次滚动: {offset}</Text>
         </View>

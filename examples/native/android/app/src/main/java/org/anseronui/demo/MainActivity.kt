@@ -48,6 +48,13 @@ class MainActivity : Activity() {
     }
     override fun onNewIntent(intent: android.content.Intent) { super.onNewIntent(intent); setIntent(intent); AnseronUILinks.receive(intent); AnseronUINotifications.receiveIntent(this, intent) }
 
+    override fun onStart() { super.onStart(); if (::content.isInitialized) content.setVisibility(true) }
+    override fun onStop() { if (::content.isInitialized) content.setVisibility(false); super.onStop() }
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (::content.isInitialized && level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) content.trimMemory()
+    }
+    override fun onLowMemory() { super.onLowMemory(); if (::content.isInitialized) content.trimMemory() }
     override fun onDestroy() { content.destroy(); super.onDestroy() }
     private fun readPages(): List<String> = runCatching {
         val json = assets.open("core.manifest.json").bufferedReader().use { JSONObject(it.readText()) }

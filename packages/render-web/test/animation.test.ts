@@ -45,3 +45,12 @@ it('validates options and visual target ranges at the boundary', () => {
   expect(validProps({animation:'{"duration":-1}'})).toBe(false);
   expect(curve(0,'spring')).toBe(0); expect(curve(1,'spring')).toBe(1); expect(curve(0.3,'spring')).toBeGreaterThan(1);
 });
+it('pauses the frame clock and resumes from the same presentation after a long hidden period', async () => {
+  const { animation: a, tick, pending } = harness();
+  const result = a.animate({ translateX: 100 }, { duration: 1000, easing: 'linear' });
+  tick(250); expect(a.current.translateX).toBe(25);
+  a.setActive(false); expect(pending.size).toBe(0);
+  tick(10250); expect(a.current.translateX).toBe(25);
+  a.setActive(true); tick(10500); expect(a.current.translateX).toBe(50);
+  tick(11000); await expect(result).resolves.toEqual({ finished: true });
+});

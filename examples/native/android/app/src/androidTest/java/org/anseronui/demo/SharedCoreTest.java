@@ -19,6 +19,55 @@ import android.widget.EditText;
 public final class SharedCoreTest {
     private final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
     private Activity activity;
+    @Test public void testSharedPrimitiveButtons() throws Exception {
+        Intent intent = new Intent(instrumentation.getTargetContext(), MainActivity.class);
+        intent.putExtra("page", "components"); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        activity = instrumentation.startActivitySync(intent);
+        try {
+            waitFor("基础组件实验室"); waitFor("禁用按钮");
+            Thread.sleep(500);
+            instrumentation.runOnMainSync(() -> {
+                View root = activity.getWindow().getDecorView();
+                View action = findTag(root, "component-increment");
+                View disabled = findTag(root, "component-disabled");
+                assertTrue(action instanceof ViewGroup); assertFalse(action instanceof android.widget.Button);
+                assertEquals(1, ((ViewGroup) action).getChildCount());
+                assertTrue(((ViewGroup) action).getChildAt(0) instanceof TextView);
+                assertFalse(disabled.isEnabled()); assertEquals(0.4f, disabled.getAlpha(), 0.01f);
+                float density = activity.getResources().getDisplayMetrics().density;
+                View fixed = findTag(root, "animation-mode-toggle");
+                assertEquals(52 * density, fixed.getWidth(), 1); assertEquals(44 * density, fixed.getHeight(), 1);
+                View label = ((ViewGroup)action).getChildAt(0);
+                assertEquals(action.getWidth()/2f, label.getLeft()+label.getWidth()/2f, density);
+            });
+            instrumentation.runOnMainSync(() -> {
+                View button = findTag(activity.getWindow().getDecorView(), "component-increment");
+                button.requestRectangleOnScreen(new android.graphics.Rect(0, 0, button.getWidth(), button.getHeight()), true);
+            });
+            Thread.sleep(500);
+            android.graphics.Rect button=visibleButtonBounds("component-increment");
+            saveButtonScreenshot("shared-buttons-android-before.png");
+            instrumentation.waitForIdleSync();
+            long downTime=android.os.SystemClock.uptimeMillis();
+            pointer(downTime, android.view.MotionEvent.ACTION_DOWN, button);
+            long pressDeadline=android.os.SystemClock.uptimeMillis()+2000;
+            final float[] alpha={1};
+            do {
+                Thread.sleep(25);
+                instrumentation.runOnMainSync(() -> alpha[0]=findTag(activity.getWindow().getDecorView(),"component-increment").getAlpha());
+            } while (Math.abs(alpha[0]-0.6f)>0.01f && android.os.SystemClock.uptimeMillis()<pressDeadline);
+            instrumentation.runOnMainSync(() -> assertEquals(0.6f,findTag(activity.getWindow().getDecorView(),"component-increment").getAlpha(),0.01f));
+            pointer(downTime, android.view.MotionEvent.ACTION_UP, button);
+            waitFor("点击: 1");
+            button=visibleButtonBounds("component-disabled");
+            downTime=android.os.SystemClock.uptimeMillis();
+            pointer(downTime, android.view.MotionEvent.ACTION_DOWN, button);
+            pointer(downTime, android.view.MotionEvent.ACTION_UP, button);
+            Thread.sleep(200); assertEquals("点击: 1",taggedText("component-count"));
+            assertFalse("事件: disabled ERROR".equals(taggedText("component-event")));
+            saveButtonScreenshot("shared-buttons-android.png");
+        } finally { instrumentation.runOnMainSync(() -> activity.finish()); }
+    }
     private TextView find(View root, String text) {
         if (root instanceof TextView && ((TextView)root).getText().toString().equals(text)) return (TextView)root;
         if (root instanceof ViewGroup) {
@@ -39,7 +88,39 @@ public final class SharedCoreTest {
     }
     private void tap(String text) throws Exception {
         TextView view=waitFor(text);
-        instrumentation.runOnMainSync(view::performClick);
+        instrumentation.runOnMainSync(() -> {
+            View target=view;
+            while (!target.isClickable() && target.getParent() instanceof View) target=(View)target.getParent();
+            assertTrue("No clickable ancestor for " + text, target.isClickable());
+            target.performClick();
+        });
+    }
+    private android.graphics.Rect visibleButtonBounds(String tag) {
+        android.graphics.Rect result=bounds(tag);
+        assertTrue("Button outside scroll viewport: " + result, result.intersect(bounds("component-scroll")));
+        assertTrue("Button outside app window: " + result, result.intersect(boundsOfWindow()));
+        return result;
+    }
+    private android.graphics.Rect boundsOfWindow() {
+        android.graphics.Rect result=new android.graphics.Rect();
+        instrumentation.runOnMainSync(() -> activity.getWindow().getDecorView().getWindowVisibleDisplayFrame(result));
+        return result;
+    }
+    private void pointer(long downTime, int action, android.graphics.Rect bounds) {
+        android.view.MotionEvent event=android.view.MotionEvent.obtain(downTime, android.os.SystemClock.uptimeMillis(), action, bounds.centerX(), bounds.centerY(), 0);
+        event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+        instrumentation.sendPointerSync(event); event.recycle();
+    }
+    private void saveButtonScreenshot(String name) throws Exception {
+        java.io.File file=new java.io.File(activity.getExternalFilesDir(null), name);
+        try (java.io.FileOutputStream output = new java.io.FileOutputStream(file)) {
+            instrumentation.getUiAutomation().takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
+        }
+        // Gradle removes the instrumented app after the run; retain its evidence.
+        try (android.os.ParcelFileDescriptor pipe=instrumentation.getUiAutomation().executeShellCommand("cp " + file.getAbsolutePath() + " /sdcard/Download/" + name);
+             java.io.FileInputStream input=new java.io.FileInputStream(pipe.getFileDescriptor())) {
+            while (input.read()!=-1) { }
+        }
     }
     private View findTag(View root, String tag) {
         if (tag.equals(root.getTransitionName())) return root;
@@ -226,6 +307,7 @@ public final class SharedCoreTest {
 
     @Test public void testSharedPages() throws Exception {
         Intent intent=new Intent(instrumentation.getTargetContext(),MainActivity.class); intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.putExtra("page", "counter");
         activity=instrumentation.startActivitySync(intent);
         waitFor("Count: 0"); tap("+1"); waitFor("Count: 1");
         tap("Async form"); waitFor("Status: idle");

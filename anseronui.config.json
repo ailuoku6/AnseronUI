@@ -5,7 +5,8 @@
     "examples/async-form",
     "examples/components",
     "examples/extensions",
-    "examples/timers"
+    "examples/timers",
+    "examples/virtual-list"
   ],
   "pages": [
     {
@@ -37,6 +38,11 @@
       "name": "timers",
       "source": "examples/timers/page.tsx",
       "export": "timersPage"
+    },
+    {
+      "name": "virtual-list",
+      "source": "examples/virtual-list/page.tsx",
+      "export": "virtualListPage"
     }
   ],
   "app": {
@@ -64,5 +70,17 @@
         }
       }
     }
+  },
+  "harmony": {
+    "initialPage": "components",
+    "permissions": [
+      "ohos.permission.VIBRATE",
+      "ohos.permission.APPROXIMATELY_LOCATION",
+      "ohos.permission.CAMERA",
+      "ohos.permission.MICROPHONE",
+      "ohos.permission.ACCESS_BLUETOOTH",
+      "ohos.permission.NFC_TAG",
+      "ohos.permission.PUBLISH_AGENT_REMINDER"
+    ]
   }
 }

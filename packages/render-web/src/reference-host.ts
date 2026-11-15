@@ -6,7 +6,7 @@ import type { Envelope, InputPayload, OutputPayload, RenderProps } from "@ansero
 import type { Page } from "@anseronui/ui";
 import { DOMRenderer } from "./renderer.js";
 
-export type TextMeasure = (kind: "Text" | "RichText" | "Button" | "TextInput", text: string, fontSize: number, maxWidth: number, props?: RenderProps) => Promise<{ width: number; height: number; baseline: number }> | { width: number; height: number; baseline: number };
+export type TextMeasure = (kind: "Text" | "RichText" | "TextInput", text: string, fontSize: number, maxWidth: number, props?: RenderProps) => Promise<{ width: number; height: number; baseline: number }> | { width: number; height: number; baseline: number };
 
 export interface BrowserRuntimeAdapter {
   readonly bundleBuildId: string;
@@ -36,13 +36,13 @@ export class BrowserBytesAdapter implements BrowserRuntimeAdapter {
 /** Browser text engine adapter; uses real DOM wrapping instead of character-count estimates. */
 export function measureBrowserText(root: HTMLElement): TextMeasure {
   return (kind, text, fontSize, maxWidth, props = {}) => {
-    const probe = root.ownerDocument.createElement(kind === "Text" || kind === "RichText" ? "div" : kind === "Button" ? "button" : "input");
+    const probe = root.ownerDocument.createElement(kind === "Text" || kind === "RichText" ? "div" : "input");
     probe.style.position = "fixed";
     probe.style.visibility = "hidden";
     probe.style.whiteSpace = "pre-wrap";
     probe.style.overflowWrap = "break-word";
     probe.style.fontSize = fontSize + "px";
-    probe.style.lineHeight = "normal";
+    probe.style.lineHeight = props.lineHeight === undefined ? "normal" : props.lineHeight + "px";
     probe.style.fontWeight = String(props.fontWeight ?? "normal");
     probe.style.fontStyle = String(props.fontStyle ?? "normal");
     probe.style.width = "max-content";
@@ -82,6 +82,24 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
   private sequence = 0;
   private outputSequence = 0;
   private ready = false;
+  private visible = true;
+  private mounted = false;
+  private profiling = false;
+  private profileWaiter: { resolve: (stats: Record<string, number>) => void; reject: (error: unknown) => void } | null = null;
+  private hostStats: Record<string, number> = {};
+  private metric(name: string, value: number): void { if (this.profiling) this.hostStats[name] = (this.hostStats[name] ?? 0) + value; }
+  getPerformanceStats(): Record<string, number> { return { ...this.hostStats }; }
+  async inspectRuntime(enabled = true, reset = false): Promise<Record<string, number>> {
+    if (!this.mounted || this.disposed) throw new Error('SURFACE_NOT_MOUNTED');
+    if (this.profileWaiter) throw new Error('INSPECTION_PENDING');
+    this.profiling = enabled; if (reset) this.hostStats = {};
+    const result = new Promise<Record<string, number>>((resolve, reject) => { this.profileWaiter = { resolve, reject }; });
+    try { this.send({ type: 'InspectRuntime', enabled, reset }); }
+    catch (error) { this.rejectInspection(error); return result; }
+    void this.flush().catch(error => this.rejectInspection(error));
+    return result;
+  }
+  private rejectInspection(error: unknown): void { const waiter = this.profileWaiter; this.profileWaiter = null; waiter?.reject(error); }
   private flushing: Promise<void> | null = null;
   private disposed = false;
   private requests = new Map<number, () => void>();
@@ -102,15 +120,22 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
   }
 
   async mount(page: string, width: number, height: number): Promise<void> {
-    this.send({ type: "Handshake", requiredNodes: ["View", "Text", "RichText", "Button", "TextInput", "ScrollView", "Image", "Video"] });
+    this.send({ type: "Handshake", requiredNodes: ["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video"] });
     await this.flush();
     if (!this.ready) throw new Error(this.diagnostics[0]?.message ?? "Handshake did not complete");
-    this.send({ type: "CreateSurface", page, width, height });
+    this.send({ type: "CreateSurface", page, width, height, visible: this.visible });
+    this.mounted = true;
     await this.flush();
     if (this.diagnostics.length > 0) {
       const first = this.diagnostics[0];
       throw new Error(first.code + ": " + first.message);
     }
+  }
+  async setVisibility(visible: boolean): Promise<void> {
+    if (this.disposed || this.visible === visible) return;
+    this.visible = visible;
+    this.renderer.setPageActive(visible);
+    if (this.mounted) { this.send({ type: "SurfaceVisibility", visible }); await this.flush(); }
   }
   async resize(width: number, height: number): Promise<void> { this.send({ type: "Resize", width, height }); await this.flush(); }
   /** Asks Core synchronously from the browser event turn; resolves true when TSX consumed it. */
@@ -123,12 +148,15 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
   }
   async destroy(): Promise<void> {
     if (this.disposed) return;
-    this.send({ type: "DestroySurface" });
-    await this.flush();
-    for (const cancel of this.requests.values()) cancel();
-    this.requests.clear();
-    this.nativeServices.dispose();
-    this.renderer.dispose(); this.runtime.dispose(); this.disposed = true;
+    this.disposed = true;
+    try { this.send({ type: "DestroySurface" }); await this.flush(); }
+    finally {
+      this.profileWaiter?.reject(new Error('SURFACE_DISPOSED')); this.profileWaiter = null;
+      this.backWaiter?.(false); this.backWaiter = null;
+      for (const cancel of this.requests.values()) cancel();
+      this.requests.clear();
+      this.nativeServices.dispose(); this.renderer.dispose(); this.runtime.dispose();
+    }
   }
 
   private send(payload: InputPayload): void {
@@ -136,9 +164,11 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
       protocolMajor: PROTOCOL_MAJOR, protocolMinor: PROTOCOL_MINOR,
       bundleBuildId: this.runtime.bundleBuildId, runtimeEpoch: this.runtime.runtimeEpoch,
       surfaceId: this.surfaceId, surfaceGeneration: this.generation,
-      sequence: ++this.sequence, ackSequence: this.outputSequence, payload,
+      sequence: this.sequence + 1, ackSequence: this.outputSequence, payload,
     };
+    if (this.profiling) this.metric('inputBytes', new TextEncoder().encode(JSON.stringify(envelope)).length);
     this.runtime.post(envelope);
+    this.sequence++;
   }
   async flush(): Promise<void> {
     if (this.flushing) return this.flushing;
@@ -150,8 +180,13 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
     }
   }
   private async drive(): Promise<void> {
-    for (let cycle = 0; cycle < 32; cycle++) {
+    for (let cycle = 0; cycle < 4096; cycle++) {
+      // AOT adapters can consume one input per step. Yield regularly while draining
+      // a full measurement window so host timers and paint get a turn as well.
+      if (cycle > 0 && cycle % 32 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
+      const started = this.profiling ? performance.now() : 0;
       const messages = this.runtime.step();
+      this.metric('adapterStepMs', this.profiling ? performance.now() - started : 0);
       if (messages.length === 0) { if (this.runtime.hasPendingWork()) continue; return; }
       for (const message of messages) {
         validateEnvelope<OutputPayload>(message);
@@ -159,20 +194,25 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
           message.surfaceId !== this.surfaceId || message.surfaceGeneration !== this.generation ||
           message.sequence !== this.outputSequence + 1 || message.ackSequence > this.sequence) throw new Error("Invalid Core output envelope");
         this.outputSequence = message.sequence;
+        if (this.profiling) this.metric('outputBytes', new TextEncoder().encode(JSON.stringify(message)).length);
         await this.handle(message.payload);
       }
     }
-    throw new Error("Browser host did not settle within 32 steps");
+    throw new Error("Browser host did not settle within 4096 steps");
   }
   private async handle(payload: OutputPayload): Promise<void> {
     if (payload.type === "Ready") {
       this.ready = true;
     } else if (payload.type === "MeasureRequest") {
+      const started = this.profiling ? performance.now() : 0;
       const result = await this.measure(payload.kind, payload.text, payload.fontSize, payload.maxWidth, payload.props);
+      this.metric('hostMeasureMs', this.profiling ? performance.now() - started : 0);
       this.send({ type: "MeasureResult", requestId: payload.requestId, nodeId: payload.nodeId, ...result });
     } else if (payload.type === "Commit") {
       try {
+        const started = this.profiling ? performance.now() : 0;
         this.renderer.apply(payload.revision, payload.commands);
+        this.metric('rendererApplyMs', this.profiling ? performance.now() - started : 0); this.metric('hostCommits', 1);
         this.send({ type: "CommitAck", revision: payload.revision });
       } catch (error) {
         this.renderer.clear();
@@ -214,6 +254,8 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
       this.requests.delete(payload.requestId);
     } else if (payload.type === "BackPressResult") {
       const waiter = this.backWaiter; this.backWaiter = null; waiter?.(payload.consumed);
+    } else if (payload.type === "RuntimeStats") {
+      const waiter = this.profileWaiter; this.profileWaiter = null; waiter?.resolve(payload.values);
     } else if (payload.type === "Diagnostic") {
       this.diagnostics.push({ code: payload.code, message: payload.message });
     }

@@ -31,3 +31,15 @@ dependencies { implementation project(':render'); androidTestImplementation 'and
 // AnseronUI app icon integration
 def appIconConfig = rootProject.file('../../../.anseronui/icons/android.gradle')
 if (appIconConfig.exists()) apply from: appIconConfig
+
+// A direct Gradle Release build must not package a previously staged Debug Core.
+tasks.configureEach { task ->
+    if (task.name == 'preReleaseBuild') {
+        task.doFirst {
+            def manifestFile = file('src/main/assets/core.manifest.json')
+            if (manifestFile.exists() && new groovy.json.JsonSlurper().parse(manifestFile).devtools?.enabled) {
+                throw new GradleException('Release cannot package a Debug-instrumented Core. Rebuild with anseronui build android --release.')
+            }
+        }
+    }
+}

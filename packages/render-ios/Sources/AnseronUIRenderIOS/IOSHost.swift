@@ -38,6 +38,10 @@ private final class CoreWorker {
     private var inputSequence: UInt32 = 0
     private var outputSequence: UInt32 = 0
     private var ready = false
+    private var visible = true
+    private var profiling = false
+    private var bridgeMetrics: [String: Double] = [:]
+    private func metric(_ key: String, _ value: Double) { if profiling { bridgeMetrics[key, default: 0] += value } }
     private var pendingSurface: (page: String, width: Double, height: Double)?
     private var requests: [UInt32: () -> Void] = [:]
     private var backWaiter: ((Bool) -> Void)?
@@ -57,14 +61,28 @@ private final class CoreWorker {
             self.pendingSurface = (page, width, height)
             self.core = try self.createCore()
             guard let core = self.core, !core.bundleBuildId.isEmpty, core.bundleBuildId.utf8.count <= 128 else { throw HostError.invalidOutput }
-            try self.sendNow(["type": "Handshake", "requiredNodes": ["View", "Text", "RichText", "Button", "TextInput", "ScrollView", "Image", "Video"]])
+            try self.sendNow(["type": "Handshake", "requiredNodes": ["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video"]])
         }
     }
 
     func send(_ payload: [String: Any]) {
-        enqueue { [weak self] in try self?.sendNow(payload) }
+        enqueue { [weak self] in
+            guard let self else { return }
+            if payload["type"] as? String == "InspectRuntime" {
+                self.profiling = payload["enabled"] as? Bool ?? true
+                if payload["reset"] as? Bool == true { self.bridgeMetrics.removeAll() }
+            }
+            try self.sendNow(payload)
+        }
     }
 
+    func setVisibility(_ visible: Bool) {
+        enqueue { [weak self] in
+            guard let self else { return }
+            self.visible = visible
+            if self.ready { try self.sendNow(["type": "SurfaceVisibility", "visible": visible]) }
+        }
+    }
     func wake() { enqueue {} }
     func backPress() -> Bool {
         var consumed = false
@@ -105,13 +123,18 @@ private final class CoreWorker {
         guard inputSequence < UInt32.max else { throw HostError.sequenceOverflow }
         inputSequence += 1
         let envelope: [String: Any] = [
-            "protocolMajor": 1, "protocolMinor": 0, "bundleBuildId": core.bundleBuildId,
+            "protocolMajor": 1, "protocolMinor": 5, "bundleBuildId": core.bundleBuildId,
             "runtimeEpoch": core.runtimeEpoch, "surfaceId": 1, "surfaceGeneration": 1,
             "sequence": inputSequence, "ackSequence": outputSequence, "payload": payload
         ]
+        let encodeStart = profiling ? ProcessInfo.processInfo.systemUptime : 0
         let data = try JSONSerialization.data(withJSONObject: envelope)
+        metric("bridgeEncodeMs", profiling ? (ProcessInfo.processInfo.systemUptime - encodeStart) * 1000 : 0)
+        metric("bridgeInputBytes", Double(data.count))
         guard data.count <= 1_048_576 else { throw HostError.messageTooLarge }
+        let postStart = profiling ? ProcessInfo.processInfo.systemUptime : 0
         try core.post(data)
+        metric("adapterPostMs", profiling ? (ProcessInfo.processInfo.systemUptime - postStart) * 1000 : 0)
     }
 
     private func enqueue(_ job: @escaping () throws -> Void) {
@@ -137,7 +160,9 @@ private final class CoreWorker {
     private func drain() throws {
         guard let core else { return }
         for _ in 0..<32 {
+            let stepStart = profiling ? ProcessInfo.processInfo.systemUptime : 0
             let outputs = try core.step(maxMessages: 64)
+            metric("adapterStepMs", profiling ? (ProcessInfo.processInfo.systemUptime - stepStart) * 1000 : 0)
             if outputs.isEmpty {
                 if core.hasPendingWork() { wake() }
                 return
@@ -148,6 +173,8 @@ private final class CoreWorker {
     }
 
     private func handle(_ data: Data) throws {
+        let decodeStart = profiling ? ProcessInfo.processInfo.systemUptime : 0
+        metric("bridgeOutputBytes", Double(data.count))
         guard data.count <= 1_048_576,
               let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let core,
@@ -163,15 +190,22 @@ private final class CoreWorker {
               let payload = envelope["payload"] as? [String: Any],
               let kind = payload["type"] as? String else { throw HostError.invalidOutput }
         outputSequence = sequence
+        metric("bridgeDecodeMs", profiling ? (ProcessInfo.processInfo.systemUptime - decodeStart) * 1000 : 0)
         switch kind {
         case "Ready":
             guard !ready, let surface = pendingSurface,
                   let nodes = payload["supportedNodes"] as? [String],
-                  Set(["View", "Text", "RichText", "Button", "TextInput", "ScrollView", "Image", "Video"]).isSubset(of: Set(nodes)) else { throw HostError.invalidOutput }
+                  Set(["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video"]).isSubset(of: Set(nodes)) else { throw HostError.invalidOutput }
             ready = true
-            try sendNow(["type": "CreateSurface", "page": surface.page, "width": surface.width, "height": surface.height])
+            try sendNow(["type": "CreateSurface", "page": surface.page, "width": surface.width, "height": surface.height, "visible": visible])
             emitUI(payload)
         case "Commit", "MeasureRequest": emitUI(payload)
+        case "RuntimeStats":
+            var enriched = payload
+            var values = payload["values"] as? [String: Double] ?? [:]
+            bridgeMetrics.forEach { values[$0.key] = $0.value }
+            enriched["values"] = values
+            emitUI(enriched)
         case "Diagnostic": emitUI(payload); if !ready { finish() }
         case "InvokeModule": try invoke(payload)
         case "CancelRequest":
@@ -241,6 +275,10 @@ private final class CoreWorker {
 @MainActor public final class IOSHost {
     public let renderer: IOSRenderer
     public var onReady: (() -> Void)?
+    public var onRuntimeStats: (([String: Double]) -> Void)?
+    private var profiling = false
+    private var hostMetrics: [String: Double] = [:]
+    private func metric(_ key: String, _ value: Double) { if profiling { hostMetrics[key, default: 0] += value } }
     public var onDiagnostic: ((String, String) -> Void)?
     public var onFailure: ((Error) -> Void)?
     private let worker: CoreWorker
@@ -259,7 +297,11 @@ private final class CoreWorker {
         renderer = IOSRenderer(root: root, extensions: registry)
         worker = CoreWorker(createCore: createCore, baseURL: baseURL)
         worker.emitUI = { [weak self] payload in
-            DispatchQueue.main.async { [weak self] in self?.deliver(payload) }
+            let queued = ProcessInfo.processInfo.systemUptime
+            DispatchQueue.main.async { [weak self] in
+                self?.metric("uiQueueMs", (ProcessInfo.processInfo.systemUptime - queued) * 1000)
+                self?.deliver(payload)
+            }
         }
         worker.reportError = { [weak self] error in
             DispatchQueue.main.async { [weak self] in
@@ -300,6 +342,18 @@ private final class CoreWorker {
         precondition(started && !destroyed && width.isFinite && height.isFinite && width >= 0 && height >= 0)
         standardServices.changed()
         worker.send(["type": "Resize", "width": width, "height": height])
+    }
+
+    public func inspectRuntime(enabled: Bool = true, reset: Bool = false) {
+        guard started && !destroyed else { return }
+        profiling = enabled
+        if reset { hostMetrics.removeAll() }
+        worker.send(["type": "InspectRuntime", "enabled": enabled, "reset": reset])
+    }
+    public func setVisibility(_ visible: Bool) {
+        guard !destroyed else { return }
+        renderer.setPageActive(visible)
+        worker.setVisibility(visible)
     }
 
     public func environmentChanged() { renderer.appearanceChanged(); standardServices.changed() }
@@ -371,7 +425,7 @@ private final class CoreWorker {
     }
 
     private func deliver(_ payload: [String: Any]) {
-        guard let type = payload["type"] as? String else { return }
+        guard let type = payload["type"] as? String, !destroyed || type == "SurfaceDisposed" else { return }
         switch type {
         case "InvokeModule": invokeExtension(payload)
         case "CancelRequest":
@@ -380,8 +434,11 @@ private final class CoreWorker {
         case "Commit":
             guard let revision = payload["revision"] as? UInt32 else { return }
             do {
+                let started = profiling ? ProcessInfo.processInfo.systemUptime : 0
                 let data = try JSONSerialization.data(withJSONObject: payload)
                 try renderer.applyJSON(data)
+                metric("rendererApplyMs", profiling ? (ProcessInfo.processInfo.systemUptime - started) * 1000 : 0)
+                metric("hostCommits", 1)
                 worker.send(["type": "CommitAck", "revision": revision])
             } catch {
                 worker.send(["type": "CommitFailed", "revision": revision, "reason": String(describing: error)])
@@ -391,11 +448,17 @@ private final class CoreWorker {
                 guard let id = payload["requestId"] as? UInt32, let node = payload["nodeId"] as? UInt32,
                       let kind = payload["kind"] as? String, let text = payload["text"] as? String,
                       let font = payload["fontSize"] as? Double, let maxWidth = payload["maxWidth"] as? Double else { throw HostError.invalidOutput }
+                let started = profiling ? ProcessInfo.processInfo.systemUptime : 0
                 let props = try (payload["props"] as? [String: Any]).map { try JSONDecoder().decode(RenderProps.self, from: JSONSerialization.data(withJSONObject: $0)) }
                 let size = try renderer.measure(kind: kind, text: text, fontSize: font, maxWidth: maxWidth, props: props)
+                metric("hostMeasureMs", profiling ? (ProcessInfo.processInfo.systemUptime - started) * 1000 : 0)
                 worker.send(["type": "MeasureResult", "requestId": id, "nodeId": node,
                              "width": size.width, "height": size.height, "baseline": size.baseline])
             } catch { onFailure?(error); destroy() }
+        case "RuntimeStats":
+            var values = payload["values"] as? [String: Double] ?? [:]
+            hostMetrics.forEach { values[$0.key] = $0.value }
+            onRuntimeStats?(values)
         case "Diagnostic": onDiagnostic?(payload["code"] as? String ?? "UNKNOWN", payload["message"] as? String ?? "")
         case "SurfaceDisposed": cancelExtensions(); renderer.clear()
         default: onFailure?(HostError.invalidOutput)

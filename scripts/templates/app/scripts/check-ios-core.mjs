@@ -13,6 +13,7 @@ const target = process.env.PLATFORM_NAME === 'iphoneos' ? 'ios-device' : 'ios-si
 try {
   const directory = join(app, '.verification/core-' + target);
   const manifest = JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8'));
+  if (process.env.CONFIGURATION === 'Release' && manifest.devtools?.enabled) throw new Error('Release cannot link a Debug-instrumented Core; rebuild with --release.');
   const digest = createHash('sha256').update(readFileSync(join(directory, 'entry.lib.a'))).digest('hex');
   if (manifest.buildId !== config.buildId || manifest.sourceFingerprint !== coreFingerprint(framework, configPath) || manifest.localArtifactSha256 !== digest) throw new Error('Core is missing, stale or belongs to another app.');
   console.log('Verified local app Core: ' + target);

@@ -47,3 +47,15 @@ permissionsManifest.text = '<manifest xmlns:android="http://schemas.android.com/
     nativePlugins.permissions.collect { '<uses-permission android:name="' + it + '" />' }.join('') + '</manifest>'
 android.sourceSets.debug.manifest.srcFile permissionsManifest
 android.sourceSets.release.manifest.srcFile permissionsManifest
+
+// A direct Gradle Release build must not package a previously staged Debug Core.
+tasks.configureEach { task ->
+    if (task.name == 'preReleaseBuild') {
+        task.doFirst {
+            def manifestFile = file('src/main/assets/core.manifest.json')
+            if (manifestFile.exists() && new groovy.json.JsonSlurper().parse(manifestFile).devtools?.enabled) {
+                throw new GradleException('Release cannot package a Debug-instrumented Core. Rebuild with anseronui build android --release.')
+            }
+        }
+    }
+}

@@ -1,15 +1,15 @@
 /** The reference wire contract. IDs and counters are nonzero u32 values. */
 export const PROTOCOL_MAJOR = 1;
-export const PROTOCOL_MINOR = 4;
+export const PROTOCOL_MINOR = 5;
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
 export const MAX_COMMANDS = 4096;
 
-export type NodeKind = "View" | "Text" | "RichText" | "Button" | "TextInput" | "ScrollView" | "Image" | "Video" | "Native";
+export type NodeKind = "View" | "Text" | "RichText" | "TextInput" | "ScrollView" | "Image" | "Video" | "Native";
 export type NativeEventKind = "nativeComponent" | "longPress" | "backPress" | "focus" | "blur" | "submit" | "scroll" | "scrollEnd" | "layout" | "touchDown" | "touchMove" | "touchUp" | "touchCancel" | "spanClick" | "loadSuccess" | "loadFailure" | "playStateDidChanged" | "playTimeDidChanged" | "firstFrameDidDisplay";
 export type EventKind = "tap" | "changeText" | NativeEventKind;
 export type NativeEvent = { type: "NativeEvent"; nodeId: number; revision: number; event: NativeEventKind;
   targetId?: number;
-  value?: string; x?: number; y?: number; contentWidth?: number; contentHeight?: number;
+  value?: string; x?: number; y?: number; contentWidth?: number; contentHeight?: number; scrollAdjustment?: number;
   source?: string; state?: string; duration?: number; errorCode?: number;
   pageX?: number; pageY?: number; pointerId?: number; touches?: { x: number; y: number; pageX: number; pageY: number; pointerId: number }[] };
 export type Frame = { x: number; y: number; width: number; height: number };
@@ -28,8 +28,10 @@ export type RenderCommand =
 export type InputPayload =
   | NativeEvent
   | { type: "Handshake"; requiredNodes: NodeKind[] }
-  | { type: "CreateSurface"; page: string; width: number; height: number }
+  | { type: "CreateSurface"; page: string; width: number; height: number; visible?: boolean }
   | { type: "Resize"; width: number; height: number }
+  | { type: "SurfaceVisibility"; visible: boolean }
+  | { type: "InspectRuntime"; enabled?: boolean; reset?: boolean }
   | { type: "DestroySurface" }
   | { type: "BackPress" }
   | { type: "Tap"; nodeId: number; revision: number }
@@ -40,9 +42,10 @@ export type InputPayload =
   | { type: "ModuleResult"; requestId: number; ok: boolean; value: string };
 
 export type OutputPayload =
+  | { type: "RuntimeStats"; values: Record<string, number> }
   | { type: "Ready"; supportedNodes: NodeKind[] }
   | { type: "Commit"; revision: number; commands: RenderCommand[] }
-  | { type: "MeasureRequest"; requestId: number; nodeId: number; kind: "Text" | "RichText" | "Button" | "TextInput"; text: string; fontSize: number; maxWidth: number; props?: RenderProps }
+  | { type: "MeasureRequest"; requestId: number; nodeId: number; kind: "Text" | "RichText" | "TextInput"; text: string; fontSize: number; maxWidth: number; props?: RenderProps }
   | { type: "InvokeModule"; requestId: number; module: string; method: string; argument: string }
   | { type: "CancelRequest"; requestId: number }
   | { type: "BackPressResult"; consumed: boolean }
@@ -78,7 +81,7 @@ function validFrame(value: unknown): boolean {
   return record(value) && Number.isFinite(value.x) && Number.isFinite(value.y) && validSize(value.width) && validSize(value.height);
 }
 function validKind(value: unknown): value is NodeKind {
-  return value === "View" || value === "Text" || value === "RichText" || value === "Button" || value === "TextInput" || value === "ScrollView" || value === "Image" || value === "Video" || value === "Native";
+  return value === "View" || value === "Text" || value === "RichText" || value === "TextInput" || value === "ScrollView" || value === "Image" || value === "Video" || value === "Native";
 }
 function validEvent(value: unknown): value is EventKind {
   return value === "tap" || value === "changeText" || validNativeEvent(value);
@@ -116,7 +119,7 @@ export function validateAnimationStyle(value: unknown): void {
 }
 export function validProps(value: unknown): boolean {
   if (!record(value)) return false;
-  const strings = ["text", "title", "value", "placeholder", "backgroundColor", "color", "borderColor", "placeholderTextColor", "shadowColor", "dmBackgroundColor", "dmColor", "dmBorderColor", "dmPlaceholderTextColor", "dmShadowColor", "testID", "accessibilityLabel", "src", "placeholderSrc", "resizeMode", "playControl", "spans", "nativeProps"];
+  const strings = ["text", "value", "placeholder", "backgroundColor", "color", "borderColor", "placeholderTextColor", "shadowColor", "dmBackgroundColor", "dmColor", "dmBorderColor", "dmPlaceholderTextColor", "dmShadowColor", "testID", "accessibilityLabel", "accessibilityRole", "src", "dmSrc", "placeholderSrc", "resizeMode", "playControl", "spans", "nativeProps"];
   const booleans = ["disabled", "editable", "secureTextEntry", "autoCorrect", "scrollEnabled", "showsVerticalScrollIndicator", "controls", "autoplay", "loop", "muted"];
   const enums: Record<string, readonly string[]> = {
     fontWeight: ["normal", "bold"], fontStyle: ["normal", "italic"], textAlign: ["left", "center", "right"],
@@ -128,11 +131,11 @@ export function validProps(value: unknown): boolean {
   for (const key of Object.keys(value)) {
     const item = value[key];
     if (key === "animation") { try { if (typeof item !== "string") return false; validateAnimationOptions(JSON.parse(item)); } catch { return false; } }
-    else if (["translateX", "translateY", "scaleX", "scaleY", "rotate", "shadowOffsetX", "shadowOffsetY"].includes(key)) { if (typeof item !== "number" || !Number.isFinite(item)) return false; }
+    else if (["translateX", "translateY", "scaleX", "scaleY", "rotate", "shadowOffsetX", "shadowOffsetY", "scrollAnchorOffset"].includes(key)) { if (typeof item !== "number" || !Number.isFinite(item)) return false; }
     else if (strings.includes(key)) { if (!validString(item)) return false; }
     else if (booleans.includes(key)) { if (typeof item !== "boolean") return false; }
     else if (key === "opacity" || key === "shadowOpacity") { if (!validSize(item) || item > 1) return false; }
-    else if (["fontSize", "borderWidth", "borderRadius", "shadowRadius", "rate"].includes(key)) { if (!validSize(item) || (key === "rate" && item === 0)) return false; }
+    else if (["fontSize", "lineHeight", "borderWidth", "borderRadius", "shadowRadius", "rate"].includes(key)) { if (!validSize(item) || (key === "rate" && item === 0)) return false; }
     else if (["inputRevision", "numberOfLines", "maxLength"].includes(key)) { if (!isU32(item, true)) return false; }
     else if (enums[key]) { if (typeof item !== "string" || !enums[key].includes(item)) return false; }
     else return false;
@@ -155,7 +158,10 @@ function validCommand(value: unknown): boolean {
 function validPayload(value: Record<string, unknown>): boolean {
   switch (value.type) {
     case "Handshake": return Array.isArray(value.requiredNodes) && value.requiredNodes.length <= 32 && value.requiredNodes.every(validKind);
-    case "CreateSurface": return validString(value.page, 128) && value.page.length > 0 && validSize(value.width) && validSize(value.height);
+    case "CreateSurface": return validString(value.page, 128) && value.page.length > 0 && validSize(value.width) && validSize(value.height) && (value.visible === undefined || typeof value.visible === "boolean");
+    case "InspectRuntime": return (value.enabled === undefined || typeof value.enabled === "boolean") && (value.reset === undefined || typeof value.reset === "boolean");
+    case "RuntimeStats": return record(value.values) && Object.keys(value.values).length <= 64 && Object.values(value.values).every(validSize);
+    case "SurfaceVisibility": return typeof value.visible === "boolean";
     case "Resize": return validSize(value.width) && validSize(value.height);
     case "DestroySurface":
     case "BackPress":
@@ -172,7 +178,7 @@ function validPayload(value: Record<string, unknown>): boolean {
         return value.touches.every(point => record(point) && [point.x, point.y, point.pageX, point.pageY].every(Number.isFinite) && isU32(point.pointerId, true));
       }
       if (value.event === "spanClick") return validString(value.value, 10) && isU32(Number(value.value), true);
-      if (value.event === "scroll" || value.event === "scrollEnd" || value.event === "layout") return Number.isFinite(value.x) && Number.isFinite(value.y) && validSize(value.contentWidth) && validSize(value.contentHeight);
+      if (value.event === "scroll" || value.event === "scrollEnd" || value.event === "layout") return Number.isFinite(value.x) && Number.isFinite(value.y) && validSize(value.contentWidth) && validSize(value.contentHeight) && (value.scrollAdjustment === undefined || Number.isFinite(value.scrollAdjustment));
       return true;
     case "Tap": return isU32(value.nodeId) && isU32(value.revision);
     case "InputChange": return isU32(value.nodeId) && isU32(value.revision) && isU32(value.inputRevision) && validString(value.value);
@@ -182,7 +188,7 @@ function validPayload(value: Record<string, unknown>): boolean {
     case "ModuleResult": return isU32(value.requestId) && typeof value.ok === "boolean" && validString(value.value);
     case "Ready": return Array.isArray(value.supportedNodes) && value.supportedNodes.length <= 32 && value.supportedNodes.every(validKind);
     case "Commit": return isU32(value.revision) && Array.isArray(value.commands) && value.commands.length <= MAX_COMMANDS && value.commands.every(validCommand);
-    case "MeasureRequest": return isU32(value.requestId) && isU32(value.nodeId) && (value.kind === "Text" || value.kind === "RichText" || value.kind === "Button" || value.kind === "TextInput") && validString(value.text) && validSize(value.fontSize) && validSize(value.maxWidth) && (value.props === undefined || validProps(value.props));
+    case "MeasureRequest": return isU32(value.requestId) && isU32(value.nodeId) && (value.kind === "Text" || value.kind === "RichText" || value.kind === "TextInput") && validString(value.text) && validSize(value.fontSize) && validSize(value.maxWidth) && (value.props === undefined || validProps(value.props));
     case "InvokeModule": return isU32(value.requestId) && (validString(value.module, 128) && /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(value.module)) && validString(value.method, 128) && validString(value.argument);
     case "CancelRequest": return isU32(value.requestId);
     case "BackPressResult": return typeof value.consumed === "boolean";

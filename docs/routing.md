@@ -1,6 +1,6 @@
 # 页面路由
 
-AnseronUI 的页面路由由宿主容器维护栈，TSX 通过 `useRouter()` 发起跳转。页面名称来自构建配置中注册的 `definePage`，iOS、Android 和 Web 使用同一套名称。
+AnseronUI 的页面路由由宿主容器维护栈，TSX 通过 `useRouter()` 发起跳转。页面名称来自构建配置中注册的 `definePage`，iOS、Android、macOS 和 Web 使用同一套名称。
 
 ```tsx
 import { Button, Text, View, definePage, useEffect, useRouter, useState } from "@anseronui/ui";
@@ -42,7 +42,7 @@ function Details(): UIElement {
 - `load(page, params?)`：销毁整个旧栈并创建一个新的根页面。
 - 宿主销毁：销毁栈中所有页面。
 
-销毁条目会取消其未完成服务请求和订阅，失效原生组件 ref，并释放该页面持有的传输文件引用。页面可另外通过 `useEffect` 清理需要暂停的计时器或后台资源。平台在同一容器内复用独立页面实例；不承诺跨进程持久化、进程终止后恢复、原生系统路由动画或内存压力下的页面回收。
+销毁条目会取消其未完成服务请求和订阅，失效原生组件 ref，并释放该页面持有的传输文件引用。隐藏时，框架计时器、动画和媒体暂停；需要随可见性启停的订阅或后台资源使用 `usePageEffect`。容器支持 `maxRetainedPages` 和 `trimMemory()`；回收后的条目保留参数，返回时重新挂载并初始化 Hook state。详见[页面生命周期与内存](page-lifecycle.md)。平台不承诺跨进程持久化、进程终止后恢复或原生系统路由动画。
 
 ## 宿主接口
 

@@ -1,0 +1,12 @@
+--- a/scr_lib.c
++++ b/scr_lib.c
+@@ -8199,7 +8199,8 @@
+ #endif
+ 
+ 
+-#if defined(__aarch64__) && (defined(__clang__) || defined(__GNUC__)) && !defined(_WIN32)
++#if defined(__aarch64__) && (defined(__clang__) || defined(__GNUC__)) && !defined(_WIN32) && \
++    !(defined(__OHOS__) && defined(__clang__) && __clang_major__ <= 15)
+ /* ── SHA-512 kernel (arm64) ───────────────────────────────────────────
+  * On CPUs with the SHA-512 extension (FEAT_SHA512), the blocks run with
+  * SHA512H, SHA512H2, SHA512SU0 and SHA512SU1; other CPUs use the portable
