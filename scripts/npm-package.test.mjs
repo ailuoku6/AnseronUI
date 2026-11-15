@@ -27,8 +27,10 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(paths.includes('dist/sdk/packages/devtools/src/client.ts'));
     assert.ok(paths.includes('dist/sdk/packages/devtools/src/vite.ts'));
     assert.ok(!paths.some(path => path.endsWith('/.DS_Store')));
-    for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'docs/app-icons.md', 'docs/styles.md', 'scripts/anseronui.mjs', 'scripts/templates/app/gitignore',
-      'docs/harmonyos.md', 'scripts/harmony-app.mjs', 'scripts/harmony-library.mjs',
+    for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md',
+      'docs/guides/app-icons.md', 'docs/guides/styles.md', 'docs/guides/virtual-list.md', 'docs/guides/page-lifecycle.md',
+      'docs/diagnostics/devtools.md', 'docs/diagnostics/performance.md', 'docs/platforms/harmonyos.md',
+      'scripts/anseronui.mjs', 'scripts/templates/app/gitignore', 'scripts/harmony-app.mjs', 'scripts/harmony-library.mjs',
       'packages/render-harmony/src/main/ets/HarmonyMedia.ets', 'packages/render-harmony/src/main/ets/HarmonyVideoSurface.ets',
       'packages/render-harmony/src/main/ets/HarmonyApplicationServices.ets', 'packages/render-harmony/src/main/ets/HarmonyRadioServices.ets',
       'packages/render-harmony/src/main/cpp/bridge.cpp', 'packages/render-harmony/src/main/cpp/touch_policy.h',
@@ -51,6 +53,7 @@ test('packed SDK creates a portable app with all native templates and no private
       assert.ok(paths.includes('dist/sdk/' + path), `Missing packed asset: ${path}`);
     }
     assert.ok(!paths.some(path => /(^|\/)(node_modules|\.git|\.verification|AGENTS.md)(\/|$)/.test(path)));
+    assert.ok(!paths.some(path => path.startsWith('dist/sdk/internal/verification/')));
     assert.ok(!paths.some(path => /\.(so|a|wasm)$/.test(path)));
     run('tar', ['-xzf', join(directory, pack.filename), '-C', directory]);
     const manifest = JSON.parse(readFileSync(join(directory, 'package/package.json'), 'utf8'));
@@ -69,6 +72,11 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.match(readFileSync(join(directory, 'package/dist/sdk/packages/flexily/LICENSE'), 'utf8'), /Copyright \(c\) 2026 Beorn/);
     const app = join(directory, 'PortableApp');
     run(process.execPath, [join(directory, 'package/dist/sdk/scripts/anseronui.mjs'), 'create', app]);
+    const readme = readFileSync(join(app, 'README.md'), 'utf8');
+    const iconDocs = 'node_modules/anseronui/dist/sdk/docs/guides/app-icons.md';
+    assert.ok(readme.includes(`](${iconDocs})`));
+    assert.ok(existsSync(join(directory, 'package', iconDocs.replace('node_modules/anseronui/', ''))));
+    assert.ok(readme.includes('docs/platforms/harmonyos.md'));
     const config = JSON.parse(readFileSync(join(app, 'anseronui.config.json'), 'utf8'));
     assert.equal(config.schemaVersion, 2);
     assert.equal(config.pages[0].source, 'src/pages/home.tsx');
