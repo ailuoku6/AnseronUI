@@ -33,7 +33,7 @@
 | 方案建议 | 本项目拟采用的工程决策 | 尚非已发布 API |
 | 待验证 | 需要 SDK/设备/实验 | 不计入已支持能力 |
 
-本次已执行 API 21 原生交叉编译和模拟器设备测试，但尚未执行 HAP 签名、安装和 ArkUI/Native Node 渲染测试。`hdc` 通过 DevEco SDK 的绝对路径使用；当前 shell 的 PATH 未发现这些命令，这仅说明命令未配置，不能断言机器没有安装 SDK。可复现实验记录见 [`internal/experiments/harmony-runtime/`](../experiments/harmony-runtime/) 和 [`internal/verification/harmony-api21-report.md`](../verification/harmony-api21-report.md)。
+本次已执行 API 21 原生交叉编译和模拟器设备测试，但尚未执行 HAP 签名、安装和 ArkUI/Native Node 渲染测试。`hdc` 通过 DevEco SDK 的绝对路径使用；当前 shell 的 PATH 未发现这些命令，这仅说明命令未配置，不能断言机器没有安装 SDK。可复现实验记录见 [`internal/experiments/harmony-runtime/`](../experiments/harmony-runtime) 和 [`internal/verification/harmony-api21-report.md`](../verification/harmony-api21-report.md)。
 
 ## 2. 平台与版本策略
 
@@ -357,7 +357,7 @@ effectiveVisible = appVisible && windowVisible && containerVisible && routeIsTop
 | 内存压力 | trimMemory 回收隐藏实例，保留路由名称/参数 |
 | WindowStage 销毁/明确容器 destroy | 注销窗口监听并进入 Closing；不再访问失效窗口 |
 
-临时 detach 不等于最终 destroy。隐藏期间暂停新渲染/UI 输入，但已经开始的事务应完成；不能因为页面隐藏而丢 ACK。现有 useEffect 仍按挂载/卸载，usePageEffect 按可见性重启；框架 timer 保留剩余时长，HTTP/普通 Promise 按当前合同继续，卸载才取消关联请求。参见仓库 [页面生命周期](../../docs/page-lifecycle.md)。
+临时 detach 不等于最终 destroy。隐藏期间暂停新渲染/UI 输入，但已经开始的事务应完成；不能因为页面隐藏而丢 ACK。现有 useEffect 仍按挂载/卸载，usePageEffect 按可见性重启；框架 timer 保留剩余时长，HTTP/普通 Promise 按当前合同继续，卸载才取消关联请求。参见仓库 [页面生命周期](../../docs/guides/page-lifecycle.md)。
 
 保活容量计入当前页。建议首期示例显式设置小容量（如 3，仅为演示策略），不擅自改变所有平台默认值；记入每页 worker/线程栈开销。回收后返回会重建 Hook state，保留路由参数快照，不序列化任意闭包。
 
@@ -532,7 +532,7 @@ H00/H01 和 H06 的静态节点探针可独立推进；完整业务链必须等�
 
 ### 15.2 性能指标与方法
 
-复用 [性能方案](../../docs/performance.md) 与 [现有基线](../../docs/performance-baseline.md)，但为鸿蒙单独建立基准。记录：
+复用 [性能方案](../../docs/diagnostics/performance.md)，另为鸿蒙建立基准。记录：
 
 - 冷启动至 Core Ready、首 Commit、首屏布局与实际首帧。
 - 输入事件 → Core → Commit → apply 的 p50/p95/p99，以及 JSON/队列/测量耗时。
@@ -616,7 +616,7 @@ H00/H01 和 H06 的静态节点探针可独立推进；完整业务链必须等�
 - [Core 构建](../../scripts/build-core.mjs)：真实 target、archive 合并、缓存、manifest。
 - [插件解析](../../scripts/native-plugins.mjs)：schema 1/2 与平台校验。
 - [独立应用](../../scripts/standalone-app.mjs) 与 [CLI](../../scripts/anseronui.mjs)：用户构建/运行路径。
-- [生命周期](../../docs/page-lifecycle.md)、[虚拟列表](../../docs/virtual-list.md)、[系统服务](../../docs/native-services.md)：当前工作区必须保留的语义。
+- [生命周期](../../docs/guides/page-lifecycle.md)、[虚拟列表](../../docs/guides/virtual-list.md)、[系统服务](../../docs/guides/native-services.md)：当前工作区必须保留的语义。
 - scriptc 固定源码：`internal/toolchain/scriptc/packages/compiler/src/backend/targets.ts`、`backend/native/driver.ts`、`packages/runtime/src/scr_async.c`；来源清单 `internal/toolchain/scriptc.vendor.json`。
 
 ### 18.2 本次交付状态
@@ -633,4 +633,4 @@ H00/H01 和 H06 的静态节点探针可独立推进；完整业务链必须等�
 
 已实现 notifications/background/BLE/NFC、安全存储、linking.subscribe、环境订阅、保活容量/内存回收、AVPlayer 真实首帧及毫秒进度、触摸滚动交接、焦点、DemoSwitch 插件与完整宿主性能计时。UIAbility 构造阶段无 Want 调用必须跳过；正常 onCreate 仍转发配置和初始链接。先前“全部未实现”和“禁止正常 onCreate 读取 config”的描述已不适用。
 
-API 21 模拟器完整烟测 14 组通过，代理提醒 1700002 受使用资格/额度阻塞，未计作调度通过。后台只验收接收/查询/取消，BLE/NFC 等硬件需真机。详细状态、限制、复跑方式以 docs/harmonyos.md 为准。
+API 21 模拟器完整烟测 14 组通过，代理提醒 1700002 受使用资格/额度阻塞，未计作调度通过。后台只验收接收/查询/取消，BLE/NFC 等硬件需真机。详细状态、限制、复跑方式见 `docs/platforms/harmonyos.md`。

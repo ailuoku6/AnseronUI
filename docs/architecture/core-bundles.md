@@ -25,7 +25,7 @@ AnseronUI 现在使用 **Framework Core + Business Bundle** 两份独立编译�
 
 ## 版本化消息与生命周期
 
-内部 ABI 当前为 `CORE_ABI_VERSION = 2`，定义在 [contracts.ts](../packages/core/src/contracts.ts)。`Render` 请求包含 surface/generation/revision/round、纯数据节点树、上次提交树、文本测量缓存和请求编号；`RenderResult` 回复包含 frame、测量查询和渲染命令。Framework Core 按 surface 保留布局树，根据节点 ID 增量同步，而业务侧仍发送完整描述树。
+内部 ABI 当前为 `CORE_ABI_VERSION = 2`，定义在 [contracts.ts](../../packages/core/src/contracts.ts)。`Render` 请求包含 surface/generation/revision/round、纯数据节点树、上次提交树、文本测量缓存和请求编号；`RenderResult` 回复包含 frame、测量查询和渲染命令。Framework Core 按 surface 保留布局树，根据节点 ID 增量同步，而业务侧仍发送完整描述树。
 
 `ReleaseSurface` / `SurfaceReleased` 消息释放指定 surface/generation 的持久化布局状态；旧 generation 的释放不会删除较新布局树。Framework 额外导出 `dispose()`，由 Native 组合适配器和 Wasm adapter 在实例关闭时调用。ReferenceRuntime 为每个实例持有独立 LayoutKernel；单次探针函数 `render()` 保持计算后释放的行为。
 
@@ -95,4 +95,4 @@ const runtime = await WasmRuntime.load(businessBytes, frameworkBytes);
 - 数据边界会增加 JSON 序列化和复制成本；当前以正确性、所有权清晰及构建复用为优先，尚未承诺性能收益。
 - ABI 升级需要同时更新内核、业务 SDK 和组合适配器；不同 CPU/平台仍各自构建。
 
-源码入口：[内核](../packages/core/src/kernel.ts)、[业务执行 SDK](../packages/core/src/business-runtime.ts)、[原生组合适配器](../packages/core/native/split_bridge.c)、[双 Wasm 适配器](../packages/render-web/src/wasm-runtime.ts)、[构建](../scripts/build-core.mjs)、[指纹](../scripts/core-inputs.mjs)。
+源码入口：[内核](../../packages/core/src/kernel.ts)、[业务执行 SDK](../../packages/core/src/business-runtime.ts)、[原生组合适配器](../../packages/core/native/split_bridge.c)、[双 Wasm 适配器](../../packages/render-web/src/wasm-runtime.ts)、[构建](../../scripts/build-core.mjs)、[指纹](../../scripts/core-inputs.mjs)。

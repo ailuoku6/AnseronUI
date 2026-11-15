@@ -86,7 +86,7 @@ npm run android -- --dry-run
 
 ## 只构建与 Web 开发
 
-新建 App 已附带 `assets/icons/` 默认图标和对应配置，第一次构建即可显示。应用图标在 `app.icon` 配置：支持单张 PNG、iOS 浅色／深色／着色及 Icon Composer、Android 自适应／单色主题和 night 资源。配置示例、平台限制和旧工程兼容方式见[应用图标](app-icons.md)。修改图标后重新构建，`--no-build` 仍使用上次产物。
+新建 App 已附带 `assets/icons/` 默认图标和对应配置，第一次构建即可显示。应用图标在 `app.icon` 配置：支持单张 PNG、iOS 浅色／深色／着色及 Icon Composer、Android 自适应／单色主题和 night 资源。配置示例、平台限制和旧工程兼容方式见[应用图标](../guides/app-icons.md)。修改图标后重新构建，`--no-build` 仍使用上次产物。
 
 ```sh
 npm run build:ios
@@ -146,19 +146,6 @@ npm run ios
 
 该模式保留框架相对路径和共享构建缓存，用于联调尚未打包的源码；旧工程仍可使用原配置。使用 npm 包的普通用户应选择默认创建模式。
 
-## npm 分发与发布准备
-
-`npm pack` 自动执行 `prepack`，从显式文件清单生成 `dist/sdk`，分发运行所需脚本、框架源码、scriptc 编译器和 runtime 源码、原生头文件、模板、Gradle wrapper 及第三方许可证。不包含 Git 历史、测试、编译产物或本地依赖。源仓库的 workspaces 仅用于开发，不是消费者的 registry 依赖。发布包的根 `exports` 指向单包 API，根 `bin` 指向打包后的 CLI。`prepublishOnly` 在发布前自动运行类型检查、CLI、构建输入和打包测试。
-
-```sh
-npm run test:tooling
-npm run test:build
-npm run test:package
-npm pack --dry-run
-```
-
-AnseronUI 自有代码采用 MIT，第三方说明见根目录 `THIRD_PARTY_NOTICES.md`。发布前确认 npm 包名所有权、版本号和发布账号；自动发布配置及标签操作见[框架开发文档](framework-development.md#自动发布到-npm)。`--package <npm版本或tarball路径>` 可覆盖生成工程的依赖来源，方便本地包或预发布版本验证。模板有二进制 Gradle wrapper 和 gitignore，打包测试会检查它们没有被 npm 遗漏。
-
 ## 接入现有应用
 
 在 **AnseronUI 框架根目录** 执行，参数指向已有项目目录：
@@ -173,7 +160,7 @@ npm run anseronui -- integrate ../existing-app --name existing-app
 - `src/anseronui/pages/home.tsx`：最小接入页面。
 - `ANSERONUI_INTEGRATION.md`：iOS、Android、macOS、Web 的挂载入口和生命周期要求。
 
-接入命令只新增 AnseronUI 文件，不修改现有 App 的入口、路由、网络层或状态管理，也不会自动完成原生依赖链接。原生宿主需链接对应 Core 静态库和 C transport；详见 [iOS](../packages/render-ios/README.md)、[Android](../packages/render-android/README.md) 和 [macOS](../packages/render-macos/README.md) 接入说明。推荐先挂载一个页面，验证布局和事件，再逐页迁移。原生侧使用 `AnseronUIRenderView.load(page)` 启动页面，页面离开或宿主销毁时调用 `destroy()`；Web 侧使用 `BrowserHost.mount(page, width, height)`。
+接入命令只新增 AnseronUI 文件，不修改现有 App 的入口、路由、网络层或状态管理，也不会自动完成原生依赖链接。原生宿主需链接对应 Core 静态库和 C transport；详见 [iOS](../../packages/render-ios/README.md)、[Android](../../packages/render-android/README.md) 和 [macOS](../../packages/render-macos/README.md) 接入说明。推荐先挂载一个页面，验证布局和事件，再逐页迁移。原生侧使用 `AnseronUIRenderView.load(page)` 启动页面，页面离开或宿主销毁时调用 `destroy()`；Web 侧使用 `BrowserHost.mount(page, width, height)`。
 
 现有项目可以保留自己的导航系统：导航按钮可以直接调用原生容器的 `load`/`push`/`pop`，或者在 TSX 内使用 `useRouter()`。框架 module 名 `router` 由 AnseronUI 保留，业务 module 应使用自己的命名空间。Web 项目继续使用自己的 Vite 入口时，在配置中补充 `web.viteConfig` 后再运行 `anseronui build web`。
 
@@ -207,12 +194,12 @@ npm run anseronui -- integrate ../existing-app --name existing-app
 
 `check` 检查 buildId、页面数组、重复 export、源码存在性；不能替代类型检查、AOT 构建和设备验证。旧版配置没有 app 字段时，build 仍按原通用示例宿主流程执行；run 仅支持独立工程配置。
 
-自定义原生能力通过 Module/ComponentAdapter 接入；资源放入 assets（原生）或 web/public（Web），参见 [能力清单](capabilities.md)。
+自定义原生能力通过 Module/ComponentAdapter 接入；资源放入 assets（原生）或 web/public（Web），参见 [能力清单](../guides/capabilities.md)。
 
 ## macOS AppKit 应用
 
 新建应用可以使用 `anseronui build macos` / `anseronui run macos`（对应 `npm run build:macos` / `npm run macos`），输出到 `.verification/macos/App.app`。当前构建支持 Apple Silicon、macOS 15+ 构建主机与完整 Xcode。`run macos --dry-run` 预览本机启动步骤；`--no-build` 校验已有产物和输入指纹。macOS 不接受设备/AVD 参数。
 
-平台源码位于 `platforms/macos/App.swift`；旧工程升级时从新建应用补充该文件及 npm scripts。应用资源目录 `assets` 打包到 Resources/assets。插件需要 schema 2 的显式 macos 适配，缺失时提前报错。详细 API 和验证边界见 [macOS Renderer](../packages/render-macos/README.md)。
+平台源码位于 `platforms/macos/App.swift`；旧工程升级时从新建应用补充该文件及 npm scripts。应用资源目录 `assets` 打包到 Resources/assets。插件需要 schema 2 的显式 macos 适配，缺失时提前报错。详细 API 和验证边界见 [macOS Renderer](../../packages/render-macos/README.md)。
 
 iOS 模拟器构建使用临时签名（`CODE_SIGN_IDENTITY=-`），以支持系统 Keychain，不要求开发团队或证书；真机构建仍输出未签名产物供 Xcode 配置。

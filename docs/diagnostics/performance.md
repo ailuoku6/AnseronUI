@@ -82,7 +82,7 @@ npm run bench:render:wasm
 
 PR 工作流 `render-performance.yml` 自动运行共享框架回归与 Reference 预算，上传当次机器报告；Native/Wasm 和真实 UI 使用上述平台命令验证。CI 不把不同运行机器的绝对时延作硬性比较。
 
-本次实现的环境、采样数值与平台验证范围见[本地性能快照](performance-baseline.md)。
+一次环境和版本固定的性能采样见[2026-11-13 性能验证记录](../../internal/verification/performance-baseline-2026-11-13.md)。该记录用于追溯，不代表其他设备的性能结果。
 
 相对时延门槛使用同环境基线：
 
@@ -107,4 +107,4 @@ WebKit 两种模式使用真实 DOM 文本测量和提交，验证展开、20 �
 
 AppKit 使用真实 AOT Core、NSView、文本与 AVPlayer，覆盖列表动态行高、定位/插入/resize、计时和媒体暂停恢复、保活与内存回收，生成 `appkit-native.json`。它记录首屏和跳转场景耗时及完整宿主指标，不将少量功能场景当作统计分位数。
 
-iOS/UIKit 与 Android View 可通过同一宿主检查接口在设备或模拟器上采样。本次另通过 Android API 35 的 15 项测试（含真实列表）及 iOS 26.4 的 19 项容器测试（含可见性和内存警告回收）。iOS 测试集不包含 UIKit 大列表滚动性能验证；Swift 类型检查、Kotlin 编译和共享 Core 基准不能代替设备滚动流畅度测试。当前预算没有自动断言进程 RSS、GPU 时间或移动设备 FPS；`WasmRuntime.getMemoryStats()` 可读取 Business/Framework 线性内存容量（包括分配器空闲空间，不代表活对象大小）。稳定节点/缓存计数也不能证明不存在所有平台资源泄漏。
+iOS/UIKit 与 Android View 可通过同一宿主检查接口在设备或模拟器上采样。Renderer README 说明各平台测试入口。容器测试和共享 Core 基准不能替代真实设备上的滚动流畅度测试。当前预算没有自动断言进程 RSS、GPU 时间或移动设备 FPS；`WasmRuntime.getMemoryStats()` 可读取 Business/Framework 线性内存容量（包括分配器空闲空间，不代表活对象大小）。稳定节点/缓存计数也不能证明不存在所有平台资源泄漏。

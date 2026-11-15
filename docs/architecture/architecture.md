@@ -1,6 +1,6 @@
-# AnseronUI 架构、运行原理与仓库规范
+# AnseronUI 架构与运行原理
 
-本文解释 AnseronUI 为什么能让同一份 TSX 运行在 iOS、Android、Web 和 macOS，以及开源仓库中各目录和 `.gitignore` 规则的含义。
+本文说明共享 TSX 如何编译，以及 Core、协议和平台宿主如何协作。仓库维护流程和生成文件规则见[仓库工作流](../contributing/repository-workflow.md)。
 
 ## 设计目标
 
@@ -8,7 +8,7 @@ AnseronUI 的目标是把“业务和 UI 描述”放在共享 TypeScript/TSX Co
 
 1. 业务只写一次页面、状态、布局描述和事件逻辑；
 2. Core 不依赖移动端 JavaScript 引擎，使用 scriptc AOT 编译为原生静态库或 Wasm reactor；
-3. iOS、Android、Web 各自用最适合平台的渲染器创建真实控件；
+3. iOS、Android、macOS、HarmonyOS 和 Web 各自用平台渲染器创建真实控件；
 4. 布局、事件、页面生命周期和协议语义保持跨端一致；
 5. 网络、计时器、文本测量、系统返回键和原生组件通过宿主能力注入。
 
@@ -24,7 +24,7 @@ AnseronUI 的原生产物构建基于 **scriptc**，共享布局计算基于 **F
 | 布局算法 | Flexily 0.8.5，固定提交 `4850f1fb475f8147458059b45fb4f148d14a6ab4`；使用静态入口和已适配源码计算 Flex frame。`@anseronui/layout` 负责 surface 内节点所有权，平台负责字体测量 |
 | 框架与宿主 | AnseronUI 实现组件 API、TSX lowering、Hooks、协调、协议、跨端事件/服务、Renderer、路由和生命周期管理 |
 
-来源与适配见 [编译器准备脚本](../scripts/prepare-compiler.mjs)、[async 补丁](../internal/toolchain/async-embedding.patch)、[Flexily 来源清单](../packages/flexily/UPSTREAM-scriptc-adaptation.json)和[布局包](../packages/layout/README.md)。上游完整 API 和性能描述不自动成为本框架承诺；共享 TSX 应遵循 [TS/TSX 编写限制](typescript-limitations.md)。
+来源与适配见 [编译器准备脚本](../../scripts/prepare-compiler.mjs)、[async 补丁](../../internal/toolchain/async-embedding.patch)、[Flexily 来源清单](../../packages/flexily/UPSTREAM-scriptc-adaptation.json)和[布局包](../../packages/layout/README.md)。上游完整 API 和性能描述不自动成为本框架承诺；共享 TSX 应遵循 [TS/TSX 编写限制](../getting-started/typescript-limitations.md)。
 
 ## 独立 Core、业务包与实例
 
@@ -42,10 +42,14 @@ flowchart TD
   C --> E[版本化 Bridge 协议]
   E --> F[iOS UIKit Renderer]
   E --> G[Android View Renderer]
-  E --> H[Web DOM Renderer]
-  F --> I[iOS 宿主能力]
-  G --> J[Android 宿主能力]
-  H --> K[浏览器/WASI 宿主能力]
+  E --> H[macOS AppKit Renderer]
+  E --> I[HarmonyOS ArkUI Renderer]
+  E --> J[Web DOM Renderer]
+  F --> K[iOS 宿主能力]
+  G --> L[Android 宿主能力]
+  H --> M[macOS 宿主能力]
+  I --> N[HarmonyOS 宿主能力]
+  J --> O[浏览器/WASI 宿主能力]
 ```
 
 一次渲染可以理解为：TSX 产生描述树，业务 SDK 协调组件和状态，独立 Core 计算 frame 与差分，业务 SDK 输出 Commit，宿主把 Commit 应用到真实节点；用户交互再通过协议回到 Core。
@@ -62,6 +66,8 @@ flowchart TD
 | `packages/layout` | AnseronUI 的 LayoutEngine，按 surface 管理 Flexily 节点和资源释放 |
 | `packages/render-ios` | UIKit 节点、Core worker、文本测量、媒体、触摸和扩展宿主 |
 | `packages/render-android` | Android View 节点、HandlerThread、JNI transport、文本测量、媒体和扩展宿主 |
+| `packages/render-macos` | AppKit 节点、Core worker、文本测量、媒体和扩展宿主 |
+| `packages/render-harmony` | Stage/ArkTS 宿主、ArkUI Native Node、C++ transport 和扩展宿主 |
 | `packages/render-web` | DOM Renderer、浏览器扩展、Wasm runtime adapter 和 WebHost |
 | `examples` | Counter、异步表单、基础组件、扩展、计时器和原生宿主示例 |
 | `scripts` | Core staging、编译、应用生成/接入、iOS 工程生成和验证脚本 |
@@ -165,7 +171,7 @@ Framework Core 只拥有布局计算语义；平台负责字体、字形、系�
 
 ## 路由和页面返回
 
-Router 是 Core 保留 Module。TSX 调用 `push/replace/pop/back/current`，宿主容器维护页面栈并按请求完成顺序切换 surface。页面名称必须来自 manifest；当前没有路由参数、深链、嵌套路由和页面缓存。
+Router 是 Core 保留 Module。TSX 调用 `push/replace/pop/back/current`，宿主容器维护页面栈并按请求完成顺序切换 surface。页面名称必须来自 manifest。路由参数为 JSON 数据；页面保留受容器容量限制。当前没有自动深链和嵌套路由。
 
 Android generic host 在系统返回事件中依次调用 `handleBackPress()`、路由 `pop()`、系统默认返回。Web 监听 `Escape`/`BrowserBack`。iOS 没有统一物理返回键，导航控制器或宿主返回按钮需要主动调用 `handleBackPress()`。
 
@@ -183,67 +189,6 @@ Android generic host 在系统返回事件中依次调用 `handleBackPress()`、
 
 这不是安全沙箱。业务 Module 和原生组件拥有宿主权限，应用应自行校验 URL、文件、网络和敏感数据。Core 的 AOT 编译减少了移动端 JS 解释层，但不会自动消除原生代码和业务代码的安全风险。
 
-## `.gitignore` 规则
-
-根目录 [`.gitignore`](../.gitignore) 按依赖、生成产物和本地状态分组。它只影响未跟踪文件，不会自动移除已经进入 Git 索引的文件。
-
-| 规则 | 忽略内容与理由 |
-| --- | --- |
-| `node_modules/`、`.pnpm-store/` | 可重建的依赖与包管理器缓存 |
-| `.verification/` | Core staging、AOT archive、Wasm、模拟器产物与验证报告 |
-| `dist/`、`**/build/` | Web、包级构建和 Gradle 产物，匹配任意层级 |
-| `**/.gradle/`、`.build/`、`DerivedData/` | Gradle、SwiftPM 和 Xcode 本地缓存 |
-| `*.log` | 开发与构建日志；测试基线需要单独用明确的 fixture 文件管理 |
-| `/internal/toolchain/scriptc/` | 主仓库管理的 scriptc 上游源码副本，包含 AnseronUI async embedding 适配 |
-| `/packages/render-android/src/main/jniLibs/*/libanseronui.so` | 构建脚本复制到 Renderer 源码目录的 JNI/Core 动态库 |
-| `core.wasm`、`framework.wasm`、`core.manifest.json` | 构建脚本生成并复制到各端资源目录的 Core 与清单 |
-| `/examples/native/web/public/assets/showcase.png`、`…/showcase.mp4` | Web 示例的媒体副本；源资产 `examples/components/assets/` 保留 |
-| `/examples/native/ios/AnseronUIDemo.xcodeproj/` | `generate-ios-project.py` 完整生成的示例工程；不忽略业务自行维护的其他 Xcode 工程 |
-| `.env`、`.env.*` | 本地环境值；`!.env.example`、`!.env.*.example` 保留不含凭据的配置样例 |
-| `local.properties` | Android 本机 SDK 路径 |
-| `*.jks`、`*.keystore`、`*.p12`、`*.mobileprovision` | 本地签名材料 |
-| `xcuserdata/`、`*.xcuserstate` | Xcode 用户界面与个人状态 |
-| `.idea/workspace.xml`、`.idea/tasks.xml` | JetBrains 个人工作区状态；保留其他可共享 IDE 配置 |
-| `.DS_Store`、`*.swp`、`*.swo` | 系统与编辑器临时文件 |
-
-没有整体忽略 `.vscode/` 或 `.idea/`，团队可以选择提交经过检查的共享配置。生成应用还有自己的 `.gitignore`，其基础规则为 `.verification/`、`dist/`、`node_modules/`；留在框架工作区中的应用同时受根规则保护。
-
-### 应当保留的源码
-
-- `package-lock.json`、`package.json`、`anseronui.config.json` 和构建脚本；
-- TSX 页面、原生宿主源码、测试、Gradle wrapper 和可重建工程的生成脚本；
-- `internal/toolchain/scriptc/` 编译器源码、`async-embedding.patch`、固定提交和 `scriptc.vendor.json` 来源清单；
-- 小型图片、视频、文本 fixture 等测试输入；
-- Flexily 的适配源码、测试、`LICENSE` 与 `UPSTREAM-scriptc-adaptation.json`。
-
-Flexily 和 scriptc 都是主仓库直接管理的普通源码目录，不含嵌套 Git 元数据。Flexily 的上游提交对象仅由布局验证脚本在忽略的 `.verification/` 目录中获取，用于差分对照；不要 checkout/reset 覆盖适配源码。
-
-### 发布边界
-
-`.verification`、缓存、构建副本和本机签名材料不属于源码交付。需要发布 APK、`.app` 或其他二进制时使用独立制品发布流程。历史设计和 `.feature_memo` 是开发记录，不是公共 API 合同；分享前检查其中的机器路径和记录内容。
-
-当前根目录没有项目级 `LICENSE`，需要由项目所有者在正式发布前选择并添加。本次没有把上游 Flexily 的 MIT LICENSE 复制成项目许可；第三方源码中的原始声明继续保留。框架各包当前为源码工作区使用，npm 包发布、签名和商店流程也不在现有 CLI 自动化范围内。
-
-## 构建和验证入口
-
-```sh
-npm ci --ignore-scripts
-npm run prepare:tools
-npm run prepare:compiler
-npm run typecheck:framework
-npm run test:framework
-npm run test:build
-npm run test:tooling
-npm run test:layout
-npm run build:web
-npm run build:ios
-npm run build:android
-```
-
-`prepare:compiler` 会准备并 patch 锁定的 scriptc 0.4.8；升级 compiler、runtime、Flexily 或协议 minor 后，需要重新跑对应平台和布局验证。Android 需要 SDK/NDK/JDK 17，iOS 需要 Xcode 和 iOS SDK，Web/Wasm 构建需要项目锁定的 scriptc/WASI 工具链。
-
-布局差分的上游 Git 对象、平台 SDK、Zig、模拟器和 HTTP fixture 是对应验证的前置条件；文档调整不等于重跑所有平台。Native/Wasm 探针执行前应先构建对应 Core。完整安装和运行步骤见[根 README](../README.md)。
-
 ## 架构边界
 
-当前实现强调可运行的跨端基础和清晰的宿主协议，暂不承诺：热更新、React 兼容、深链/路由参数、页面缓存、完整无障碍实现、通用插件市场、应用签名发布自动化、任意 async fiber 强制取消和所有设备/IME 行为一致。
+当前实现提供跨端组件和宿主协议。框架不提供热更新、React 兼容、自动深链、嵌套路由、跨进程页面恢复、完整无障碍实现、通用插件市场或任意 async fiber 强制取消。平台行为需在目标设备和输入法上验证。

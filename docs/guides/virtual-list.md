@@ -24,7 +24,7 @@ function Results(props: { rows: Row[] }): UIElement {
 }
 ```
 
-原生/Wasm AOT 页面应显式写泛型实参 `<VirtualList<Row>>`，并给回调参数标明类型。完整示例见 [`examples/virtual-list/page.tsx`](../examples/virtual-list/page.tsx)：5000 行不同长度文本、动态展开、头部插入和深处定位。
+原生/Wasm AOT 页面应显式写泛型实参 `<VirtualList<Row>>`，并给回调参数标明类型。完整示例见 [`examples/virtual-list/page.tsx`](../../examples/virtual-list/page.tsx)：5000 行不同长度文本、动态展开、头部插入和深处定位。
 
 | 属性 | 语义 |
 | --- | --- |

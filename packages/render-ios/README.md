@@ -57,7 +57,7 @@ if pageView.pop() { return }
 navigationController?.popViewController(animated: true)
 ```
 
-平台 API 和自定义 UIKit 组件通过 `IOSPlatformExtensions` 注入。节点 ref 返回跨端句柄，不直接暴露 UIView。详见[路由](../../docs/routing.md)、[返回键](../../docs/back-press.md)和[原生扩展](../../docs/native-extensions.md)。
+平台 API 和自定义 UIKit 组件通过 `IOSPlatformExtensions` 注入。节点 ref 返回跨端句柄，不直接暴露 UIView。详见[路由](../../docs/guides/routing.md)、[返回键](../../docs/guides/back-press.md)和[原生扩展](../../docs/guides/native-extensions.md)。
 
 ## 底层分工与验证
 
@@ -65,4 +65,4 @@ navigationController?.popViewController(animated: true)
 
 示例中的 `RenderViewTests` 使用注入 transport 验证容器生命周期、延迟启动、尺寸变化、页面替换、重新挂载与销毁；`SharedCoreUITests` 验证真实编译页面、组件、扩展、布局和媒体。测试需先构建当前 Core，并准备模拟器；依赖 HTTP 的用例还需要本地 fixture。
 
-更多入口：[中文文档](../../docs/README.md) · [能力清单](../../docs/capabilities.md) · [架构与原理](../../docs/architecture.md)。
+更多入口：[中文文档](../../docs/README.md) · [能力清单](../../docs/guides/capabilities.md) · [架构与原理](../../docs/architecture/architecture.md)。

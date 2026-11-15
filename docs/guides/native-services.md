@@ -80,7 +80,7 @@ Android 在 Manifest 按实际需求声明 ACCESS_COARSE_LOCATION/ACCESS_FINE_LO
 
 ## 推送通知、后台任务、蓝牙与 NFC
 
-支付按本次需求暂不接入，生物识别不在本次范围。新增服务通过 `useServices()` 获得，所有跨端参数和结果仍为 JSON；调用前使用 `capabilities.has(module, method)` 检查具体方法。
+新增服务通过 `useServices()` 获得。跨端参数和结果使用 JSON。调用前使用 `capabilities.has(module, method)` 检查方法是否可用。当前不提供支付和生物识别服务。
 
 | 服务 | iOS | Android | macOS | Web | HarmonyOS |
 | --- | --- | --- | --- | --- | --- |
@@ -208,4 +208,4 @@ WorkScheduler 的有限定时任务设置 repeatCount:1，时间条件至少两�
 
 BLE/NFC 需在 harmony.permissions 声明 ACCESS_BLUETOOTH / NFC_TAG（带 ohos.permission. 前缀）；默认 BLE 写入最多 20 字节。隐藏页停止扫描、断开连接、释放 NFC 会话。状态订阅合并最新值；BLE 与 linking 保留最多 64 条有序事件。定位/传输监听按订阅所有权取消；文件选择器返回的引用只在创建它的 Host 内有效。
 
-构建权限、原生扩展、验证命令、系统约束来源与完整设备验收边界见[鸿蒙支持](harmonyos.md)。
+构建权限、原生扩展、验证命令、系统约束来源与完整设备验收边界见[鸿蒙支持](../platforms/harmonyos.md)。

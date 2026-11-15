@@ -136,4 +136,4 @@ try {
 
 ## 2026-11-07 后续：flexily 源码改写
 
-本报告的表格与原生工具链阻碍描述属于原库筛选轮次。后续已通过源码改写让 flexily 底层 Node/长度解析探针完成 macOS arm64 原生差分，并在临时目录补齐匹配的官方 0.2.1 helper/runtime pack；详见 [适配验证](./flexily-scriptc-adaptation.md)。createFlexily composable 入口仍未通过；前轮 yoga-layout-tui 的原生执行不因此变为已验证，生产布局选型仍未确定。
+本报告的表格与原生工具链阻碍描述属于原库筛选轮次。后续已通过源码改写让 flexily 底层 Node/长度解析探针完成 macOS arm64 原生差分，并在临时目录补齐匹配的官方 0.2.1 helper/runtime pack；详见 [适配验证](flexily-scriptc-adaptation.md)。createFlexily composable 入口仍未通过；前轮 yoga-layout-tui 的原生执行不因此变为已验证，生产布局选型仍未确定。

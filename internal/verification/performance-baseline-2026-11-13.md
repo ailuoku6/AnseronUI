@@ -24,7 +24,7 @@
 
 iOS 27 模拟器要求 UIScene 生命周期，当前示例采用旧应用生命周期，测试宿主在启动阶段被系统拒绝；本次 UIKit 验证使用 iOS 26.4。WebKit 命令行宿主可能被后台调度限流，报告保留 `paintWaitTimeouts`；带 RAF 等待的交互时延不能作为纯计算时间。
 
-完整本机 JSON 保存在忽略跟踪的 `.verification/performance/`。采样方法、指标定义和预算见[性能验证](performance.md)。当前没有进程 RSS、GPU 时间或移动设备 FPS 的自动门槛；节点和缓存有界不能证明所有平台资源都没有泄漏。
+完整本机 JSON 保存在忽略跟踪的 `.verification/performance/`。采样方法、指标定义和预算见[性能验证](../../docs/diagnostics/performance.md)。当前没有进程 RSS、GPU 时间或移动设备 FPS 的自动门槛；节点和缓存有界不能证明所有平台资源都没有泄漏。
 
 ## Android 猛烈甩动专项（2026-11-13，后续优化）
 

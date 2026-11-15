@@ -61,6 +61,6 @@ function Action() {
 
 业务侧保留 callback 和数字句柄，发送已有 `timer.sleep` Module 请求；宿主超时后发送 `ModuleResult`，回调在业务 owner thread/事件循环执行。取消发送 `CancelRequest`，页面 generation/requestId 防止迟到回调污染新页面。此机制无需启用 scriptc 的 Node 事件循环。
 
-运行默认示例的 `timers` 页面可以体验启动、取消和 await 后调度。源码：[页面](../examples/timers/page.tsx)、[计时器 API](../packages/ui/src/timers.ts)、[编译适配](../scripts/lower-timers.mjs)、[业务运行时](../packages/core/src/business-runtime.ts)。
+运行默认示例的 `timers` 页面可以体验启动、取消和 await 后调度。源码：[页面](../../examples/timers/page.tsx)、[计时器 API](../../packages/ui/src/timers.ts)、[编译适配](../../scripts/lower-timers.mjs)、[业务运行时](../../packages/core/src/business-runtime.ts)。
 
 验证命令：`npm run test:framework` 检查计时器及生命周期；`npm run test:core:native` / `npm run test:core:wasm` 覆盖真实 AOT 业务页；构建 Wasm 后，macOS 可用 `npm run test:browser:split` 验证两个 Wasm 经宿主真实计时器更新 DOM、取消和退出清理。WebKit 测试需要系统图形/窗口服务，运行器会创建测试窗口以避免隐藏页暂停计时器。

@@ -2,7 +2,7 @@
 
 最低 HarmonyOS 6.0.1/API 21。使用 Stage/ArkTS Host、C++ ArkUI Native Node 和固定线程 AOT Core。
 
-构建、标准服务、原生扩展、生命周期、测试和实机限制见 [HarmonyOS 支持](../../docs/harmonyos.md)。
+构建、标准服务、原生扩展、生命周期、测试和实机限制见 [HarmonyOS 支持](../../docs/platforms/harmonyos.md)。
 
 - src/main/cpp/bridge.cpp：线程传输、渲染、事件、ref、性能计时。
 - src/main/ets/HarmonyHost.ets：协议、平台服务、生命周期、测量。

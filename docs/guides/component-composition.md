@@ -99,6 +99,6 @@ function Page(): UIElement {
 
 ## 可运行示例和验证
 
-组件实验室的 `07 · Hooks / HOC / Slots` 使用同一段代码验证以上形式：点击自定义 Hook 和 HOC 的按钮后，再触发父组件更新，两个计数均应保留。源码见 [composition-showcase.tsx](../examples/components/composition-showcase.tsx)。
+组件实验室的 `07 · Hooks / HOC / Slots` 使用同一段代码验证以上形式：点击自定义 Hook 和 HOC 的按钮后，再触发父组件更新，两个计数均应保留。源码见 [composition-showcase.tsx](../../examples/components/composition-showcase.tsx)。
 
 回归入口为 `npm run test:framework`、原生 Core 的 `node scripts/test-native-core.mjs .verification/core-native/probe components`，以及安装最新构建后的 `node scripts/test-harmony-demo.mjs <device>`。目标平台 AOT 构建仍是确认 scriptc 支持边界的必要步骤。

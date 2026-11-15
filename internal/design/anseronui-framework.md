@@ -1,8 +1,8 @@
 # AnseronUI：基于 scriptc 的跨端 UI 框架技术方案
 
-> 本文保留设计演进和调研依据，提案中的 API 不代表当前已实现接口。当前实现请阅读[架构与原理](../../docs/architecture.md)和[能力清单](../../docs/capabilities.md)。
+> 本文保留设计演进和调研依据，提案中的 API 不代表当前已实现接口。当前实现请阅读[架构与原理](../../docs/architecture/architecture.md)和[能力清单](../../docs/guides/capabilities.md)。
 
-日期：2026-11-06。修订：v5（2026-11-07），在 v4 的 Promise/async-await、无 JS 引擎、热更新扩展接口和 React 风格开发模型基础上，正式引入项目内适配的 Flexily 布局引擎。状态：本文是目标方案；布局包、基础 SDK/Core、Web 参考渲染器和 Android/iOS 渲染模块已开始实施，该阶段的实际验证以[实施状态快照](./framework-implementation-status.md)为准，后续已实现的 async embedding 和三端宿主见当前[公开文档](../../docs/README.md)。框架于 2026-11-08 正式命名为 **AnseronUI**，本地包名统一使用 `@anseronui/*`，尚未发布。
+日期：2026-11-06。修订：v5（2026-11-07），在 v4 的 Promise/async-await、无 JS 引擎、热更新扩展接口和 React 风格开发模型基础上，正式引入项目内适配的 Flexily 布局引擎。状态：本文是目标方案；布局包、基础 SDK/Core、Web 参考渲染器和 Android/iOS 渲染模块已开始实施，该阶段的实际验证以[实施状态快照](framework-implementation-status.md)为准，后续已实现的 async embedding 和三端宿主见当前[公开文档](../../docs/README.md)。框架于 2026-11-08 正式命名为 **AnseronUI**，本地包名统一使用 `@anseronui/*`，尚未发布。
 
 迁移记录：2026-11-07 按用户要求迁至 AnseronUI 工作区，本文仍保留 v3 的设计结论与原调研日期。本文未单独注明归属的源码/测试/公共文档路径（如 `packages/`、`tests/`、`docs/`、`internal/compatibility/`）均相对于调研时独立的 scriptc 源码仓库；本方案、需求记录及后续框架工作的根目录为 AnseronUI。
 
@@ -204,7 +204,7 @@ scriptc 当前源码可解析/保留 TSX AST（`frontend/ts7/source-parser.ts` �
 
 逻辑单位由各端映射为 iOS point、Android dp、Web CSS pixel。需注意当前 Flexily 内部按整数网格取整，尚不支持按设备像素比例选择连续布局模式；此前“只在渲染边界取整”的目标尚未由该引擎满足。高 DPI/小数坐标政策是后续明确的适配事项，不能让各端独立重排结构布局来掩盖差异。
 
-选择共享 TS 布局可共用 scriptc 静态编译与 Node 差分验证，且避免当前 library 模式 Native FFI 对直接接 Yoga 的限制。最新验证以 scriptc 0.4.8 编译实际引入的源码：两组共 1017 行布局输出在原版 Node、适配版 Node、native 间逐字节一致；额外 engine 用例通过 native executable、C 宿主调用静态库与 Node WASI 执行 Wasm reactor。上游 Node 行为回归 2648 项通过、1 项跳过。详细范围、来源和复现命令见[适配报告](./flexily-scriptc-adaptation.md)与[布局包说明](../../packages/layout/README.md)。Android/iOS library、浏览器 WASI/DOM adapter、异步文本缓存、长期内存和端上性能仍是 P0 验收项；不能以当前结果声称完整跨端框架已经可用。
+选择共享 TS 布局可共用 scriptc 静态编译与 Node 差分验证，且避免当前 library 模式 Native FFI 对直接接 Yoga 的限制。最新验证以 scriptc 0.4.8 编译实际引入的源码：两组共 1017 行布局输出在原版 Node、适配版 Node、native 间逐字节一致；额外 engine 用例通过 native executable、C 宿主调用静态库与 Node WASI 执行 Wasm reactor。上游 Node 行为回归 2648 项通过、1 项跳过。详细范围、来源和复现命令见[适配报告](flexily-scriptc-adaptation.md)与[布局包说明](../../packages/layout/README.md)。Android/iOS library、浏览器 WASI/DOM adapter、异步文本缓存、长期内存和端上性能仍是 P0 验收项；不能以当前结果声称完整跨端框架已经可用。
 
 ### 6.1 文本与固有尺寸
 

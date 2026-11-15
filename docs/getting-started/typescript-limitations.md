@@ -36,9 +36,9 @@ AnseronUI 不是把任意 TypeScript 原样交给 JavaScript 引擎运行。共�
 | 模块顶层调用 `useState/useServices` | 报 `HOOK_OUTSIDE_COMPONENT` | 在函数组件或自定义 Hook 内获取 |
 | React 专用组件/插件 | 不会因为语法相似就兼容 | 使用 `@anseronui/ui` API，先移植依赖的运行时语义 |
 
-自定义 Hook、具名组件 HOC、组件作为属性、JSX 插槽和 render prop 已有示例及回归验证，见[自定义 Hook 与组件组合](component-composition.md)。HOC 返回的具名组件具有独立的 Hook 检查作用域；普通嵌套回调仍不能调用 Hook。属性需显式转发，不能照搬带 JSX spread 的 React HOC。
+自定义 Hook、具名组件 HOC、组件作为属性、JSX 插槽和 render prop 已有示例及回归验证，见[自定义 Hook 与组件组合](../guides/component-composition.md)。HOC 返回的具名组件具有独立的 Hook 检查作用域；普通嵌套回调仍不能调用 Hook。属性需显式转发，不能照搬带 JSX spread 的 React HOC。
 
-这些是本项目 [UI compiler](../packages/ui-compiler/src/index.ts) 的约束，不等于 scriptc 原生 JSX 功能的全部范围。JSX 属性展开受限，也不等于所有普通对象展开都被禁用。
+这些是本项目 [UI compiler](../../packages/ui-compiler/src/index.ts) 的约束，不等于 scriptc 原生 JSX 功能的全部范围。JSX 属性展开受限，也不等于所有普通对象展开都被禁用。
 
 ```tsx
 import { Button, View, useState } from "@anseronui/ui";
@@ -85,7 +85,7 @@ export function itemCount(value: string | string[]): number {
 - 运行时计算的 `import(path)` 不是动态加载新页面的机制。上游支持的部分字面量 import 针对已纳入编译图的模块，仍需经过 AnseronUI 的 staging 和当前 library 模式检查。
 - 不依赖 Node `vm`、`.node` 原生 addon 或 Node island 在共享 Core 内加载新实现。平台能力通过 Module/原生组件扩展。
 
-因此，新增 TSX 页面要加入配置并编译；仅把文件拷贝到 App 资源目录不会让它执行。业务包如何独立编译、何时可复用 Framework Core，见[页面与 Core 合包](core-bundles.md)。
+因此，新增 TSX 页面要加入配置并编译；仅把文件拷贝到 App 资源目录不会让它执行。业务包如何独立编译、何时可复用 Framework Core，见[页面与 Core 合包](../architecture/core-bundles.md)。
 
 ## 网络、计时器和 async 的特别说明
 
@@ -99,7 +99,7 @@ export function itemCount(value: string | string[]): number {
 | DOM 操作 | Web Renderer 或 Web Module 内实现 | 共享页面访问 `window`、`document`、HTMLElement |
 | 动画 | `animation` 或节点 `animate()` | 在 Core 内自行用浏览器帧时钟逐帧驱动 |
 
-全局 `setTimeout` / `clearTimeout` 是 AnseronUI 的编译适配，并非放开 scriptc 原生 Node timer 实现；详见[计时器](timers.md)。显式导入同名框架函数也可使用，局部/其他库的同名绑定不会改写。
+全局 `setTimeout` / `clearTimeout` 是 AnseronUI 的编译适配，并非放开 scriptc 原生 Node timer 实现；详见[计时器](../guides/timers.md)。显式导入同名框架函数也可使用，局部/其他库的同名绑定不会改写。
 
 生成器函数、Node 网络/流/进程/worker 等仍受 library 准入限制；Wasm 宿主也没有开放完整文件系统或 Node 环境。本项目统一把这些副作用交给宿主。
 
@@ -151,4 +151,4 @@ function LoadMessage() {
 
 框架根 `typecheck:framework` 默认包含 `examples/`，不自动覆盖任意新建 `apps/` 目录。业务应用如需独立类型检查，应自行维护包含对应页面的 tsconfig；CLI 的 `check` 主要验证配置，不是 TypeScript 或 AOT 检查。
 
-本页依据的项目文件：[UI compiler](../packages/ui-compiler/src/index.ts)、[业务 profile](../packages/core/native/business.profile.json)、[async 补丁](../internal/toolchain/async-embedding.patch)、[编译器准备](../scripts/prepare-compiler.mjs)、[Wasm 宿主](../packages/render-web/src/wasm-runtime.ts)。准备编译器后还可核对本地 `library/prepare.ts` 的 `static-only` 与 `library/ir-policy.ts` 的准入规则。
+本页依据的项目文件：[UI compiler](../../packages/ui-compiler/src/index.ts)、[业务 profile](../../packages/core/native/business.profile.json)、[async 补丁](../../internal/toolchain/async-embedding.patch)、[编译器准备](../../scripts/prepare-compiler.mjs)、[Wasm 宿主](../../packages/render-web/src/wasm-runtime.ts)。准备编译器后还可核对本地 `library/prepare.ts` 的 `static-only` 与 `library/ir-policy.ts` 的准入规则。

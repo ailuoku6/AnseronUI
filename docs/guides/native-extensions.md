@@ -155,13 +155,13 @@ function Editor(props: { ref?: RefTarget<EditorHandle> }) {
 
 通过 `anseronui create` 生成的独立 App 支持 npm 原生插件：在包的 `package.json` 声明 `anseronui.schemaVersion: 1`、共享 TS 入口及各平台工厂。setup/build 扫描生产依赖并生成 `.anseronui/plugins/`，将工厂返回的模块和组件注入宿主。注册表仍遵守本文的异步调用、取消、JSON 载荷和组件生命周期约束。
 
-插件清单、权限配置、发布命令和当前自动接入范围见[README：发布带原生能力的 npm 包](../README.md#发布带原生能力的-npm-包)，平台示例见 [`examples/native-plugin`](../examples/native-plugin)。已有原生工程仍可直接手动注入本文所示的扩展注册表。
+插件清单、权限配置、发布命令和当前自动接入范围见[通过 npm 分发与自动注册](#通过-npm-分发与自动注册)，平台示例见 [`examples/native-plugin`](../../examples/native-plugin)。已有原生工程仍可直接手动注入本文所示的扩展注册表。
 
 ## macOS AppKit 插件
 
 macOS 平台使用插件清单 `schemaVersion: 2`，新增 `macos: { sources: ["macos"], factory: "MyMacPlugin", frameworks: ["AppKit"] }`。新 SDK 同时支持旧 schema 1，但旧插件不自动获得 macOS 支持。`MacOSPlatformExtensions` 和 `MacOSNativeComponent` 使用 AppKit NSView；Foundation 业务服务可以与 iOS 共用，UIKit 组件和工厂需要单独实现。
 
-参考 [macOS Renderer](../packages/render-macos/README.md) 与 `examples/native-plugin/macos/DevicePlugin.swift`。
+参考 [macOS Renderer](../../packages/render-macos/README.md) 与 `examples/native-plugin/macos/DevicePlugin.swift`。
 
 标准 HTTP、存储、设备信息、权限、定位、分享、文件传输等无需自行注册，见[标准系统能力与用例](native-services.md)。标准方法由框架实现优先处理，自定义扩展请使用自己的命名空间。
 

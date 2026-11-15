@@ -1,6 +1,6 @@
 # 框架开发与仓库示例
 
-本文面向修改 AnseronUI 框架的贡献者。创建独立 App、编写页面和运行应用，请从[根 README](../README.md)开始。以下命令均在框架仓库根目录执行。
+本文面向修改 AnseronUI 框架的贡献者。创建独立 App、编写页面和运行应用，请从[根 README](../../README.md)开始。以下命令均在框架仓库根目录执行。
 
 ## 开发环境与依赖
 
@@ -10,7 +10,7 @@
 - 编译器：仓库包含固定版本的 [scriptc](https://github.com/vercel-labs/scriptc) 0.4.8 及异步 embedding 适配；首次准备会安装 npm 依赖。
 - iOS：完整 Xcode 和已选择的 Developer 目录；部署目标为 iOS 15+。
 - Android：JDK 17、Android SDK（compileSdk 35）、NDK；应用最低 Android API 26。
-- macOS：Apple Silicon、macOS 15+ 构建主机与完整 Xcode；产物声明最低 macOS 14，兼容性验证边界见 [AppKit Renderer](../packages/render-macos/README.md)。
+- macOS：Apple Silicon、macOS 15+ 构建主机与完整 Xcode；产物声明最低 macOS 14，兼容性验证边界见 [AppKit Renderer](../../packages/render-macos/README.md)。
 - Web/Wasm：同一套 [scriptc](https://github.com/vercel-labs/scriptc)/WASI 编译链。Wasm 相关编译需要可用的 Zig 工具链。
 
 在框架仓库根目录执行：
@@ -84,7 +84,7 @@ npm run test:macos
 
 「组件」页使用全部八个基础组件，包含计数、禁用按钮、输入、富文本、触摸传播、离线图片和视频；页面内还可以切换「布局样式」和「动画」。悬浮球由共享 TSX 和触摸事件实现。「扩展」页演示 Module、自定义原生开关和 ref。
 
-示例媒体在 `examples/components/assets/`，通过 `asset://showcase.png` 和 `asset://showcase.mp4` 使用。业务自己的资源需要按宿主打包规则加入，详见[能力清单](capabilities.md)。
+示例媒体在 `examples/components/assets/`，通过 `asset://showcase.png` 和 `asset://showcase.mp4` 使用。业务自己的资源需要按宿主打包规则加入，详见[能力清单](../guides/capabilities.md)。
 
 ## 检查与验证
 
@@ -108,12 +108,26 @@ npm run build:core:wasm
 npm run test:core:wasm
 ```
 
-`test:layout` 会在忽略的 `.verification/` 目录获取固定版本的上游参照，首次需要网络，详见[布局验证说明](../packages/layout/README.md)。原生/Wasm 测试要求先构建对应 Core；iOS UI 测试和 Android `connectedDebugAndroidTest` 还依赖可用设备、SDK 和 HTTP fixture。历史验证记录不代表每次修改都已重新跑过全量设备测试。
+`test:layout` 会在忽略的 `.verification/` 目录获取固定版本的上游参照，首次需要网络，详见[布局验证说明](../../packages/layout/README.md)。原生/Wasm 测试要求先构建对应 Core；iOS UI 测试和 Android `connectedDebugAndroidTest` 还依赖可用设备、SDK 和 HTTP fixture。历史验证记录不代表每次修改都已重新跑过全量设备测试。
 
+## 打包与发布
+
+`npm pack` 运行 `prepack`，按根 `package.json` 的文件清单生成 `dist/sdk`。发布包包含 CLI、框架源码、编译器、runtime、原生头文件、模板和第三方声明。它不包含 Git 历史、测试或本机产物。`prepublishOnly` 会运行类型检查、工具测试、构建输入测试和打包测试。
+
+打包前运行发布检查：
+
+```sh
+npm run test:tooling
+npm run test:build
+npm run test:package
+npm pack --dry-run
+```
+
+AnseronUI 自有代码采用 MIT。第三方许可见根目录 `THIRD_PARTY_NOTICES.md`。npm 自动发布工作流见下文。消费者工程可以用 `--package <npm版本或tarball路径>` 指定 SDK 版本或本地 tarball。
 
 ## 自动发布到 npm
 
-[Publish 工作流](../.github/workflows/publish.yml) 使用 GitHub 托管的 Ubuntu runner 和 Node.js 24。推送 `v*` 标签时自动触发，也可以在仓库 Actions → Publish → Run workflow 手动触发。标签触发时，标签去掉 `v` 后必须与根目录 `package.json` 的版本完全相同。
+[Publish 工作流](../../.github/workflows/publish.yml) 使用 GitHub 托管的 Ubuntu runner 和 Node.js 24。推送 `v*` 标签时自动触发，也可以在仓库 Actions → Publish → Run workflow 手动触发。标签触发时，标签去掉 `v` 后必须与根目录 `package.json` 的版本完全相同。
 
 工作流执行 `npm ci --ignore-scripts`，再通过 `npm publish --access public --provenance` 发布根目录的 `anseronui` 包。发布命令自动执行现有 `prepublishOnly` 检查和 `prepack` 打包；任一检查失败都会终止发布。它不构建 iOS/Android 应用，也不发布各 workspace 包。
 

@@ -1,58 +1,55 @@
 # AnseronUI 文档
 
-AnseronUI 是一个使用 TypeScript/TSX 编写共享页面、通过 AOT Core 在 iOS、Android、Web 和 macOS 上渲染的跨端 UI 框架。业务代码写在 TSX 中，平台负责视图、文本测量、网络、计时器和系统能力。
+从[App 开发手册](getting-started/app-development.md)开始。它按实际开发顺序介绍工程、页面、路由、系统服务和平台验证。
 
-## 从这里开始
+## 学习路径
 
-| 文档 | 内容 |
-| --- | --- |
-| [根 README](../README.md) | 创建 App、编写 TSX 页面、运行各平台和日常开发命令 |
-| [能力清单](capabilities.md) | 组件、属性、事件、Hooks、动画、路由、扩展和平台支持 |
-| [自定义 Hook 与组件组合](component-composition.md) | 自定义 Hook、高阶组件、组件属性、JSX 插槽与 render prop |
-| [架构与原理](architecture.md) | 分层设计、编译运行链路、协议、生命周期、并发模型和 `.gitignore` |
-| [页面与 Core 合包](core-bundles.md) | 页面为何触发重编、实例与二进制的区别、独立编译方向 |
-| [TS/TSX 编写限制](typescript-limitations.md) | scriptc 限制、JSX/Hook 规则、Node 兼容表的适用范围 |
-| [应用创建与接入](tooling.md) | `create`、`integrate`、`check`、`build` 命令 |
-| [应用图标](app-icons.md) | 多平台图标、iOS 深色／着色／Icon Composer、Android 自适应／主题／night 配置 |
-| [原生鸿蒙支持](harmonyos.md) | HarmonyOS 6.0.1/API 21 Stage 应用构建、渲染和模拟器验收 |
-| [可变高度虚拟列表](virtual-list.md) | 长列表、真实行高测量、滚动锚点与定位 |
-| [页面生命周期与内存](page-lifecycle.md) | 显示/隐藏、资源暂停、保活容量与隐藏页面回收 |
-| [渲染链路性能](performance.md) | 分阶段统计、JS/native/Wasm 基准、真实 UI 与回归预算 |
-| [页面路由](routing.md) | `useRouter()`、JSON 参数与页面状态保留 |
-| [系统返回键](back-press.md) | Android、iOS、Web 的返回键消费流程 |
-| [原生扩展](native-extensions.md) | Module、原生组件、事件和 ref |
-| [颜色、夜间模式与阴影](styles.md) | `dm` 颜色覆盖、富文本与占位文字、外阴影、裁剪和主题刷新 |
-| [动画](animations.md) | 声明式动画、ref 动画、取消和平台帧时钟 |
-| [布局引擎](../packages/layout/README.md) | Flexily 适配、布局节点和测量约束 |
-| [Android Renderer](../packages/render-android/README.md) | Android 容器、生命周期和底层 Renderer |
-| [macOS Renderer](../packages/render-macos/README.md) | AppKit 构建、容器、能力与当前验证边界 |
-| [iOS Renderer](../packages/render-ios/README.md) | iOS 容器、生命周期和底层 Renderer |
+1. [创建第一个 App](getting-started/app-development.md)：从框架仓库创建工程，编写页面并运行。
+2. [组件、布局与事件](guides/capabilities.md)：选择组件，组织界面并处理输入。
+3. [主题与样式](guides/styles.md)：设置颜色、文字、阴影和夜间模式。
+4. [页面与导航](guides/routing.md)：注册页面、传递参数和返回。
+5. [异步与生命周期](guides/page-lifecycle.md)：管理订阅、计时器、页面保留和回收。
+6. [系统服务](guides/native-services.md)：调用网络、存储、文件及设备 API。
+7. [平台扩展](guides/native-extensions.md)：添加原生模块、组件或 npm 插件。
+8. [构建与发布](getting-started/tooling.md)：运行设备、构建 Release 和配置签名。
 
-## 贡献者与历史记录
+## 按任务查阅
 
-- [鸿蒙支持技术设计](../internal/design/harmonyos-native-support.md)：OHOS 工具链、ArkUI Native Renderer、服务/生命周期和验收边界；
-- [框架开发与仓库示例](framework-development.md)：框架依赖、仓库示例和修改后的验证命令；
-- [框架技术方案](../internal/design/anseronui-framework.md)：设计目标和决策历史；
-- [macOS 与鸿蒙支持方案](../internal/design/macos-harmony-support.md)：AppKit 实现记录及鸿蒙平台的推荐架构、工具链改造和分阶段验收；
-- [阶段实施记录](../internal/design/framework-implementation-status.md)：早期框架验证快照，不等同最新测试结果；
-- [Flexily 静态编译适配](../internal/design/flexily-scriptc-adaptation.md)：适配点和证据边界；
-- [布局库调研](../internal/design/ts-layout-libraries-research.md)：历史选型依据；
-- [布局验证原型](../internal/experiments/flexily-scriptc/README.md)：历史探针，不是当前框架入口。
+### 界面
 
-## 计时器
+- [组件与界面 API 参考](guides/capabilities.md)
+- [自定义 Hook 与组件组合](guides/component-composition.md)
+- [事件与手势](guides/interactions.md)
+- [动画](guides/animations.md)
+- [应用图标](guides/app-icons.md)
+- [可变高度虚拟列表](guides/virtual-list.md)
+- [系统返回键](guides/back-press.md)
+- [跨端计时器](guides/timers.md)
 
-[跨端计时器](timers.md) 说明 `setTimeout`、取消、页面清理与 `useTimers()`。
+### 平台
 
-## 文档范围
+- [HarmonyOS](platforms/harmonyos.md)：API 支持、构建、服务与验证范围。
+- Renderer 接入：[iOS](../packages/render-ios/README.md)、[Android](../packages/render-android/README.md)、[macOS](../packages/render-macos/README.md)、[HarmonyOS](../packages/render-harmony/README.md)。
+- [布局引擎](../packages/layout/README.md)：Flexily 适配和布局包接口。
 
-根目录和 `docs/` 中的文档描述 AnseronUI 当前实现。`internal/design/` 保存设计记录和调研证据，适合贡献者了解决策历史；它不替代公开 API 文档。
+### 问题排查
 
-主仓库内的 `internal/toolchain/scriptc/` 源码保留 [scriptc](https://github.com/vercel-labs/scriptc) 上游原文，不在框架中文化范围内。
+- [TypeScript 与 TSX 限制](getting-started/typescript-limitations.md)：语法、运行时和依赖边界。
+- [DevTools](diagnostics/devtools.md)：调试服务和检查数据。
+- [性能验证](diagnostics/performance.md)：基准、采样和回归检查。
 
-`packages/flexily/` 是基于上游 Flexily 0.8.5 的保留源码和适配副本。其上游 README、CHANGELOG、CONTRIBUTING 和 MIT 许可文件保留原文，以便追溯来源；AnseronUI 的使用方式以本仓库的[布局引擎文档](../packages/layout/README.md)和[架构文档](architecture.md)为准。
+## 框架原理与贡献
 
-## 当前实现边界
+- [架构与运行原理](architecture/architecture.md)：代码分层、编译执行、协议和宿主职责。
+- [Core 与业务包](architecture/core-bundles.md)：编译边界、缓存和产物。
+- [框架开发与仓库示例](contributing/framework-development.md)：本地开发、验证和发布流程。
+- [仓库结构与维护](contributing/repository-workflow.md)：源码归属、生成文件和测试选择。
+- [内部设计、实验与验证记录](../internal/README.md)：维护资料，不定义公开 API。
 
-当前版本可以构建 iOS 模拟器/设备产物、Android APK、Web/Wasm 应用、原生 AppKit macOS `.app` 和 HarmonyOS Stage HAP。鸿蒙最低版本是 HarmonyOS 6.0.1/API 21；模拟器验收、当前组件/服务范围及缺失项见[鸿蒙支持文档](harmonyos.md)。macOS 的系统输入、无障碍和旧系统一致性仍需专项验证。框架尚未包含热更新、完整发布签名自动化、深链参数、跨进程页面恢复、完整无障碍语义和通用插件生态。
+## 文档职责
 
-- [标准系统能力与用例](native-services.md)：HTTP、存储、系统交互、环境订阅、权限定位、文件选择与传输、推送、后台任务、BLE 与 NFC。
+- 根目录 [README](../README.md) 负责项目介绍和快速入口。
+- 本目录负责 App 开发手册、专题指南、平台说明和框架原理。
+- `packages/*/README.md` 负责对应包的 API、宿主接入和专项测试。
+- `internal/` 负责设计依据、实验过程和环境相关的验证记录。
+- `internal/toolchain/scriptc/` 与 `packages/flexily/` 保留上游文档原文。使用 AnseronUI 时，以本目录和 `packages/layout/README.md` 为准。
