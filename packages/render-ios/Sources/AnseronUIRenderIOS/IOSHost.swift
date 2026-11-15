@@ -280,6 +280,7 @@ private final class CoreWorker {
     private var hostMetrics: [String: Double] = [:]
     private func metric(_ key: String, _ value: Double) { if profiling { hostMetrics[key, default: 0] += value } }
     public var onDiagnostic: ((String, String) -> Void)?
+    public var onDiagnosticDetails: (([String: Any]) -> Void)?
     public var onFailure: ((Error) -> Void)?
     private let worker: CoreWorker
     private var started = false
@@ -459,7 +460,7 @@ private final class CoreWorker {
             var values = payload["values"] as? [String: Double] ?? [:]
             hostMetrics.forEach { values[$0.key] = $0.value }
             onRuntimeStats?(values)
-        case "Diagnostic": onDiagnostic?(payload["code"] as? String ?? "UNKNOWN", payload["message"] as? String ?? "")
+        case "Diagnostic": onDiagnosticDetails?(payload); onDiagnostic?(payload["code"] as? String ?? "UNKNOWN", payload["message"] as? String ?? "")
         case "SurfaceDisposed": cancelExtensions(); renderer.clear()
         default: onFailure?(HostError.invalidOutput)
         }

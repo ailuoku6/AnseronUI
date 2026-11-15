@@ -20,11 +20,17 @@
     call.durationMs = Date.now() - call.ts;
     if (ok) call.result = value.slice(0, 4096); else call.error = value.slice(0, 4096);
   }
-  private devtoolsDiagnostic(id: number, code: string, message: string): void {
+  private devtoolsDiagnostic(id: number, code: string, message: string, stack?: string): void {
     let logs = this.devtoolsLogs.get(id);
     if (!logs) { logs = []; this.devtoolsLogs.set(id, logs); }
-    logs.push({ seq: (logs.at(-1)?.seq ?? 0) + 1, level: 'error', tag: code, args: [message.slice(0, 4096)], ts: Date.now() });
+    logs.push({ seq: (logs.at(-1)?.seq ?? 0) + 1, level: 'error', tag: code, args: [message.slice(0, 4096), ...(stack ? [stack.slice(0, 32768)] : [])], ts: Date.now() });
     if (logs.length > 200) logs.shift();
+    // Leave room for the tree and network records in the bounded snapshot.
+    let size = 0;
+    for (let i = logs.length - 1; i >= 0; i--) {
+      for (const value of logs[i].args) size += value.length;
+      if (size > 131072) { logs.splice(0, i + 1); break; }
+    }
   }
   private devtoolsSessions = new Map<number, { id: string; owner: ServiceSlot; seq: number; interval: number; ids: Map<string, number>; nextId: number }>();
   private devtoolsValue(value: unknown, depth = 0): unknown {

@@ -26,6 +26,10 @@ export class BlockBuilder {
   private tempCounter = 0;
   private labelCounter = 0;
   debugLocation: string | null = null;
+  sourceFrameName: string | null = null;
+  sourceFrameLocation: string | null = null;
+  sourceFrameTextSlot: string | null = null;
+  sourceFrameConstant: ((text: string) => string) | null = null;
   /** The body is a synchronous IR function: the active exception cell is one
    * value from entry to every pending check. Other builders (adapters,
    * runtime helpers) keep loading it at each check. */
@@ -65,6 +69,16 @@ export class BlockBuilder {
 
   line(s: string): void {
     if (this.cur.term === null) {
+      if (
+        this.sourceFrameTextSlot !== null &&
+        this.sourceFrameLocation !== null &&
+        this.sourceFrameConstant !== null &&
+        /\bcall\b/.test(s) &&
+        !s.startsWith(";")
+      )
+        this.cur.lines.push(
+          `  store ptr ${this.sourceFrameConstant(this.sourceFrameLocation)}, ptr ${this.sourceFrameTextSlot}`,
+        );
       const marked = this.loopDepth > 0 && s.startsWith(DYN_RELEASE_CALL) ? s + LOOP_SITE : s;
       this.cur.lines.push(`  ${this.withDebugLocation(marked)}`);
     }
@@ -111,6 +125,15 @@ export class BlockBuilder {
         this.resumeUnwind(exception);
         return;
       }
+      if (
+        this.sourceFrameTextSlot !== null &&
+        this.sourceFrameLocation !== null &&
+        this.sourceFrameConstant !== null &&
+        /\b(?:call|invoke)\b/.test(s)
+      )
+        this.cur.lines.push(
+          `  store ptr ${this.sourceFrameConstant(this.sourceFrameLocation)}, ptr ${this.sourceFrameTextSlot}`,
+        );
       this.cur.term = `  ${this.withDebugLocation(s)}`;
     }
   }

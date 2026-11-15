@@ -78,7 +78,7 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
   private readonly nativeServices: BrowserNativeServices;
   readonly runtime: R;
   readonly renderer: DOMRenderer;
-  readonly diagnostics: { code: string; message: string }[] = [];
+  readonly diagnostics: { code: string; message: string; stack?: string; errorName?: string; buildId?: string }[] = [];
   private sequence = 0;
   private outputSequence = 0;
   private ready = false;
@@ -257,7 +257,9 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
     } else if (payload.type === "RuntimeStats") {
       const waiter = this.profileWaiter; this.profileWaiter = null; waiter?.resolve(payload.values);
     } else if (payload.type === "Diagnostic") {
-      this.diagnostics.push({ code: payload.code, message: payload.message });
+      this.diagnostics.push({ code: payload.code, message: payload.message, stack: payload.stack, errorName: payload.errorName, buildId: payload.buildId });
+      if (this.diagnostics.length > 200) this.diagnostics.shift();
+      try { this.extensions.onDiagnosticDetails?.(payload); } catch { /* Collection cannot interrupt rendering. */ }
     }
   }
   private completeModule(requestId: number, ok: boolean, value: string): void {

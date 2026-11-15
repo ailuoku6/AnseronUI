@@ -13,7 +13,7 @@ const directories = [
 const files = [
   'LICENSE', 'THIRD_PARTY_NOTICES.md',
   'docs/guides/app-icons.md', 'docs/guides/styles.md', 'docs/guides/virtual-list.md', 'docs/guides/page-lifecycle.md',
-  'docs/diagnostics/devtools.md', 'docs/diagnostics/performance.md',
+  'docs/diagnostics/devtools.md', 'docs/diagnostics/performance.md', 'docs/diagnostics/error-stacks.md',
   'packages/render-macos/Package.swift', 'packages/flexily/LICENSE', 'packages/render-ios/Package.swift',
   'packages/render-android/src/main/AndroidManifest.xml',
   'internal/toolchain/build-library.mjs', 'internal/toolchain/harmony-api21.patch', 'docs/platforms/harmonyos.md', 'internal/toolchain/async-embedding.patch', 'internal/toolchain/scriptc.vendor.json',

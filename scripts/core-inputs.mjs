@@ -8,6 +8,7 @@ export const coreSourceDirs = config => [
 ];
 
 const buildInputs = [
+  "packages/ui-compiler/src/",
   'packages/devtools/instrumentation/index.mjs', 'packages/devtools/instrumentation/runtime.inc',
   'scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs',
   'scripts/prepare-compiler.mjs', 'internal/toolchain/build-library.mjs',

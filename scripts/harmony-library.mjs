@@ -33,7 +33,7 @@ rmSync(runtime, { recursive: true, force: true });
 cpSync(runtimeSrcDir(), runtime, { recursive: true });
 cpSync(join(runtimeSrcDir(), '../vendor'), join(out, 'vendor'), { recursive: true });
 run('patch', ['--batch', '-p1', '-d', runtime, '-i', fileURLToPath(new URL('../internal/toolchain/harmony-api21.patch', import.meta.url))]);
-const ll = emitLlvmModule(prepared.mod, { targetTriple: 'aarch64-linux-ohos', pointerBits: 64, objectAudit: false, inlineRc: 'release' });
+const ll = emitLlvmModule(prepared.mod, { sourceStackSources: prepared.sourceTexts, targetTriple: 'aarch64-linux-ohos', pointerBits: 64, objectAudit: false, inlineRc: 'release' });
 writeFileSync(join(out, 'entry.ll'), ll);
 const flags = ['--target=aarch64-linux-ohos', `--sysroot=${join(sdk, 'sysroot')}`, '-O2', '-fPIC', '-ffunction-sections', '-fdata-sections', '-fno-strict-aliasing', '-fno-math-errno', '-Wno-deprecated-declarations', '-D_GNU_SOURCE', '-DSCR_LIB',
   ...(profile.asyncEmbedding ? ['-DSCR_ASYNC_EMBEDDING'] : []),

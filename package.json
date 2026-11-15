@@ -75,7 +75,8 @@
     "test:harmony:demo": "node scripts/test-harmony-demo.mjs",
     "build:devtools": "tsc -p packages/devtools/ui/tsconfig.json && vite build --config packages/devtools/ui/vite.config.ts",
     "dev:devtools": "npm run build:devtools && vite --config packages/devtools/test/fixture/vite.config.ts",
-    "test:devtools": "node --import tsx --test packages/devtools/test/*.test.ts"
+    "test:devtools": "node --import tsx --test packages/devtools/test/*.test.ts",
+    "test:stacks": "node internal/toolchain/scriptc/packages/compiler/node_modules/typescript/bin/tsc -p internal/toolchain/scriptc/packages/compiler/tsconfig.json && node --import tsx --test scripts/error-stacks.test.mjs"
   },
   "devDependencies": {
     "@types/debug": "4.1.13",
@@ -92,7 +93,7 @@
     "@scriptc/runtime-darwin-arm64": "0.4.8",
     "@scriptc/runtime-wasm32-wasi": "0.4.8"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Create and build AnseronUI apps for iOS, Android, macOS, HarmonyOS and Web from shared TSX pages",
   "license": "MIT",
   "repository": {

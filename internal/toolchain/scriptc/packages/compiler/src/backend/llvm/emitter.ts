@@ -3,6 +3,7 @@
  * Distributed under Apache-2.0; see the scriptc LICENSE and
  * internal/toolchain/async-embedding.patch in the AnseronUI distribution.
  */
+import { SourceLocations } from "../source-locations.js";
 import type { TargetCpu } from "../target-cpu.js";
 import { loopEntryInlines } from "./loop-entry-versions.js";
 import type { FunctionLayout } from "./function-layout.js";
@@ -584,6 +585,8 @@ export interface LlvmTargetOptions {
   timing?: CompilationTiming;
   /** Exact frontend sources for dev-build locations and variable metadata. */
   debugSources?: ReadonlyMap<string, string>;
+  /** Original-source maps for runtime Error.stack, independent of native debug symbols. */
+  sourceStackSources?: ReadonlyMap<string, string>;
   /** Pointer width of the target C ABI. Native targets are 64-bit today. */
   pointerBits?: 32 | 64;
   /** Unions emitted as tagged boxes whatever their arms, for tests of the
@@ -2185,6 +2188,7 @@ export class LlEmitter {
   readonly chainSlots = new Map<string, LlValue>();
   logArgSlots = 0;
   readonly stackTraces: boolean;
+  readonly sourceLocations: SourceLocations | null;
   /** The options this emitter was built with (chunk emitters reuse them). */
   readonly targetOptions: LlvmTargetOptions;
   /** Records the module-level effects of emitting a range of functions,
@@ -2221,7 +2225,12 @@ export class LlEmitter {
     // process computes it (startInt32Slots).
     if (int32Analysis !== null) this.int32SlotsValue = int32Analysis.slots;
     else this.startInt32Slots(dynamicStores);
-    this.stackTraces = observesStacks(mod, this.nodeIndex);
+    const locations =
+      options.sourceStackSources === undefined
+        ? null
+        : new SourceLocations(options.sourceStackSources);
+    this.sourceLocations = locations?.hasOriginalMaps ? locations : null;
+    this.stackTraces = this.sourceLocations !== null || observesStacks(mod, this.nodeIndex);
     this.nullableUnions = new NullableUnions(
       mod,
       options.debugSources === undefined,
@@ -7124,6 +7133,8 @@ export class LlEmitter {
     }
     const previous = this.B.debugLocation;
     this.B.debugLocation = this.debug?.location(s.loc, this.debugScope) ?? null;
+    const previousSource = this.B.sourceFrameLocation;
+    this.B.sourceFrameLocation = this.sourceFrameText(s.loc);
     const loop =
       s.kind === "while" || s.kind === "doWhile" || s.kind === "for" || s.kind === "forOf";
     const builder = this.B;
@@ -7138,6 +7149,7 @@ export class LlEmitter {
       this.emitStmtBody(s);
     } finally {
       this.B.debugLocation = previous;
+      this.B.sourceFrameLocation = previousSource;
       this.int32KindResume = kindResume;
       if (loop) {
         this.loopDepth--;
@@ -8342,8 +8354,22 @@ export class LlEmitter {
     if (span) materializeSplitPiece(this, localId, span);
   }
 
+  sourceFrameText(loc: SrcLoc): string | null {
+    if (this.sourceLocations === null || this.B.sourceFrameName === null) return null;
+    const pos = this.sourceLocations.position(loc);
+    if (pos === null) return null;
+    return `    at ${this.B.sourceFrameName} (${pos.file}:${pos.line}:${pos.column})`;
+  }
+
   emitExpr(e: IrExpr): LlValue {
-    return this.arenas === null ? emitExpr(this, e) : this.emitArenaExpr(e, this.arenas);
+    const builder = this.B;
+    const previous = builder.sourceFrameLocation;
+    builder.sourceFrameLocation = this.sourceFrameText(e.loc) ?? previous;
+    try {
+      return this.arenas === null ? emitExpr(this, e) : this.emitArenaExpr(e, this.arenas);
+    } finally {
+      builder.sourceFrameLocation = previous;
+    }
   }
 
   /** emitExpr when group arenas are planned. Kept out of emitExpr, whose

@@ -123,3 +123,14 @@ test('lineHeight reaches intrinsic and constrained native text measurement', () 
   assert.ok(f.measures.every(options => options.lineHeight === 30));
   assert.equal(f.sent.at(-1).payload.height, 60);
 });
+
+test('diagnostics retain original stacks and collection failures do not suppress the legacy callback', () => {
+  const { host } = fixture();
+  const detail = { code:'EVENT_ERROR', message:'Error: original', stack:'Error: original\n    at onTap (pages/home.tsx:12:7)', errorName:'Error', buildId:'release-1' };
+  let captured, legacy;
+  host.onDiagnosticDetails = value => { captured=value; throw new Error('collector unavailable'); };
+  host.onDiagnostic = (code,message) => { legacy={code,message}; };
+  host.output({ type:'Diagnostic', ...detail });
+  assert.deepEqual(captured,detail);
+  assert.deepEqual(legacy,{code:detail.code,message:detail.message});
+});

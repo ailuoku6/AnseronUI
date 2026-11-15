@@ -40,9 +40,14 @@ export interface Payload {
   consumed?: boolean;
   code?: string;
   message?: string;
+  stack?: string;
+  errorName?: string;
+  buildId?: string;
   commands?: Object[];
   values?: Record<string, number>;
 }
+export interface DiagnosticDetails { code: string; message: string; stack?: string; errorName?: string; buildId?: string }
+
 interface RenderCommand { type: string; nodeId: number; props?: RenderProperties; }
 interface RenderProperties { animation?: string; }
 interface TextProps { fontWeight?: string; fontStyle?: string; numberOfLines?: number; lineHeight?: number; }
@@ -110,6 +115,7 @@ export class HarmonyHost {
   private profiling: boolean = false;
   private hostMetrics: Record<string, number> = {};
   private encoder: util.TextEncoder = new util.TextEncoder();
+  onDiagnosticDetails: (diagnostic: DiagnosticDetails) => void = () => {};
   onDiagnostic: (code: string, message: string) => void = (code: string, message: string) => console.warn('AnseronUI ' + code + ': ' + message);
   router: (method: string, args: ServiceArgs) => Object | null = () => { throw new Error('UNSUPPORTED: router'); };
   extensions: HarmonyExtension[] = [];
@@ -241,7 +247,9 @@ export class HarmonyHost {
         if (this.backWaiter) { const callback = this.backWaiter; this.backWaiter = null; clearTimeout(this.backDeadline); callback(p.consumed === true); }
         break;
       }
-      case 'Diagnostic': this.onDiagnostic(p.code ?? 'UNKNOWN', p.message ?? ''); break;
+      case 'Diagnostic':
+        try { this.onDiagnosticDetails({ code: p.code ?? 'UNKNOWN', message: p.message ?? '', stack: p.stack, errorName: p.errorName, buildId: p.buildId }); } catch (_) {}
+        this.onDiagnostic(p.code ?? 'UNKNOWN', p.message ?? ''); break;
       case 'SurfaceDisposed': this.finish(); break;
       case 'RuntimeStats': {
         const values = p.values ?? {};

@@ -202,6 +202,22 @@ export class BusinessRuntime {
     this.disposed = true;
   }
 
+  private emitError(surface: Surface | { id: number; generation: number }, code: string, error: unknown): void {
+    let message = "Unprintable thrown value";
+    let stack = "";
+    let errorName = "NonErrorThrown";
+    try { message = String(error).slice(0, 4096); } catch {}
+    // Read the original stack, never create a replacement Error in the collector.
+    try {
+      if (error instanceof Error) {
+        errorName = String(error.name).slice(0, 256);
+        const originalStack = error.stack;
+        if (typeof originalStack === "string") stack = originalStack.slice(0, 32768);
+      }
+    } catch {}
+    this.emit(surface, { type: "Diagnostic", code, message, stack, errorName, buildId: this.bundleBuildId });
+  }
+
   private emit(surface: Surface | { id: number; generation: number }, payload: OutputPayload): void {
     const identity = surface.id + ":" + surface.generation;
     const sequence = (this.outputSequences.get(identity) ?? 0) + 1;
@@ -315,9 +331,9 @@ export class BusinessRuntime {
           try {
             const result = withTimerScope(surface.timerScope, timer.callback) as unknown;
             if (result instanceof Promise) result.catch(error => {
-              if (surface.timerScope.active) this.emit(surface, { type: "Diagnostic", code: "TIMER_ERROR", message: String(error) });
+              if (surface.timerScope.active) this.emitError(surface, "TIMER_ERROR", error);
             });
-          } catch (error) { this.emit(surface, { type: "Diagnostic", code: "TIMER_ERROR", message: String(error) }); }
+          } catch (error) { this.emitError(surface, "TIMER_ERROR", error); }
         } else this.emit(surface, { type: "Diagnostic", code: "TIMER_ERROR", message: payload.value });
         return;
       }
@@ -364,7 +380,7 @@ export class BusinessRuntime {
     for (const frame of surface.frames.values()) for (const slot of frame.slots) if (slot.kind === "services") {
       for (const listener of [...slot.pageListeners]) {
         try { withTimerScope(surface.timerScope, () => listener(visible)); }
-        catch (error) { this.emit(surface, { type: "Diagnostic", code: "PAGE_LIFECYCLE_ERROR", message: String(error) }); }
+        catch (error) { this.emitError(surface, "PAGE_LIFECYCLE_ERROR", error); }
       }
     }
   }
@@ -408,10 +424,10 @@ export class BusinessRuntime {
         result = node.events.changeText(event.value);
       }
       if (result instanceof Promise) result.catch(error => {
-        if (this.surfaces.get(surface.id) === surface) this.emit(surface, { type: "Diagnostic", code: "EVENT_REJECTION", message: String(error) });
+        if (this.surfaces.get(surface.id) === surface) this.emitError(surface, "EVENT_REJECTION", error);
       });
     } catch (error) {
-      this.emit(surface, { type: "Diagnostic", code: "EVENT_ERROR", message: String(error) });
+      this.emitError(surface, "EVENT_ERROR", error);
     }
   }
 
@@ -427,7 +443,7 @@ export class BusinessRuntime {
       try {
         if (node.events.backPress()) return true;
       } catch (error) {
-        this.emit(surface, { type: "Diagnostic", code: "BACK_PRESS_ERROR", message: String(error) });
+        this.emitError(surface, "BACK_PRESS_ERROR", error);
       }
     }
     return false;
@@ -457,11 +473,11 @@ export class BusinessRuntime {
         result = callback({ x: event.x!, y: event.y!, pageX: event.pageX!, pageY: event.pageY!, pointerId: event.pointerId!,
           touches: event.touches!, target: target.id, currentTarget: node.id, eventPhase: node.id === target.id ? "target" : capture ? "capture" : "bubble", stopPropagation: () => { stopped = true; } });
       } catch (error) {
-        this.emit(surface, { type: "Diagnostic", code: "EVENT_ERROR", message: String(error) });
+        this.emitError(surface, "EVENT_ERROR", error);
         return;
       }
       if (result instanceof Promise) result.catch(error => {
-        if (this.surfaces.get(surface.id) === surface) this.emit(surface, { type: "Diagnostic", code: "EVENT_REJECTION", message: String(error) });
+        if (this.surfaces.get(surface.id) === surface) this.emitError(surface, "EVENT_REJECTION", error);
       });
     };
     for (const node of path.slice(0, -1)) { invoke(node, true); if (stopped) return; }
@@ -490,7 +506,7 @@ export class BusinessRuntime {
       this.layout(surface, draft);
     } catch (error) {
       surface.pending = null;
-      this.emit(surface, { type: "Diagnostic", code: "RENDER_ERROR", message: String(error) });
+      this.emitError(surface, "RENDER_ERROR", error);
     }
   }
 
@@ -955,8 +971,8 @@ export class BusinessRuntime {
       if (node.events.layout && (!old || !old.events.layout || !sameFrame(old.frame, node.frame))) {
         try {
           const result = withTimerScope(surface.timerScope, () => node.events.layout!({ ...node.frame }));
-          if (result instanceof Promise) result.catch(error => this.emit(surface, { type: "Diagnostic", code: "EVENT_REJECTION", message: String(error) }));
-        } catch (error) { this.emit(surface, { type: "Diagnostic", code: "EVENT_ERROR", message: String(error) }); }
+          if (result instanceof Promise) result.catch(error => this.emitError(surface, "EVENT_REJECTION", error));
+        } catch (error) { this.emitError(surface, "EVENT_ERROR", error); }
       }
     }
     for (const frame of changed) {
@@ -964,7 +980,7 @@ export class BusinessRuntime {
         try {
           const cleanup = withTimerScope(surface.timerScope, hook.setup);
           hook.slot.cleanup = typeof cleanup === "function" ? cleanup : undefined;
-        } catch (error) { this.emit(surface, { type: "Diagnostic", code: "EFFECT_ERROR", message: String(error) }); }
+        } catch (error) { this.emitError(surface, "EFFECT_ERROR", error); }
       }
     }
     const events = surface.deferredEvents;
@@ -978,7 +994,7 @@ export class BusinessRuntime {
 
   private assignRef(surface: Surface, ref: HostNode["ref"], handle: import("@anseronui/ui").NodeHandle | null): void {
     try { withTimerScope(surface.timerScope, () => { if (typeof ref === "function") ref(handle); else if (ref) ref.current = handle; }); }
-    catch (error) { this.emit(surface, { type: "Diagnostic", code: "REF_ERROR", message: String(error) }); }
+    catch (error) { this.emitError(surface, "REF_ERROR", error); }
   }
   private nodeHandle(surface: Surface, nodeId: number): import("@anseronui/ui").NodeHandle {
     const existing = surface.handles.get(nodeId);
@@ -1014,7 +1030,7 @@ export class BusinessRuntime {
 
   private runCleanup(surface: Surface, cleanup: () => void): void {
     try { withTimerScope(surface.timerScope, cleanup); }
-    catch (error) { this.emit(surface, { type: "Diagnostic", code: "EFFECT_CLEANUP_ERROR", message: String(error) }); }
+    catch (error) { this.emitError(surface, "EFFECT_CLEANUP_ERROR", error); }
   }
   private cleanupFrame(surface: Surface, frame: ComponentFrame): void {
     for (const slot of frame.slots) {

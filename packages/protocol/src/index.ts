@@ -50,7 +50,7 @@ export type OutputPayload =
   | { type: "CancelRequest"; requestId: number }
   | { type: "BackPressResult"; consumed: boolean }
   | { type: "SurfaceDisposed" }
-  | { type: "Diagnostic"; code: string; message: string };
+  | { type: "Diagnostic"; code: string; message: string; stack?: string; errorName?: string; buildId?: string };
 
 export interface Envelope<T extends InputPayload | OutputPayload> {
   protocolMajor: number;
@@ -192,7 +192,7 @@ function validPayload(value: Record<string, unknown>): boolean {
     case "InvokeModule": return isU32(value.requestId) && (validString(value.module, 128) && /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(value.module)) && validString(value.method, 128) && validString(value.argument);
     case "CancelRequest": return isU32(value.requestId);
     case "BackPressResult": return typeof value.consumed === "boolean";
-    case "Diagnostic": return validString(value.code, 128) && validString(value.message, 4096);
+    case "Diagnostic": return validString(value.code, 128) && validString(value.message, 4096) && (value.stack === undefined || validString(value.stack, 32768)) && (value.errorName === undefined || validString(value.errorName, 256)) && (value.buildId === undefined || validString(value.buildId, 256));
     default: return false;
   }
 }

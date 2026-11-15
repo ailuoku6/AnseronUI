@@ -1234,8 +1234,10 @@ async function prepareExecutableInput(
     ir: join(opts.outDir, `${stem}.ir.json`),
     llvm: join(opts.outDir, `${stem}.ll`),
   } as const;
-  const debugOptions =
-    opts.optimization === "dev" && !opts.strip ? { debugSources: sourceTexts } : {};
+  const debugOptions = {
+    sourceStackSources: sourceTexts,
+    ...(opts.optimization === "dev" && !opts.strip ? { debugSources: sourceTexts } : {}),
+  };
 
   if (outputKind === "ir") {
     await mkdir(dirname(opts.outPath), { recursive: true });
@@ -2948,6 +2950,7 @@ async function compileLibraryTracked(
   const llvmPath = join(opts.outDir, `${stem}.lib.ll`);
   try {
     const ll = emitLlvmModuleSource(mod, {
+      sourceStackSources: sourceTexts,
       targetTriple: process.env["SCRIPTC_TARGET"] ?? "",
       pointerBits: buildPlatform === "wasi" ? 32 : 64,
       wasi: buildPlatform === "wasi",

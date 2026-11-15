@@ -3,6 +3,7 @@ import { readdir, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { resolve, relative, dirname, join } from 'node:path';
 import { lowerTSX } from '../packages/ui-compiler/src/index.ts';
+import { originalSource, replaceMapped, sourceMapComment } from '../packages/ui-compiler/src/source-map.ts';
 import { coreSourceDirs, coreFingerprint, frameworkFingerprint, businessFingerprint } from './core-inputs.mjs';
 import { lowerTimers } from './lower-timers.mjs';
 const root = resolve('.');
@@ -55,23 +56,30 @@ async function copy(path, outputPath = stagedPath(path)) {
   if(item.isDirectory()) await copy(name, target);
   else if(item.name.endsWith('.ts') || item.name.endsWith('.tsx')) {
    let text=await readFile(join(root,name),'utf8');
+   let mapped = originalSource(text, target);
+   const rewrite = (before, search, replacement, all = false) => {
+    if (before !== mapped.source) throw new Error('Source mapping lost before rewrite: ' + name);
+    mapped = replaceMapped(mapped, search, replacement, all);
+    return mapped.source;
+   };
    const output=join(stage,target.replace(/\.tsx$/,'.ts'));
    if(item.name.endsWith('.tsx')) {
-    const lowered=lowerTSX(text,name,{devtools:devtools.enabled}); if(lowered.diagnostics.length) throw new Error(JSON.stringify(lowered.diagnostics)); text=lowered.source;
+    const lowered=lowerTSX(text,target,{devtools:devtools.enabled}); if(lowered.diagnostics.length) throw new Error(JSON.stringify(lowered.diagnostics)); text=lowered.source; mapped=lowered.mapped;
    }
-   if (mode === 'business' && !(relative(root, absolute).startsWith('packages/'))) text = lowerTimers(text, output);
-   text = instrumentSource(name.replaceAll('\\', '/'), text, devtools);
+   if (mode === 'business' && !(relative(root, absolute).startsWith('packages/'))) { mapped = lowerTimers(text, output, mapped); text = mapped.source; }
+   text = instrumentSource(name.replaceAll('\\', '/'), text, { ...devtools, rewrite });
    if (devtools.enabled && text.includes('__anseronuiDevtoolsLog(') && !name.endsWith('packages/core/src/devtools-log.ts')) {
     const logModule = join(stage, 'packages/core/src/devtools-log.ts');
     let logImport = relative(dirname(output), logModule).replace(/\\/g, '/').replace(/\.ts$/, '.js');
     if (!logImport.startsWith('.')) logImport = './' + logImport;
-    text = `import { __anseronuiDevtoolsLog } from ${JSON.stringify(logImport)};\n` + text;
+    text = rewrite(text, /^/, `import { __anseronuiDevtoolsLog } from ${JSON.stringify(logImport)};\n`);
    }
    for(const [alias,target] of aliases) {
     let rel=relative(dirname(output),join(stage,target)).replace(/\.ts$/,'.js'); if(!rel.startsWith('.')) rel='./'+rel;
-    text=text.replaceAll('"'+alias+'"','"'+rel+'"').replaceAll("'"+alias+"'","'"+rel+"'");
+    text=rewrite(text, '"'+alias+'"','"'+rel+'"', true);
+    text=rewrite(text, "'"+alias+"'","'"+rel+"'", true);
    }
-   await mkdir(dirname(output),{recursive:true});await writeFile(output,text);
+   await mkdir(dirname(output),{recursive:true});await writeFile(output,text + sourceMapComment(mapped));
   }
  }
 }

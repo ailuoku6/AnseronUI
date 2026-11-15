@@ -713,7 +713,7 @@ it('timer callback failures are diagnostics and do not leave a live handle', () 
   h.send({type:'CreateSurface',page:'timers',width:100,height:100});
   const request = h.drain().find(p => p.type === 'InvokeModule')!;
   h.send({type:'ModuleResult',requestId:request.requestId,ok:true,value:''});
-  expect(h.drain()).toContainEqual({type:'Diagnostic',code:'TIMER_ERROR',message:'Error: timer boom'});
+  expect(h.drain()).toContainEqual(expect.objectContaining({type:'Diagnostic',code:'TIMER_ERROR',message:'Error: timer boom', errorName:'Error', buildId:'test-build', stack:expect.stringContaining('timer boom')}));
   h.runtime.dispose();
 });
 
@@ -764,4 +764,19 @@ describe('standard native services', () => {
     h.send({ type: 'ModuleResult', requestId: pending.requestId, ok: false, value: 'UNSUPPORTED: secureStorage' }); h.drain();
     await expect(failure).rejects.toMatchObject({ name: 'NativeServiceError', code: 'UNSUPPORTED' }); h.runtime.dispose();
   });
+});
+
+
+it('preserves the original render error stack and never fabricates one for thrown values', () => {
+  const original = new Error('render origin');
+  original.stack = 'Error: render origin\n    at original (src/page.tsx:12:7)';
+  for (const thrown of [original, 'plain rejection', { toString() { throw new Error('formatter failed'); } }]) {
+    const page = definePage('broken', () => { throw thrown; });
+    const h = harness(page);
+    h.send({ type:'CreateSurface', page:'broken', width:100, height:100 });
+    const diagnostic = h.drain().find(p => p.type === 'Diagnostic');
+    expect(diagnostic).toMatchObject({ type:'Diagnostic', code:'RENDER_ERROR', buildId:'test-build',
+      stack: thrown === original ? original.stack : '', errorName: thrown === original ? 'Error' : 'NonErrorThrown' });
+    h.runtime.dispose();
+  }
 });

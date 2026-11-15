@@ -188,6 +188,7 @@ function equivalentFrontendInput(
     (stale.input.warnings?.length ?? 0) > 0
   )
     return null;
+  if (stale.input.sources.some(([, text]) => text.includes("//# anseronuiSourceMap="))) return null;
   const debugInfo = options.optimization === "dev" && !options.strip;
   const match = frontendInputsSemanticallyMatch(
     stale.probes,
@@ -486,6 +487,7 @@ export function prepareNativeExecutable(
     outputKind === "ir"
       ? []
       : emitLlvmModuleParts(prepared.mod, {
+          sourceStackSources: prepared.sourceTexts,
           targetTriple: toolchain.target.llvmTriple,
           pointerBits: toolchain.target.pointerBits,
           wasi: toolchain.target.platform === "wasi",
@@ -613,6 +615,7 @@ export function prepareNativeLibrary(
   });
   if (!prepared.ok) return prepared;
   const llvm = emitLlvmModuleParts(prepared.mod, {
+    sourceStackSources: prepared.sourceTexts,
     targetTriple: toolchain.target.llvmTriple,
     pointerBits: toolchain.target.pointerBits,
     wasi: toolchain.target.platform === "wasi",

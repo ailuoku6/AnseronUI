@@ -577,12 +577,16 @@ export function emitFunction(emitter: LlEmitter, fn: IrFunction): string {
   // concurrent fibers isolate it.
   if (
     emitter.stackTraces &&
-    !emitter.wasi &&
+    (!emitter.wasi || emitter.sourceLocations !== null) &&
     fn.sourceName !== undefined &&
     !emitter.unframedFunctions.has(fn.name)
   ) {
     B.entryAllocas.push(`%source_frame = alloca { ptr, ptr }`);
-    const frame = emitter.cstr(`    at ${fn.sourceName} (${fn.loc.file})`);
+    B.sourceFrameName = fn.sourceName;
+    const frame = emitter.cstr(
+      emitter.sourceFrameText(fn.loc) ??
+        `    at ${fn.sourceName} (${emitter.sourceLocations?.fileName(fn.loc.file) ?? fn.loc.file})`,
+    );
     if (
       B.excCellInvariant &&
       emitter.mod.lib === undefined &&
@@ -608,6 +612,11 @@ export function emitFunction(emitter: LlEmitter, fn: IrFunction): string {
       B.line(`call void @scr_stack_enter(ptr %source_frame, ptr ${frame})`);
       B.returnEpilogue = `call void @scr_stack_leave(ptr %source_frame)`;
     }
+  }
+  if (B.sourceFrameName !== null && emitter.sourceLocations !== null) {
+    B.line(`%source_frame.location = getelementptr { ptr, ptr }, ptr %source_frame, i32 0, i32 1`);
+    B.sourceFrameTextSlot = "%source_frame.location";
+    B.sourceFrameConstant = (text) => emitter.cstr(text);
   }
   if (emitter.stackChecks?.has(fn.name)) emitter.emitStackCheck();
   if (emitter.workerEntryPolls?.has(fn.name)) emitter.emitPendingCheck(undefined, true);

@@ -1,4 +1,5 @@
 /* Focused LLVM library-call emission extracted from emitter.ts. */
+import { wtf8Bytes } from "../literals.js";
 import { InternalCompilerError } from "../../errors.js";
 import { undefinedArmTag } from "../../ir/analysis.js";
 import {
@@ -854,11 +855,69 @@ export function emitErrorsEventsLibCall(host: LlvmEmitterContext, e: LibCallExpr
       if (
         fn !== undefined &&
         host.stackTraces &&
-        !host.wasi &&
+        (!host.wasi || host.sourceLocations !== null) &&
         fn.sourceName !== undefined &&
         !host.unframedFunctions.has(fn.name)
-      )
+      ) {
         through = host.cstr(`    at ${fn.sourceName} (${fn.loc.file})`);
+        if (host.sourceLocations !== null) {
+          // Resolve constructorOpt to the live frame text. Its source position
+          // changes at call sites, while the runtime ABI matches exact text.
+          const prefix = `    at ${fn.sourceName} (${host.sourceLocations.fileName(fn.loc.file)}`;
+          const probe = B.slot(),
+            cursor = B.slot(),
+            result = B.slot();
+          B.entryAllocas.push(
+            `${probe} = alloca { ptr, ptr }`,
+            `${cursor} = alloca ptr`,
+            `${result} = alloca ptr`,
+          );
+          host.declare(`declare void @scr_stack_enter(ptr, ptr)`);
+          host.declare(`declare void @scr_stack_leave(ptr)`);
+          host.declare(`declare i32 @strncmp(ptr, ptr, ${host.sizeType})`);
+          B.line(`store ptr null, ptr ${result}`);
+          B.line(`call void @scr_stack_enter(ptr ${probe}, ptr null)`);
+          B.line(`call void @scr_stack_leave(ptr ${probe})`);
+          const first = B.tmp();
+          B.line(`${first} = load ptr, ptr ${probe}`);
+          B.line(`store ptr ${first}, ptr ${cursor}`);
+          const loop = B.newLabel("stack.find"),
+            check = B.newLabel("stack.check"),
+            next = B.newLabel("stack.next"),
+            found = B.newLabel("stack.found"),
+            done = B.newLabel("stack.done");
+          B.br(loop);
+          B.startBlock(loop);
+          const frame = B.tmp(),
+            empty = B.tmp();
+          B.line(`${frame} = load ptr, ptr ${cursor}`);
+          B.line(`${empty} = icmp eq ptr ${frame}, null`);
+          B.condBr(empty, done, check);
+          B.startBlock(check);
+          const slot = B.tmp(),
+            text = B.tmp(),
+            compared = B.tmp(),
+            matches = B.tmp();
+          B.line(`${slot} = getelementptr { ptr, ptr }, ptr ${frame}, i32 0, i32 1`);
+          B.line(`${text} = load ptr, ptr ${slot}`);
+          B.line(
+            `${compared} = call i32 @strncmp(ptr ${text}, ptr ${host.cstr(prefix)}, ${host.sizeType} ${wtf8Bytes(prefix).length})`,
+          );
+          B.line(`${matches} = icmp eq i32 ${compared}, 0`);
+          B.condBr(matches, found, next);
+          B.startBlock(next);
+          const previous = B.tmp();
+          B.line(`${previous} = load ptr, ptr ${frame}`);
+          B.line(`store ptr ${previous}, ptr ${cursor}`);
+          B.br(loop);
+          B.startBlock(found);
+          B.line(`store ptr ${text}, ptr ${result}`);
+          B.br(done);
+          B.startBlock(done);
+          through = B.tmp();
+          B.line(`${through} = load ptr, ptr ${result}`);
+        }
+      }
     }
     host.declare(`declare void @scr_error_capture_stack_trace(ptr, ptr, i1)`);
     B.line(

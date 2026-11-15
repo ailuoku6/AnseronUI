@@ -36,7 +36,8 @@ class AndroidHost(
     private val onDiagnostic: (String, String) -> Unit = { _, _ -> },
     private val onFailure: (Throwable) -> Unit = {},
     private val extensions: AndroidPlatformExtensions = AndroidPlatformExtensions(),
-    private val router: ((method: String, args: Any?) -> Any?)? = null
+    private val router: ((method: String, args: Any?) -> Any?)? = null,
+    private val onDiagnosticDetails: (JSONObject) -> Unit = {}
 ) {
     private val standardServices = StandardServices(root, baseUrl, extensions.subscriptions)
     private val ui = Handler(Looper.getMainLooper())
@@ -292,7 +293,7 @@ class AndroidHost(
                 }
             }
             "Diagnostic" -> {
-                ui.post { onDiagnostic(payload.getString("code"), payload.getString("message")) }
+                ui.post { runCatching { onDiagnosticDetails(payload) }; onDiagnostic(payload.getString("code"), payload.getString("message")) }
                 if (!ready) finish()
             }
             "SurfaceDisposed" -> finish()

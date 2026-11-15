@@ -389,6 +389,8 @@ export async function readSemanticLibraryCache(
       gunzipAsync(sourcesCompressed),
     ]);
     const previousSources = decodeSources(sourcesJson);
+    if ([...previousSources.values()].some((text) => text.includes("//# anseronuiSourceMap=")))
+      return null;
     const semantic = frontendInputsSemanticallyMatch(
       stamp.frontend,
       previousSources,

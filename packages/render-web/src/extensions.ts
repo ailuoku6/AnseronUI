@@ -10,6 +10,8 @@ export interface NativeViewInstance {
 export type NativeViewFactory = (context: { document: Document; emit(name: string, data?: unknown): void }) => NativeViewInstance;
 export type NativeModuleHandler = (method: string, args: unknown, signal: AbortSignal) => unknown | Promise<unknown>;
 export interface PlatformExtensions {
+  /** Receives the original TS error stack in Debug and Release. Collector failures are isolated. */
+  onDiagnosticDetails?: (diagnostic: Extract<import("@anseronui/protocol").OutputPayload, { type: "Diagnostic" }>) => void;
   services?: import('./application-services.js').BrowserServiceOptions;
   modules?: Record<string, NativeModuleHandler>;
   subscriptions?: Record<string, NativeEventSource>;

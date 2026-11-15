@@ -12,6 +12,7 @@ DerivedData/
 
 # 本仓库内的 scriptc 源码参与版本管理；LLVM helper 链接是本地产物
 /internal/toolchain/scriptc/packages/llvm-*/bin
+/internal/toolchain/scriptc/packages/runtime-*/artifacts
 
 # 构建脚本复制到源码目录的 Core 产物和示例资源
 /packages/render-android/src/main/jniLibs/*/libanseronui.so

@@ -41,6 +41,13 @@ describe("protocol envelope", () => {
     expect(decodeEnvelope(encodeEnvelope({ ...envelope, payload: scroll })).payload).toEqual(scroll);
     expect(() => encodeEnvelope({ ...envelope, payload: { ...scroll, scrollAdjustment: Infinity } })).toThrow("PROTOCOL_PAYLOAD");
   });
+  it("round trips original error stacks and accepts legacy diagnostics", () => {
+    const diagnostic = { type: "Diagnostic", code: "RENDER_ERROR", message: "Error: broken", stack: "Error: broken\n    at Page (pages/订单.tsx:12:7)", errorName: "Error", buildId: "release-1" };
+    expect(decodeEnvelope(encodeEnvelope({ ...envelope, payload: diagnostic })).payload).toEqual(diagnostic);
+    expect(() => encodeEnvelope({ ...envelope, payload: { type: "Diagnostic", code: "OLD", message: "old bundle" } })).not.toThrow();
+    expect(() => encodeEnvelope({ ...envelope, payload: { ...diagnostic, stack: "x".repeat(32769) } })).toThrow("PROTOCOL_PAYLOAD");
+    expect(() => encodeEnvelope({ ...envelope, payload: { ...diagnostic, stack: 123 } })).toThrow("PROTOCOL_PAYLOAD");
+  });
   it("round trips UTF-8 bytes", () => {
     expect(decodeEnvelope(encodeEnvelope(envelope))).toEqual(envelope);
   });

@@ -10,6 +10,7 @@ import AppKit
     /// Lets the owning app extend the page background into system safe areas.
     public var onPageBackgroundColor: ((NSColor) -> Void)?
     public var onDiagnostic: ((String, String) -> Void)?
+    public var onDiagnosticDetails: (([String: Any]) -> Void)?
     public var onFailure: ((Error) -> Void)?
     public private(set) var page: String?
     public private(set) var isDestroyed = false
@@ -220,6 +221,10 @@ import AppKit
         host.onReady = { [weak self, weak entry] in
             guard let self, let entry, !self.isDestroyed, self.routes.last === entry else { return }
             self.onReady?()
+        }
+        host.onDiagnosticDetails = { [weak self, weak entry] diagnostic in
+            guard let self, let entry, !self.isDestroyed, !entry.disposed else { return }
+            self.onDiagnosticDetails?(diagnostic)
         }
         host.onDiagnostic = { [weak self, weak entry] code, message in
             guard let self, let entry, !self.isDestroyed, self.routes.last === entry else { return }

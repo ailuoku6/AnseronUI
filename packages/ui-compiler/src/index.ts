@@ -1,7 +1,8 @@
 import ts from "typescript";
+import { originalSource, printMapped, type MappedSource } from "./source-map.js";
 
 export interface CompileDiagnostic { code: string; message: string; line: number; column: number }
-export interface CompileResult { source: string; diagnostics: CompileDiagnostic[] }
+export interface CompileResult { source: string; diagnostics: CompileDiagnostic[]; mapped: MappedSource }
 
 /** P0 TSX lowering. It preserves TS type syntax for the subsequent static compiler. */
 export function lowerTSX(source: string, fileName = "page.tsx", options: { devtools?: boolean } = {}): CompileResult {
@@ -41,9 +42,9 @@ export function lowerTSX(source: string, fileName = "page.tsx", options: { devto
         const name = ts.isIdentifier(component) || ts.isPropertyAccessExpression(component) ? component.getText(file) : "PageComponent";
         return factory.updateCallExpression(node, node.expression, node.typeArguments, [...node.arguments, factory.createStringLiteral(name)]);
       }
-      if (ts.isJsxElement(node)) return makeElement(node.openingElement.tagName, node.openingElement.attributes, node.children, node.openingElement.typeArguments);
-      if (ts.isJsxSelfClosingElement(node)) return makeElement(node.tagName, node.attributes, [], node.typeArguments);
-      if (ts.isJsxFragment(node)) return makeElement(undefined, undefined, node.children);
+      if (ts.isJsxElement(node)) return ts.setSourceMapRange(makeElement(node.openingElement.tagName, node.openingElement.attributes, node.children, node.openingElement.typeArguments), node);
+      if (ts.isJsxSelfClosingElement(node)) return ts.setSourceMapRange(makeElement(node.tagName, node.attributes, [], node.typeArguments), node);
+      if (ts.isJsxFragment(node)) return ts.setSourceMapRange(makeElement(undefined, undefined, node.children), node);
       return ts.visitEachChild(node, visit, context);
     };
     const tagExpression = (name: ts.JsxTagNameExpression | undefined): ts.Expression => {
@@ -115,12 +116,12 @@ export function lowerTSX(source: string, fileName = "page.tsx", options: { devto
     };
   };
   const result = ts.transform(file, [transformer]);
-  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
-  const output = printer.printFile(result.transformed[0]);
+  const mapped = printMapped(result.transformed[0], originalSource(source, fileName));
+  const output = mapped.source;
   result.dispose();
   for (const diagnostic of (file as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics ?? []) {
     const location = file.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
     diagnostics.push({ code: "TSX_PARSE", message: ts.flattenDiagnosticMessageText(diagnostic.messageText, " "), line: location.line + 1, column: location.character + 1 });
   }
-  return { source: output, diagnostics };
+  return { source: output, diagnostics, mapped };
 }

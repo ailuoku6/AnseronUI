@@ -1,7 +1,8 @@
 import ts from 'typescript';
+import { printMapped } from '../packages/ui-compiler/src/source-map.ts';
 
 /** Bind only unshadowed global timer names. Never rewrite local/imported bindings. */
-export function lowerTimers(source, fileName) {
+export function lowerTimers(source, fileName, mapped) {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
   const host = {
     getSourceFile: name => name === fileName ? file : undefined,
@@ -46,7 +47,7 @@ export function lowerTimers(source, fileName) {
       return f.updateSourceFile(output, [binding, ...output.statements]);
     };
   }]);
-  const output = ts.createPrinter().printFile(transformed.transformed[0]);
+  const output = mapped ? printMapped(transformed.transformed[0], mapped) : ts.createPrinter().printFile(transformed.transformed[0]);
   transformed.dispose();
   return output;
 }

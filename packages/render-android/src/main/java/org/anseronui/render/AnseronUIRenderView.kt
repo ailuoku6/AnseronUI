@@ -27,6 +27,7 @@ class AnseronUIRenderView @JvmOverloads constructor(
     /** Lets the owning app extend the page background into system bars and insets. */
     var onPageBackgroundColor: (Int) -> Unit = {}
     var onDiagnostic: (String, String) -> Unit = { _, _ -> }
+    var onDiagnosticDetails: (JSONObject) -> Unit = {}
     var onFailure: (Throwable) -> Unit = {}
     var page: String? = null
         private set
@@ -192,6 +193,7 @@ class AnseronUIRenderView @JvmOverloads constructor(
             }
         },
             onReady = { if (!isDestroyed && routes.lastOrNull() === entry) onReady() },
+            onDiagnosticDetails = { diagnostic -> if (!isDestroyed && !entry.disposed) onDiagnosticDetails(diagnostic) },
             onDiagnostic = { code, message -> if (!isDestroyed && routes.lastOrNull() === entry) onDiagnostic(code, message) },
             onFailure = { error ->
                 if (!isDestroyed && !entry.disposed) {

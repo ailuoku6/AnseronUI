@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, symlinkSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname, relative, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toolchainHost } from './sdk-files.mjs';
@@ -18,5 +18,17 @@ const version=JSON.parse(readFileSync(`node_modules/@scriptc/${helper}/package.j
 if(version!==vendor.version)throw new Error('Matching LLVM helper '+vendor.version+' required');
 const link=resolve(checkout,'packages',helper,'bin');
 if(!existsSync(link)) { mkdirSync(dirname(link),{recursive:true}); symlinkSync(relative(dirname(link),resolve('node_modules/@scriptc',helper,'bin')),link,'dir'); }
+// Workspace package resolution finds the bundled runtime manifests before npm.
+// Attach installed binary payloads without copying them into the SDK sources.
+for (const name of readdirSync(resolve('node_modules/@scriptc')).filter(name => name.startsWith('runtime-'))) {
+  const packaged = resolve('node_modules/@scriptc', name);
+  const bundled = join(checkout, 'packages', name);
+  if (!existsSync(join(bundled, 'package.json')) || !existsSync(join(packaged, 'runtime-pack.json'))) continue;
+  if (JSON.parse(readFileSync(join(packaged, 'package.json'), 'utf8')).version !== vendor.version) throw new Error('Matching runtime pack required: ' + name);
+  for (const file of ['runtime-pack.json', 'runtime-pack.verified.json', 'artifacts']) {
+    const source = join(packaged, file), target = join(bundled, file);
+    if (existsSync(source) && !existsSync(target)) symlinkSync(relative(bundled, source), target, file === 'artifacts' ? 'dir' : 'file');
+  }
+}
 run(process.execPath,['packages/compiler/node_modules/typescript/bin/tsc','-p','packages/compiler/tsconfig.json'],checkout);
 console.log(`AnseronUI compiler ready (bundled scriptc v${vendor.version}, upstream ${vendor.revision}, async embedding applied)`);

@@ -35,6 +35,7 @@
 ### 问题排查
 
 - [TypeScript 与 TSX 限制](getting-started/typescript-limitations.md)：语法、运行时和依赖边界。
+- [TS 错误堆栈](diagnostics/error-stacks.md)：接收原始 TS/TSX 堆栈及验证源码位置。
 - [DevTools](diagnostics/devtools.md)：调试服务和检查数据。
 - [性能验证](diagnostics/performance.md)：基准、采样和回归检查。
 
