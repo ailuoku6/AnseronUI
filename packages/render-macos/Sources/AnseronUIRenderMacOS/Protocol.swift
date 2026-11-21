@@ -26,6 +26,12 @@ public struct RenderProps: Decodable, Sendable {
     public let shadowRadius: Double?
     public let shadowOffsetX: Double?
     public let shadowOffsetY: Double?
+    public let glassEffect: Bool?
+    public let glassEffectStyle: String?
+    public let glassEffectTintColor: String?
+    public let glassEffectInteractive: Bool?
+    public let glassEffectContainer: Bool?
+    public let glassEffectSpacing: Double?
     public var backgroundColor: String?
     public var color: String?
     public let animation: String?

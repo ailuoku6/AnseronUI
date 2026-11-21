@@ -31,6 +31,26 @@ static ScrDyn *nothing(ScrClosure *closure, ScrDyn *const *args, size_t argc) {
   return scr_dyn_retain(scr_dyn_undefined());
 }
 
+static void json_buffer_capacity(void) {
+  char large[60001];
+  memset(large, 'x', sizeof large - 1);
+  large[sizeof large - 1] = 0;
+  ScrJsonBuf b;
+  scr_jb_init(&b);
+  scr_jb_puts(&b, large);
+  ScrStr *big = scr_jb_finish(&b);
+  assert(big->len == sizeof large - 1 && !memcmp(big->data, large, sizeof large));
+  scr_str_release(big);
+  for (size_t i = 0; i < 100; i++) {
+    scr_jb_init(&b);
+    scr_jb_puts(&b, "small");
+    ScrStr *small = scr_jb_finish(&b);
+    assert(small->len == 5 && !strcmp(small->data, "small"));
+    assert(small->cap <= 1024);
+    scr_str_release(small);
+  }
+}
+
 static void json_string_boundaries(void) {
   /* Every escape/control at every word alignment, followed by raw UTF-8.
    * ASan also checks short tails that cannot supply a complete word. */
@@ -846,6 +866,7 @@ static void record_frozen_bit(void) {
 }
 
 int main(void) {
+  json_buffer_capacity();
   json_string_boundaries();
   record_frozen_bit();
   json_indent_ownership();

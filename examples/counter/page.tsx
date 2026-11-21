@@ -7,7 +7,7 @@ export function Counter(): UIElement {
   const [routeInfo, setRouteInfo] = useState('{}');
   useEffect(() => { let active = true; void router.getParams().then(params => { if (active) setRouteInfo(JSON.stringify(params)); }).catch(error => { if (active) setRouteInfo(String(error)); }); return () => { active = false; }; }, []);
   return (
-    <View style={{ padding: 16, gap: 12, width: 240, backgroundColor: "#f5f7fb" }}>
+    <View style={{ flexDirection: "column", padding: 16, gap: 12, width: 240, backgroundColor: "#f5f7fb" }}>
       <Text style={{ fontSize: 20 }}>Count: {count}</Text>
       <Button title="+1" onClick={() => setCount(value => value + 1)} />
       <Button title="打开 Async Form" onClick={() => { void router.push("async-form", { source: 'counter', count, message: '来自 Counter 的参数', options: { editable: true }, tags: ['路由', '示例'] }); }} />

@@ -659,7 +659,7 @@ export class BusinessRuntime {
     }
     if (props.animation !== undefined) { validateAnimationOptions(props.animation); outputProps.animation = JSON.stringify(props.animation); }
     if (typeof props.disabled === "boolean") outputProps.disabled = props.disabled;
-    for (const key of ["translateX", "translateY", "scaleX", "scaleY", "rotate", "backgroundColor", "color", "dmBackgroundColor", "dmColor", "dmBorderColor", "shadowColor", "dmShadowColor", "shadowOpacity", "shadowRadius", "shadowOffsetX", "shadowOffsetY", "placeholderTextColor", "dmPlaceholderTextColor", "opacity", "fontSize", "lineHeight", "borderWidth", "borderColor", "borderRadius", "overflow", "visibility", "fontWeight", "fontStyle", "textAlign", "textDecorationLine"] as const) {
+    for (const key of ["translateX", "translateY", "scaleX", "scaleY", "rotate", "backgroundColor", "color", "dmBackgroundColor", "dmColor", "dmBorderColor", "shadowColor", "dmShadowColor", "shadowOpacity", "shadowRadius", "shadowOffsetX", "shadowOffsetY", "placeholderTextColor", "dmPlaceholderTextColor", "opacity", "fontSize", "lineHeight", "borderWidth", "borderColor", "borderRadius", "overflow", "visibility", "fontWeight", "fontStyle", "textAlign", "textDecorationLine", "glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing"] as const) {
       const value = style[key];
       if (value !== undefined) outputProps[key] = value;
     }

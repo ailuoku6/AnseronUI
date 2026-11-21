@@ -37,8 +37,8 @@ export function FloatingBall(props: { width: number; height: number }): UIElemen
   };
   return <View testID="floating-ball" accessibilityLabel="可拖动悬浮球" touchAction="none"
     style={{ position: "absolute", left: clamp(x, props.width), top: clamp(y, props.height), width: SIZE, height: SIZE,
-      borderRadius: SIZE / 2, borderWidth: 2, borderColor: dragging ? "#ffd899" : "#b7c9ff",
-      backgroundColor: dragging ? "#d77926" : "#275de5", alignItems: "center", justifyContent: "center" }}
+      borderRadius: SIZE / 2, glassEffect: true, glassEffectStyle: "regular", glassEffectInteractive: true,
+      alignItems: "center", justifyContent: "center" }}
     onTouchDown={(event: TouchEvent) => {
       event.stopPropagation();
       if (gesture.current) return;
@@ -46,6 +46,6 @@ export function FloatingBall(props: { width: number; height: number }): UIElemen
       setDragging(true);
     }}
     onTouchMove={move} onTouchUp={(event: TouchEvent) => { move(event); finish(event); }} onTouchCancel={finish}>
-    <Text testID="floating-ball-label" style={{ fontSize: 13, color: "#ffffff", fontWeight: "bold", textAlign: "center" }}>{dragging ? "松手" : "拖动"}</Text>
+    <Text testID="floating-ball-label" style={{ fontSize: 13, color: "#173356", fontWeight: "bold", textAlign: "center" }}>{dragging ? "松手" : "拖动"}</Text>
   </View>;
 }

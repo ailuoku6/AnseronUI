@@ -23,6 +23,11 @@ export function harmonyTools() {
   if (!existsSync(join(native,'oh-uni-package.json')) || Number(JSON.parse(readFileSync(join(native,'oh-uni-package.json'),'utf8')).apiVersion) !== 21) throw new Error('Install DevEco Studio and HarmonyOS 6.0.1 (API 21) SDK, or set HARMONY_NATIVE_SDK/DEVECO_SDK_HOME.');
   return { studio, sdk, native, hdc: process.env.HARMONY_HDC ?? join(dirname(native),'toolchains/hdc'), java: process.env.JAVA_HOME ? join(process.env.JAVA_HOME,'bin/java') : join(studio,'jbr/Contents/Home/bin/java'), env: {...process.env, DEVECO_SDK_HOME:sdk, NODE_HOME:join(studio,'tools/node')} };
 }
+export function harmonyPermissionResources(permissions, generated, previous = []) {
+  const resources = new Map([...previous, ...generated].map(item => [item.name, item]));
+  const referenced = new Set(permissions.flatMap(item => item.reason?.startsWith('$string:') ? [item.reason.slice(8)] : []));
+  return [...resources.values()].filter(item => referenced.has(item.name));
+}
 function run(bin,args,options={}) { const r=spawnSync(bin,args,{stdio:'inherit',...options}); if(r.error)throw r.error;if(r.status!==0)throw new Error(`${bin} failed (${r.status})`);return r.stdout?.trim(); }
 function write(path,text) { mkdirSync(dirname(path),{recursive:true});writeFileSync(path,text); }
 export function harmonyIndexSource(config, manifest) {
@@ -93,7 +98,7 @@ export function buildHarmony({framework,app,config,core,standalone=false,release
     'ohos.permission.NFC_TAG':['Read or write a nearby NFC tag when requested by the application.','inuse'],
     'ohos.permission.PUBLISH_AGENT_REMINDER':['Schedule reminders requested by the application.','inuse'],
   };
-  for (const name of permissions) {
+  for (const name of new Set([...permissions, ...declared.keys()])) {
     const [reason,scene]=descriptions[name]??['Use '+name+' for the feature requested by the application.','inuse'];
     const item=declared.get(name)??{name};
     item.reason??=reason;
@@ -105,7 +110,8 @@ export function buildHarmony({framework,app,config,core,standalone=false,release
     declared.set(name,item);
   }
   moduleManifest.module.requestPermissions=[...declared.values()];
-  write(reasonFile,JSON.stringify({string:reasons},null,2)+'\n');
+  const previousReasons=existsSync(reasonFile)?JSON.parse(readFileSync(reasonFile,'utf8')).string??[]:[];
+  write(reasonFile,JSON.stringify({string:harmonyPermissionResources([...declared.values()],reasons,previousReasons)},null,2)+'\n');
   write(manifestPath,JSON.stringify(moduleManifest,null,2)+'\n');
   const sourceList=harmonyPlugins.map(source=>`\n  "${cmakeQuote(source)}"`).join('');
   write(join(cpp,'anseronui.cmake'),`set(ANSERONUI_ROOT "${cmakeQuote(framework)}")\nset(ANSERONUI_CORE "${cmakeQuote(join(core,'entry.lib.a'))}")\nset(ANSERONUI_PLUGIN_SOURCES${sourceList})\n`);

@@ -11,4 +11,4 @@ cpSync('examples/components/assets',join(out,'assets'),{recursive:true});
 const sources = 'packages/render-macos/Sources/AnseronUIRenderMacOS';
 run('xcrun',['clang','-arch','arm64','-mmacosx-version-min=14.0','-I','packages/core/native/include','-c','packages/core/native/transport.c','-o',join(out,'transport.o')]);
 run('xcrun',['swiftc','-swift-version','5','-target','arm64-apple-macosx14.0','-module-cache-path',join(out,'module-cache'),'-I','packages/render-macos/Sources/AnseronUICoreC','-parse-as-library',...readdirSync(sources).filter(x=>x.endsWith('.swift')).map(x=>join(sources,x)),...readdirSync('packages/render-macos/Tests').filter(x=>x.endsWith('.swift')).map(x=>join('packages/render-macos/Tests',x)),'examples/native/macos/DemoExtensions.swift',join(out,'transport.o'),'.verification/core-macos-arm64/entry.lib.a','-o',join(out,'integration')]);
-run(join(out,'integration'),[]);
+run(join(out,'integration'),process.argv.slice(2));

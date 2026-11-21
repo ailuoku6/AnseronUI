@@ -119,15 +119,16 @@ export function validateAnimationStyle(value: unknown): void {
 }
 export function validProps(value: unknown): boolean {
   if (!record(value)) return false;
-  const strings = ["text", "value", "placeholder", "backgroundColor", "color", "borderColor", "placeholderTextColor", "shadowColor", "dmBackgroundColor", "dmColor", "dmBorderColor", "dmPlaceholderTextColor", "dmShadowColor", "testID", "accessibilityLabel", "accessibilityHint", "accessibilityValue", "src", "dmSrc", "placeholderSrc", "resizeMode", "playControl", "spans", "nativeProps"];
-  const booleans = ["accessible", "accessibilityHidden", "accessibilityChecked", "accessibilitySelected", "accessibilityClickable", "accessibilityLongClickable", "disabled", "editable", "secureTextEntry", "autoCorrect", "scrollEnabled", "showsVerticalScrollIndicator", "controls", "autoplay", "loop", "muted"];
+  const strings = ["text", "value", "placeholder", "backgroundColor", "color", "borderColor", "placeholderTextColor", "shadowColor", "dmBackgroundColor", "dmColor", "dmBorderColor", "dmPlaceholderTextColor", "dmShadowColor", "glassEffectTintColor", "testID", "accessibilityLabel", "accessibilityHint", "accessibilityValue", "src", "dmSrc", "placeholderSrc", "resizeMode", "playControl", "spans", "nativeProps"];
+  const booleans = ["accessible", "accessibilityHidden", "accessibilityChecked", "accessibilitySelected", "accessibilityClickable", "accessibilityLongClickable", "disabled", "editable", "secureTextEntry", "autoCorrect", "scrollEnabled", "showsVerticalScrollIndicator", "controls", "autoplay", "loop", "muted", "glassEffect", "glassEffectInteractive", "glassEffectContainer"];
   const enums: Record<string, readonly string[]> = {
     accessibilityRole: ["button", "text", "image", "checkbox", "search", "none"],
     fontWeight: ["normal", "bold"], fontStyle: ["normal", "italic"], textAlign: ["left", "center", "right"],
     textDecorationLine: ["none", "underline", "line-through"], overflow: ["visible", "hidden"], visibility: ["visible", "hidden"],
     ellipsizeMode: ["tail", "clip"], keyboardType: ["default", "email-address", "numeric", "decimal-pad", "phone-pad", "url"],
     returnKeyType: ["default", "done", "go", "next", "search", "send"], autoCapitalize: ["none", "sentences", "words", "characters"],
-    resizeMode: ["cover", "contain", "stretch"], playControl: ["play", "pause", "stop"], touchAction: ["auto", "none", "pan-x", "pan-y"]
+    resizeMode: ["cover", "contain", "stretch"], playControl: ["play", "pause", "stop"], touchAction: ["auto", "none", "pan-x", "pan-y"],
+    glassEffectStyle: ["regular", "clear"]
   };
   for (const key of Object.keys(value)) {
     const item = value[key];
@@ -136,7 +137,7 @@ export function validProps(value: unknown): boolean {
     else if (strings.includes(key)) { if (!validString(item)) return false; }
     else if (booleans.includes(key)) { if (typeof item !== "boolean") return false; }
     else if (key === "opacity" || key === "shadowOpacity") { if (!validSize(item) || item > 1) return false; }
-    else if (["fontSize", "lineHeight", "borderWidth", "borderRadius", "shadowRadius", "rate"].includes(key)) { if (!validSize(item) || (key === "rate" && item === 0)) return false; }
+    else if (["fontSize", "lineHeight", "borderWidth", "borderRadius", "shadowRadius", "glassEffectSpacing", "rate"].includes(key)) { if (!validSize(item) || (key === "rate" && item === 0)) return false; }
     else if (["inputRevision", "numberOfLines", "maxLength"].includes(key)) { if (!isU32(item, true)) return false; }
     else if (enums[key]) { if (typeof item !== "string" || !enums[key].includes(item)) return false; }
     else return false;

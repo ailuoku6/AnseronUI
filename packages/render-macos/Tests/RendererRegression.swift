@@ -48,6 +48,7 @@ import AVKit
     static func run() throws {
         try accessibility()
         try darkStyles()
+        try liquidGlass()
         try themeImagesAndLineHeight()
         try text()
         try images()
@@ -133,6 +134,29 @@ import AVKit
         try f.apply([["type":"SetProps","nodeId":1,"props":["borderRadius":12,"overflow":"visible"]]])
         Integration.check(card.layer?.masksToBounds == false && card.layer?.shadowPath?.boundingBox == card.bounds,"visible overflow and rounded shadow path survive animation paint")
         print("PASS: macOS dark colors, shadow geometry, span/placeholder fallback and retained input")
+    }
+    static func liquidGlass() throws {
+        guard #available(macOS 26.0, *) else { return }
+        let f = Fixture(); defer { f.close() }
+        try f.create(1,"View",["testID":"glass","glassEffect":true,"glassEffectStyle":"clear","glassEffectTintColor":"#5599cc","glassEffectInteractive":true,"borderRadius":28],NSRect(x:20,y:20,width:200,height:100))
+        try f.create(2,"Text",["testID":"glass-child","text":"Glass"],NSRect(x:0,y:0,width:80,height:30),parent:1)
+        let glass = f.root.subviews.first!.subviews.compactMap { $0 as? NSGlassEffectView }.first!
+        let child = f.widget("glass-child")
+        Integration.check(glass.style == .clear && glass.contentView.map { Integration.descendants($0).contains(child) } == true,"glass effect wraps child content")
+        Integration.check(glass.cornerRadius == 28,"glass surface follows the declared border radius")
+        if #available(macOS 27.0, *) { Integration.check(glass.effectIsInteractive,"glass enables native press feedback") }
+        try f.apply([["type":"SetProps","nodeId":1,"props":["glassEffect":true,"borderRadius":16]]])
+        Integration.check(glass.cornerRadius == 16,"retained glass surface updates its border radius")
+        if #available(macOS 27.0, *) { Integration.check(!glass.effectIsInteractive,"removed interactive property disables native press feedback") }
+        try f.apply([["type":"SetProps","nodeId":1,"props":["glassEffect":true,"glassEffectInteractive":true,"disabled":true]]])
+        if #available(macOS 27.0, *) { Integration.check(!glass.effectIsInteractive,"disabled glass does not show press feedback") }
+        try f.apply([ ["type":"SetProps","nodeId":1,"props":["glassEffectContainer":true,"glassEffectSpacing":12]] ])
+        let container = f.root.subviews.first!.subviews.compactMap { $0 as? NSGlassEffectContainerView }.first!
+        Integration.check(container.spacing == 12 && container.contentView.map { Integration.descendants($0).contains(child) } == true,"glass container retains children")
+        try f.apply([ ["type":"SetProps","nodeId":1,"props":[:]] ])
+        let parent = f.root.subviews.first!
+        Integration.check(Integration.descendants(parent).contains(child) && !Integration.descendants(parent).contains { $0 is NSGlassEffectView || $0 is NSGlassEffectContainerView },"disabling glass restores child hierarchy")
+        print("PASS: macOS Liquid Glass effect, grouping and fallback hierarchy")
     }
     static func text() throws {
         let f = Fixture(); defer { f.close() }

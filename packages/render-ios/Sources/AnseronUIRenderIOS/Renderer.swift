@@ -26,6 +26,12 @@ public struct RenderProps: Decodable {
     public let shadowRadius: Double?
     public let shadowOffsetX: Double?
     public let shadowOffsetY: Double?
+    public let glassEffect: Bool?
+    public let glassEffectStyle: String?
+    public let glassEffectTintColor: String?
+    public let glassEffectInteractive: Bool?
+    public let glassEffectContainer: Bool?
+    public let glassEffectSpacing: Double?
     public var backgroundColor: String?
     public var color: String?
     public let animation: String?
@@ -157,7 +163,7 @@ public enum RenderError: Error {
     case wrongThread, invalidRevision, invalidCommit, invalidCommand
 }
 
-private final class TSPrimitiveView: UIView {
+private final class TSPrimitiveView: UIVisualEffectView {
     var activate: (() -> Bool)?
     override func accessibilityActivate() -> Bool { activate?() ?? false }
 }
@@ -443,7 +449,9 @@ private final class TouchSession {
             var native: IOSNativeComponent?
             let extensionToken = UUID()
             switch command.kind {
-            case "View": view = TSPrimitiveView(); content = view
+            case "View":
+                let effectView = TSPrimitiveView(effect: nil)
+                view = effectView; content = effectView.contentView
             case "Text":
                 let label = TSAccessibleLabel(); label.numberOfLines = 0
                 view = label; content = label
@@ -562,12 +570,37 @@ private final class TouchSession {
     }
 
     private func setProps(_ record: NodeRecord, _ raw: RenderProps) throws {
+        let previous = record.declaredProps
         record.declaredProps = raw
         let props = raw.themed(root.traitCollection.userInterfaceStyle == .dark)
         let view = record.view
         // Missing backgrounds are transparent, including when a prior color is removed.
         // An opaque UILabel with a nil background can draw a black backing surface.
         let backgroundColor = parseColor(props.backgroundColor) ?? .clear
+        // Replacing an unchanged effect on touch/drag commits restarts UIKit's
+        // interactive highlight. Keep the native effect alive across those updates.
+        let glassChanged = previous?.glassEffect != props.glassEffect
+            || previous?.glassEffectContainer != props.glassEffectContainer
+            || previous?.glassEffectStyle != props.glassEffectStyle
+            || previous?.glassEffectTintColor != props.glassEffectTintColor
+            || previous?.glassEffectInteractive != props.glassEffectInteractive
+            || previous?.glassEffectSpacing != props.glassEffectSpacing
+            || previous?.disabled != props.disabled
+        if glassChanged, let effectView = view as? UIVisualEffectView, #available(iOS 26.0, *) {
+            if props.glassEffectContainer == true {
+                let effect = UIGlassContainerEffect()
+                effect.spacing = props.glassEffectSpacing ?? 0
+                effectView.effect = effect
+            } else if props.glassEffect == true {
+                let style: UIGlassEffect.Style = props.glassEffectStyle == "clear" ? .clear : .regular
+                let effect = UIGlassEffect(style: style)
+                effect.tintColor = props.glassEffectTintColor.flatMap(parseColor)
+                effect.isInteractive = props.glassEffectInteractive == true && props.disabled != true
+                effectView.effect = effect
+            } else {
+                effectView.effect = nil
+            }
+        }
         record.pageBackgroundColor = backgroundColor
         if let json = props.animation {
             guard let config = try decodeNativeJSON(json) as? [String: Any] else { throw NativeExtensionError.invalidArguments }

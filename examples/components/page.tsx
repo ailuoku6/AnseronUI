@@ -35,7 +35,7 @@ export function Components(): UIElement {
           <Button testID="layout-mode-toggle" title={showLayout ? "基础组件" : "布局样式"} onClick={() => { setShowAnimation(false); setShowLayout(previous => !previous); }} style={{ width: 96, height: 44, fontSize: 14 }} />
           </View>
         </View>
-        <Text style={{ fontSize: 12, color: "#5c667a" }}>{showAnimation ? "状态过渡 · ref 串行 · 往返循环" : showLayout ? "8 组布局与样式 · 蓝色悬浮球可拖动" : "8 种组件 · 本地媒体 · 蓝色悬浮球可拖动"}</Text>
+        <Text style={{ fontSize: 12, color: "#5c667a" }}>{showAnimation ? "状态过渡 · ref 串行 · 往返循环" : showLayout ? "8 组布局与样式 · 玻璃悬浮球可拖动" : "8 种组件 · 本地媒体 · 玻璃悬浮球可拖动"}</Text>
         <Text testID="component-event" numberOfLines={1} style={{ fontSize: 13, color: "#275de5" }}>事件: {event}</Text>
       </View>
       <ScrollView key={showAnimation ? "animation" : showLayout ? "layout" : "components"} testID="component-scroll" style={{ flexGrow: 1, flexDirection: "column" }}
@@ -49,6 +49,25 @@ export function Components(): UIElement {
               <Text style={{ color: "#275de5", fontSize: 16 }}>背景、边框、圆角、布局</Text>
             </View>
             <Text numberOfLines={1} style={{ fontSize: 14, color: "#5c667a" }}>这是一段限制为一行的长文本，用来验证超出宽度后是否能正确显示省略号。</Text>
+          </View>
+          <View style={{ flexDirection: "column", padding: 14, gap: 10, borderRadius: 12, backgroundColor: "#ffffff", flexShrink: 0 }}>
+            <Text style={{ fontSize: 18, fontWeight: "bold" }}>Liquid Glass · 融合容器</Text>
+            <View style={{ height: 112, position: "relative", overflow: "hidden", borderRadius: 10, backgroundColor: "#314c83" }}>
+              <View style={{ position: "absolute", left: 0, top: 0, width: 90, height: 112, backgroundColor: "#c83f66" }} />
+              <View style={{ position: "absolute", left: 90, top: 0, width: 90, height: 112, backgroundColor: "#cf873a" }} />
+              <View style={{ position: "absolute", left: 180, top: 0, width: 90, height: 112, backgroundColor: "#327e70" }} />
+              <View style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, flexDirection: "row", gap: 10, alignItems: "center", justifyContent: "center", glassEffectContainer: true, glassEffectSpacing: 12 }}>
+                <View style={{ width: 72, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 24, glassEffect: true, glassEffectInteractive: true }}>
+                  <Text style={{ color: "#ffffff", fontSize: 13, fontWeight: "bold" }}>Regular</Text>
+                </View>
+                <View style={{ width: 72, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 24, glassEffect: true, glassEffectStyle: "clear" }}>
+                  <Text style={{ color: "#ffffff", fontSize: 13, fontWeight: "bold" }}>Clear</Text>
+                </View>
+                <View style={{ width: 72, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 24, glassEffect: true, glassEffectTintColor: "#8bb9ff" }}>
+                  <Text style={{ color: "#ffffff", fontSize: 13, fontWeight: "bold" }}>Tint</Text>
+                </View>
+              </View>
+            </View>
           </View>
           <View style={{ flexDirection: "column", padding: 14, gap: 10, borderRadius: 12, backgroundColor: "#ffffff", flexShrink: 0 }}>
             <Text style={{ fontSize: 18, fontWeight: "bold" }}>02 · Button / TextInput</Text>

@@ -87,6 +87,39 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
 }
 
 @MainActor final class RenderViewTests: XCTestCase {
+    func testInteractiveGlassSurvivesUnrelatedCommits() throws {
+        guard #available(iOS 26.0, *) else { throw XCTSkip("Liquid Glass requires iOS 26") }
+        let renderer = IOSRenderer(root: UIView())
+        defer { renderer.clear() }
+        var revision = 0
+        func apply(_ commands: [[String: Any]]) throws {
+            revision += 1
+            try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type":"Commit","revision":revision,"commands":commands]))
+        }
+        try apply([
+            ["type":"CreateNode","nodeId":1,"kind":"View"],
+            ["type":"SetProps","nodeId":1,"props":["glassEffect":true,"glassEffectInteractive":true,"borderRadius":28]],
+            ["type":"InsertChild","nodeId":1,"parentId":0,"index":0],
+        ])
+        let view = try XCTUnwrap(renderer.view(for: 1) as? UIVisualEffectView)
+        let effect = try XCTUnwrap(view.effect as? UIGlassEffect)
+        XCTAssertTrue(effect.isInteractive)
+        var replacements = 0
+        let observation = view.observe(\.effect) { _, _ in replacements += 1 }
+        defer { observation.invalidate() }
+        try apply([["type":"SetProps","nodeId":1,"props":["glassEffect":true,"glassEffectInteractive":true,"borderRadius":28,"testID":"dragging"]]])
+        XCTAssertEqual(replacements, 0, "Touch state commits must not reset the active glass highlight")
+        try apply([["type":"SetProps","nodeId":1,"props":["glassEffect":true,"glassEffectInteractive":true,"disabled":true]]])
+        XCTAssertGreaterThan(replacements, 0, "Changing glass configuration must replace the effect")
+        XCTAssertFalse(try XCTUnwrap(view.effect as? UIGlassEffect).isInteractive)
+        try apply([["type":"SetProps","nodeId":1,"props":["glassEffect":true,"glassEffectInteractive":true]]])
+        XCTAssertTrue(try XCTUnwrap(view.effect as? UIGlassEffect).isInteractive)
+        try apply([["type":"SetProps","nodeId":1,"props":["glassEffect":true]]])
+        XCTAssertFalse(try XCTUnwrap(view.effect as? UIGlassEffect).isInteractive)
+        try apply([["type":"SetProps","nodeId":1,"props":[:]]])
+        XCTAssertNil(view.effect)
+    }
+
     @MainActor func testAccessibilitySemanticsActionsAndReset() throws {
         let root = UIView()
         let renderer = IOSRenderer(root: root)

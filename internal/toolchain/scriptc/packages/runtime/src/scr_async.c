@@ -5699,8 +5699,28 @@ static bool scr_loop_run_checkpoint(void) {
 }
 
 #ifdef SCR_ASYNC_EMBEDDING
+static SCR_TL bool scr_embed_draining_rejections;
+
+static void scr_embed_release_observed_rejections(void) {
+  if (scr_embed_draining_rejections) return;
+  scr_embed_draining_rejections = true;
+  size_t count = scr_nunhandled, keep = 0;
+  for (size_t i = 0; i < count; i++) {
+    ScrPromise *p = scr_maybe_unhandled[i];
+    if (p->rejection_observed) scr_promise_release(p);
+    else scr_maybe_unhandled[keep++] = p;
+  }
+  /* Payload release can append rejections and realloc the tracking array.
+   * Preserve those entries for the next checkpoint, in their original order. */
+  size_t appended = scr_nunhandled - count;
+  if (appended) memmove(scr_maybe_unhandled + keep, scr_maybe_unhandled + count,
+                        appended * sizeof *scr_maybe_unhandled);
+  scr_nunhandled = keep + appended;
+  scr_embed_draining_rejections = false;
+}
+
 int32_t scr_embed_close(void) {
-  if (scr_current || scr_ready_len || scr_fibers_live) return 0;
+  if (scr_current || scr_ready_len || scr_fibers_live || scr_embed_draining_rejections) return 0;
   scr_discard_unhandled_rejections();
   free(scr_ready); scr_ready = NULL; scr_ready_cap = 0; scr_ready_head = 0;
   free(scr_maybe_unhandled); scr_maybe_unhandled = NULL; scr_unhandled_cap = 0;
@@ -5719,6 +5739,9 @@ int32_t scr_embed_step(uint32_t budget) {
   }
   if (scr_ready_len == 0) {
     scr_ready_head = 0;
+    /* Unlike the executable loop, the host owns unhandled-error policy.
+     * Drop only handled records; retain genuinely unobserved rejections. */
+    scr_embed_release_observed_rejections();
     scr_cyc_collect_scheduled();
   }
   return scr_embed_pending();

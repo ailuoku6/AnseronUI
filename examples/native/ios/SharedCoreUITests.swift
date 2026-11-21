@@ -2,8 +2,13 @@ import XCTest
 import UIKit
 
 final class SharedCoreUITests: XCTestCase {
+    private func launch(_ app: XCUIApplication) {
+        if !app.launchArguments.contains("--page") { app.launchArguments += ["--page", "counter"] }
+        app.launch()
+    }
+
     func testAppearanceSourceAndLayout() {
-        let app = XCUIApplication(); app.launchArguments += ["--page", "appearance"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments += ["--page", "appearance"]; launch(app)
         let mode = app.staticTexts["appearance-mode"]
         XCTAssertTrue(mode.waitForExistence(timeout: 20))
         let source = app.staticTexts["appearance-image-source"]
@@ -14,7 +19,7 @@ final class SharedCoreUITests: XCTestCase {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "appearance-source-layout"; shot.lifetime = .keepAlways; add(shot)
     }
     func testSharedPrimitiveButtons() {
-        let app = XCUIApplication(); app.launchArguments += ["--page", "components"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments += ["--page", "components"]; launch(app)
         let toggle = app.buttons["animation-mode-toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 20))
         XCTAssertEqual(toggle.frame.width, 52, accuracy: 1)
@@ -33,7 +38,7 @@ final class SharedCoreUITests: XCTestCase {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "shared-primitive-buttons-ios"; shot.lifetime = .keepAlways; add(shot)
     }
     func testEdgeSwipeBackCancelsAndRestoresRetainedPage() {
-        let app = XCUIApplication(); app.launch()
+        let app = XCUIApplication(); launch(app)
         XCTAssertTrue(app.staticTexts["Count: 0"].waitForExistence(timeout: 15))
         app.buttons["+1"].tap()
         app.buttons["打开 Async Form"].tap()
@@ -56,7 +61,7 @@ final class SharedCoreUITests: XCTestCase {
     }
 
     func testRoutingWithParametersAndReplacement() {
-        let app = XCUIApplication(); app.launch()
+        let app = XCUIApplication(); launch(app)
         XCTAssertTrue(app.buttons["+1"].waitForExistence(timeout: 15)); app.buttons["+1"].tap()
         app.buttons["打开 Async Form"].tap()
         let params = app.staticTexts["form-route-params"]
@@ -72,7 +77,7 @@ final class SharedCoreUITests: XCTestCase {
     }
 
     func testRouteParametersAndPreservedPageState() {
-        let app = XCUIApplication(); app.launch()
+        let app = XCUIApplication(); launch(app)
         XCTAssertTrue(app.staticTexts["Count: 0"].waitForExistence(timeout: 15))
         app.buttons["+1"].tap()
         app.buttons["打开 Async Form"].tap()
@@ -92,7 +97,7 @@ final class SharedCoreUITests: XCTestCase {
     }
 
     func testStandardNativeServicesShowcase() {
-        let app = XCUIApplication(); app.launch()
+        let app = XCUIApplication(); launch(app)
         XCTAssertTrue(app.segmentedControls.buttons["扩展"].waitForExistence(timeout: 15))
         app.segmentedControls.buttons["扩展"].tap()
         let info = app.buttons["native-info"]
@@ -116,8 +121,8 @@ final class SharedCoreUITests: XCTestCase {
 
     func testAnimationShowcase() {
         let app = XCUIApplication()
-        app.launchArguments += ["--components"]
-        app.launch()
+        app.launchArguments += ["--page", "components"]
+        launch(app)
         let toggle = app.buttons["animation-mode-toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout:15))
         expectation(for:NSPredicate { _, _ in toggle.frame.width == 52 && toggle.frame.minX > 100 },evaluatedWith:toggle)
@@ -142,8 +147,8 @@ final class SharedCoreUITests: XCTestCase {
 
     func testLayoutStylesAndFloatingBall() {
         let app = XCUIApplication()
-        app.launchArguments += ["--components"]
-        app.launch()
+        app.launchArguments += ["--page", "components"]
+        launch(app)
         let ball = app.otherElements["floating-ball"]
         XCTAssertTrue(ball.waitForExistence(timeout: 15))
         expectation(for: NSPredicate { _, _ in ball.frame.width == 56 && abs(ball.frame.minX - 248) < 2 }, evaluatedWith: ball)
@@ -179,7 +184,7 @@ final class SharedCoreUITests: XCTestCase {
     func testAllBasicComponents() throws {
         let app = XCUIApplication()
         app.launchArguments += ["-AppleInterfaceStyle", "Light"]
-        app.launch()
+        launch(app)
         app.segmentedControls.buttons["组件"].tap()
         let scroll = app.scrollViews["component-scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 15))
@@ -278,8 +283,8 @@ final class SharedCoreUITests: XCTestCase {
 
     func testNativeExtensions() {
         let app = XCUIApplication()
-        app.launchArguments += ["--extensions"]
-        app.launch()
+        app.launchArguments += ["--page", "extensions"]
+        launch(app)
         func expect(_ id: String, _ value: String) {
             expectation(for: NSPredicate(format: "label == %@", value), evaluatedWith: app.staticTexts[id])
             waitForExpectations(timeout: 15)
@@ -299,14 +304,15 @@ final class SharedCoreUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         app.textFields["extension-input"].typeText("ref test\n")
         app.buttons["卸载原生组件"].tap()
-        XCTAssertFalse(control.exists)
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: control)
+        waitForExpectations(timeout: 5)
         app.buttons["检查卸载 ref"].tap(); expect("extension-status", "状态: ref cleared / stale rejected")
         app.buttons["重新挂载"].tap(); XCTAssertTrue(control.waitForExistence(timeout: 5))
     }
 
     func testStartupAndPageSwitching() {
         let app = XCUIApplication()
-        app.launch()
+        launch(app)
         XCTAssertTrue(app.staticTexts["Count: 0"].waitForExistence(timeout: 15))
         app.segmentedControls.buttons["Async form"].tap()
         XCTAssertTrue(app.staticTexts["Status: idle"].waitForExistence(timeout: 15))
@@ -321,7 +327,7 @@ final class SharedCoreUITests: XCTestCase {
     func testCounterTextIsVisibleAfterUpdates() throws {
         let app = XCUIApplication()
         app.launchArguments += ["-AppleInterfaceStyle", "Light"]
-        app.launch()
+        launch(app)
         try assertVisibleCounter(app.staticTexts["Count: 0"])
         app.buttons["+1"].tap()
         try assertVisibleCounter(app.staticTexts["Count: 1"])
@@ -365,7 +371,7 @@ final class SharedCoreUITests: XCTestCase {
 
     func testSharedPages() throws {
         let app = XCUIApplication()
-        app.launch()
+        launch(app)
         func expect(_ label: String) {
             XCTAssertTrue(app.staticTexts[label].waitForExistence(timeout: 15), "Missing: \(label)")
         }

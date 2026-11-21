@@ -13,6 +13,14 @@ import AVKit
     static func descendants(_ view:NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
     static func main() throws {
         _ = NSApplication.shared
+        if CommandLine.arguments.contains("--liquid-glass-regression") {
+            try RendererRegression.liquidGlass()
+            return
+        }
+        if CommandLine.arguments.contains("--renderer-regressions") {
+            try RendererRegression.run()
+            return
+        }
         let window = NSWindow(contentRect:NSRect(x:0,y:0,width:640,height:600),styleMask:[.titled,.resizable],backing:.buffered,defer:false)
         let view = AnseronUIRenderView(frame:window.contentView!.bounds,baseURL:URL(string:"http://127.0.0.1:5174"),extensions:demoExtensions())
         view.autoresizingMask = [.width,.height]; window.contentView!.addSubview(view)

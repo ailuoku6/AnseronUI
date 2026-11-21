@@ -50,6 +50,8 @@ Medium_Phone_API_35，Android 15/API 35，ARM64，emulator-5554，包名 com.exa
 
 ## 尚未解决：会话内字符串增长
 
+后续已在 npm 0.1.2 新应用中取得持有者与释放干预证据，见 [会话内字符串增长定位](native-session-string-retention.md)。主要无界保留来自 async embedding 未清理已处理的 Promise rejection 跟踪引用；另有有上限的 DevTools 调用历史保留。以下保留当时尚未定位的观察记录。
+
 最终包的 scr_str_alloc_raw 存活分配从 9,109,291 B / 341 块增长到 16,662,145 B / 483 块，增加 **7,552,854 B（约 7.20 MiB）**。相关分配栈经过 JSON 输出与 BusinessRuntime.visit 的字符串构建。分配栈只能说明分配位置，不能确定最后持有引用的对象；字符串 spare 复用还可能使当前内容与最初分配栈不相同。
 
 额外做了临时每步 `anseronui_core_collect()` 对照：10 次往返后 scr_str_alloc_raw 从 10,212,015 B 增至 13,450,883 B。强制完整循环回收没有消除该增长，所以未把每步 collect 作为修复提交。该实验使用第一次缓存清理版本；它的目的仅是区分回收调度延迟，不能代替最终包对照。

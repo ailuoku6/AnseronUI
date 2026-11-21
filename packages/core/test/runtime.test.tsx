@@ -106,6 +106,16 @@ describe("reference Core", () => {
     expect(next?.type === 'SetProps' && next.props.dmBackgroundColor).toBeUndefined();
     h.runtime.dispose();
   });
+  it("transports native Liquid Glass settings as view styles", () => {
+    const page = definePage("liquid-glass", () => <View style={{ glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: false, glassEffectSpacing: 10 }} />);
+    const h = harness(page);
+    h.send({ type: "CreateSurface", page: "liquid-glass", width: 320, height: 480 });
+    const commit = h.drain().find(item => item.type === "Commit");
+    if (!commit || commit.type !== "Commit") throw new Error("No commit");
+    const props = commit.commands.find(command => command.type === "SetProps");
+    expect(props).toMatchObject({ props: { glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: false, glassEffectSpacing: 10 } });
+    h.runtime.dispose();
+  });
   it("constrains a nested scroll viewport without shrinking its content", () => {
     const page = definePage("scroll-layout", () => <View style={{ flexDirection: "column", flexGrow: 1 }}>
       <View style={{ height: 80, flexShrink: 0 }} />

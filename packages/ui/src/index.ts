@@ -56,6 +56,15 @@ export interface Style extends AnimationStyle {
   /** Outer box shadow, in layout units. Defaults: black, opacity 0, radius 0, offset 0/0. */
   shadowColor?: string; dmShadowColor?: string; shadowOpacity?: number;
   shadowRadius?: number; shadowOffsetX?: number; shadowOffsetY?: number;
+  /** Apply the native Liquid Glass effect on iOS 26+ and macOS 26+. */
+  glassEffect?: boolean;
+  glassEffectStyle?: "regular" | "clear";
+  glassEffectTintColor?: string;
+  /** Native press feedback on iOS 26+ and macOS 27+. Ignored when disabled. */
+  glassEffectInteractive?: boolean;
+  /** Group nearby glass effects so they can merge. */
+  glassEffectContainer?: boolean;
+  glassEffectSpacing?: number;
   borderColor?: string; borderWidth?: number; borderRadius?: number;
   overflow?: "visible" | "hidden";
   visibility?: "visible" | "hidden";

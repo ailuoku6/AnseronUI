@@ -578,6 +578,10 @@ ScrStr *scr_jb_finish(ScrJsonBuf *b) {
   /* Remember the size class for the next buffer (bounded so one giant
    * document cannot pin big allocations forever). */
   if (s->cap > scr_jb_hint) scr_jb_hint = s->cap < (1 << 16) ? s->cap : (1 << 16);
+  /* A previous large output must not pin its size class in every small
+   * result (errors and debug history can keep these strings for a session).
+   * Keep ordinary builder slack and the allocation hint for the next build. */
+  if (s->cap > 1024 && s->len < s->cap / 4) s = scr_str_regrow(s, s->len);
   scr_jb_init(b);
   return s;
 }

@@ -7,6 +7,10 @@ describe("protocol envelope", () => {
     expect(validProps({ dmBackgroundColor:'#111111', dmColor:'#ffffff', dmBorderColor:'#222222', dmShadowColor:'#ffffff', dmPlaceholderTextColor:'#aaaaaa', shadowColor:'#000000', shadowOffsetX:-4, shadowOffsetY:8, shadowRadius:12, shadowOpacity:0.3 })).toBe(true);
     for (const props of [{ shadowOpacity:1.1 }, { shadowOpacity:-0.1 }, { shadowRadius:-1 }, { shadowOffsetX:NaN }, { shadowOffsetY:Infinity }, { dmColor:123 }]) expect(validProps(props)).toBe(false);
   });
+  it("accepts Liquid Glass properties and validates their values", () => {
+    expect(validProps({ glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: true, glassEffectSpacing: 12 })).toBe(true);
+    for (const props of [{ glassEffectStyle: "blur" }, { glassEffectSpacing: -1 }, { glassEffect: 1 }, { glassEffectInteractive: "yes" }]) expect(validProps(props)).toBe(false);
+  });
   const envelope: Envelope<InputPayload> = {
     protocolMajor: PROTOCOL_MAJOR, protocolMinor: PROTOCOL_MINOR,
     bundleBuildId: "test", runtimeEpoch: 1, surfaceId: 2,

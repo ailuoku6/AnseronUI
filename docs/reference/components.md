@@ -43,9 +43,19 @@
   playControl={playing ? "play" : "pause"}
   onPlaybackStateChange={setPlaybackState}
 />
+
+<View style={{ glassEffect: true, glassEffectStyle: "regular", glassEffectInteractive: true }}>
+  <Text>Glass surface</Text>
+</View>
 ```
 
 `TextInput` 是受控组件，使用 `value` 保存当前文本。图片和视频应设置可计算的宽高。媒体文件的打包位置和平台限制见[资源与媒体](#资源与媒体)。
+
+## Liquid Glass
+
+`View` 的 `style` 支持 `glassEffect`、`glassEffectStyle`（`regular` 或 `clear`）、`glassEffectTintColor`（颜色字符串）和 `glassEffectInteractive`。将 `glassEffectInteractive` 设为 `true` 可启用系统的按压高光等交互反馈，支持 iOS 26+ 和 macOS 27+；macOS 26 保留静态玻璃效果。`disabled` 会关闭交互反馈。多个玻璃子视图可以放在 `glassEffectContainer: true` 的 `View` 中，并用 `glassEffectSpacing` 设置融合间距。色调和样式只作用于 `glassEffect` 表面；容器效果主要用于组合子视图。
+
+原生效果要求 iOS 26 或 macOS 26。较早系统和其他平台会保留普通 `View`。玻璃表面不要再设置不透明 `backgroundColor`，否则会遮住系统效果；需要兼容旧系统时可同时提供半透明背景色作为降级外观。
 
 ## 公共事件
 

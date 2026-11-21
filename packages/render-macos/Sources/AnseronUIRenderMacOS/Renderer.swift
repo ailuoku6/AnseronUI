@@ -25,6 +25,8 @@ private final class DesktopScrollView: NSScrollView {
     let view: FlippedView
     var widget: NSView
     var content: NSView
+    var glassHost: NSView?
+    var glassContent: NSView?
     let kind: String
     lazy var animation = AnseronUINodeAnimation(view: view)
     var events = Set<String>()
@@ -128,7 +130,12 @@ private final class DesktopScrollView: NSScrollView {
         try validate(commit.commands)
         do {
             for command in commit.commands { try applyOne(command) }
-            for record in nodes.values { record.animation.setActive(pageActive); record.animation.commit(); if record.widget !== record.view { record.widget.frame = record.view.bounds } }
+            for record in nodes.values {
+                record.animation.setActive(pageActive); record.animation.commit()
+                if record.widget !== record.view { record.widget.frame = record.view.bounds }
+                record.glassHost?.frame = record.view.bounds
+                record.glassContent?.frame = record.glassHost?.bounds ?? .zero
+            }
             revision = commit.revision
             updateScrollExtents()
             onPageBackgroundColor?(nodes.values.first { $0.view === root.subviews.first }?.background ?? .clear)
@@ -315,6 +322,7 @@ private final class DesktopScrollView: NSScrollView {
         let p = raw.themed(root.effectiveAppearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua)
         r.touchAction = p.touchAction ?? "auto"
         r.background = parseColor(p.backgroundColor) ?? .clear
+        try setGlassEffect(r, props: p)
         if let config = p.animation { guard let options = try decodeNativeJSON(config) as? [String:Any] else { throw NativeExtensionError.invalidArguments }; r.animation.options = try TSAnimationOptions(options) }
         else { r.animation.options = nil }
         let color = r.background.usingColorSpace(.sRGB) ?? .clear
@@ -380,6 +388,55 @@ private final class DesktopScrollView: NSScrollView {
         }
         updateAccessibility(r)
     }
+
+    private func setGlassEffect(_ r: NodeRecord, props: RenderProps) throws {
+        guard r.kind == "View" else { return }
+        let enabled = props.glassEffect == true || props.glassEffectContainer == true
+        guard enabled else {
+            guard let host = r.glassHost else { return }
+            for child in r.glassContent?.subviews ?? [] { r.view.addSubview(child) }
+            host.removeFromSuperview()
+            r.glassHost = nil; r.glassContent = nil; r.content = r.view
+            return
+        }
+        guard #available(macOS 26.0, *) else { return }
+
+        let host: NSView
+        let content: NSView
+        if props.glassEffectContainer == true {
+            let container = NSGlassEffectContainerView(frame: r.view.bounds)
+            container.spacing = props.glassEffectSpacing ?? 0
+            let contentView = FlippedView(frame: r.view.bounds)
+            container.contentView = contentView
+            host = container; content = contentView
+        } else {
+            let glass = NSGlassEffectView(frame: r.view.bounds)
+            glass.style = props.glassEffectStyle == "clear" ? .clear : .regular
+            glass.tintColor = props.glassEffectTintColor.flatMap(parseColor)
+            if #available(macOS 27.0, *) { glass.effectIsInteractive = props.glassEffectInteractive == true && props.disabled != true }
+            let contentView = FlippedView(frame: r.view.bounds)
+            glass.contentView = contentView
+            host = glass; content = contentView
+        }
+        if let current = r.glassHost, type(of: current) == type(of: host) {
+            if let glass = current as? NSGlassEffectView {
+                glass.style = props.glassEffectStyle == "clear" ? .clear : .regular
+                glass.tintColor = props.glassEffectTintColor.flatMap(parseColor)
+                if #available(macOS 27.0, *) { glass.effectIsInteractive = props.glassEffectInteractive == true && props.disabled != true }
+            }
+            if let container = current as? NSGlassEffectContainerView { container.spacing = props.glassEffectSpacing ?? 0 }
+            return
+        }
+
+        let oldHost = r.glassHost
+        let children = r.glassContent?.subviews ?? r.view.subviews.filter { $0 !== oldHost }
+        host.frame = r.view.bounds; host.autoresizingMask = [.width, .height]
+        r.view.addSubview(host)
+        for child in children { content.addSubview(child) }
+        oldHost?.removeFromSuperview()
+        r.glassHost = host; r.glassContent = content; r.content = content
+    }
+
     private func updateAccessibility(_ r: NodeRecord) {
         guard let p = r.declaredProps else { return }
         let excluded = p.accessible == false || p.accessibilityRole == "none"
