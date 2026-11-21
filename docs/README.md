@@ -1,56 +1,79 @@
-# AnseronUI 文档
+# 文档
 
-从[App 开发手册](getting-started/app-development.md)开始。它按实际开发顺序介绍工程、页面、路由、系统服务和平台验证。
+一个 AnseronUI 应用分成四部分：**页面**、**界面**、**能力**、**工程**。文档按这四部分排列。
 
-## 学习路径
+先读「学习」里的两篇。之后改哪一部分，就打开对应指南。查 API、构建命令、原理和排错时，用后面的参考。
 
-1. [创建第一个 App](getting-started/app-development.md)：从框架仓库创建工程，编写页面并运行。
-2. [组件、布局与事件](guides/capabilities.md)：选择组件，组织界面并处理输入。
-3. [主题与样式](guides/styles.md)：设置颜色、文字、阴影和夜间模式。
-4. [页面与导航](guides/routing.md)：注册页面、传递参数和返回。
-5. [异步与生命周期](guides/page-lifecycle.md)：管理订阅、计时器、页面保留和回收。
-6. [系统服务](guides/native-services.md)：调用网络、存储、文件及设备 API。
-7. [平台扩展](guides/native-extensions.md)：添加原生模块、组件或 npm 插件。
-8. [构建与发布](getting-started/tooling.md)：运行设备、构建 Release 和配置签名。
+## 学习
 
-## 按任务查阅
+按顺序读。
+
+1. [快速开始](getting-started/quick-start.md)：创建应用，并在一个平台上运行。
+2. [编写页面](getting-started/pages.md)：改首页，登记页面，打开第二个页面。
+
+## 指南
+
+### 页面
+
+页面如何切换、保留和响应系统返回。
+
+- [路由](guides/navigation/routing.md)
+- [页面保活与生命周期](guides/navigation/page-lifecycle.md)
+- [系统返回键](guides/navigation/back-press.md)
+- [计时器](guides/navigation/timers.md)
 
 ### 界面
 
-- [组件与界面 API 参考](guides/capabilities.md)
-- [自定义 Hook 与组件组合](guides/component-composition.md)
-- [事件与手势](guides/interactions.md)
-- [动画](guides/animations.md)
-- [应用图标](guides/app-icons.md)
-- [可变高度虚拟列表](guides/virtual-list.md)
-- [系统返回键](guides/back-press.md)
-- [跨端计时器](guides/timers.md)
+页面看起来什么样，以及怎么响应触摸。
 
-### 平台
+- [样式](guides/ui/styles.md)
+- [事件与手势](guides/ui/interactions.md)
+- [无障碍](guides/ui/accessibility.md)：读屏描述、角色、动作、播报和聚焦。
+- [动画](guides/ui/animations.md)
+- [自定义 Hook 与组件组合](guides/ui/component-composition.md)
+- [可变高度虚拟列表](guides/ui/virtual-list.md)
 
-- [HarmonyOS](platforms/harmonyos.md)：API 支持、构建、服务与验证范围。
-- Renderer 接入：[iOS](../packages/render-ios/README.md)、[Android](../packages/render-android/README.md)、[macOS](../packages/render-macos/README.md)、[HarmonyOS](../packages/render-harmony/README.md)。
-- [布局引擎](../packages/layout/README.md)：Flexily 适配和布局包接口。
+### 能力
 
-### 问题排查
+页面如何调用设备和原生代码。
 
-- [TypeScript 与 TSX 限制](getting-started/typescript-limitations.md)：语法、运行时和依赖边界。
-- [TS 错误堆栈](diagnostics/error-stacks.md)：接收原始 TS/TSX 堆栈及验证源码位置。
-- [DevTools](diagnostics/devtools.md)：调试服务和检查数据。
-- [性能验证](diagnostics/performance.md)：基准、采样和回归检查。
+- [系统服务](guides/services/native-services.md)
+- [原生扩展与 npm 插件](guides/services/native-extensions.md)
 
-## 框架原理与贡献
+### 工程
 
-- [架构与运行原理](architecture/architecture.md)：代码分层、编译执行、协议和宿主职责。
-- [Core 与业务包](architecture/core-bundles.md)：编译边界、缓存和产物。
-- [框架开发与仓库示例](contributing/framework-development.md)：本地开发、验证和发布流程。
-- [仓库结构与维护](contributing/repository-workflow.md)：源码归属、生成文件和测试选择。
-- [内部设计、实验与验证记录](../internal/README.md)：维护资料，不定义公开 API。
+应用本身的资源，以及嵌进已有宿主。
 
-## 文档职责
+- [应用图标](guides/project/app-icons.md)
+- [接入已有工程](guides/project/existing-app.md)
 
-- 根目录 [README](../README.md) 负责项目介绍和快速入口。
-- 本目录负责 App 开发手册、专题指南、平台说明和框架原理。
-- `packages/*/README.md` 负责对应包的 API、宿主接入和专项测试。
-- `internal/` 负责设计依据、实验过程和环境相关的验证记录。
-- `internal/toolchain/scriptc/` 与 `packages/flexily/` 保留上游文档原文。使用 AnseronUI 时，以本目录和 `packages/layout/README.md` 为准。
+## 参考
+
+按标题查找，不按顺序读。
+
+- [组件与界面 API](reference/components.md)
+- [TypeScript 与 TSX 限制](reference/typescript.md)
+- [构建与运行](reference/build.md)：设备、Release 和签名。
+
+## 原理
+
+- [架构与运行原理](architecture/overview.md)
+- [Core 与业务包](architecture/core-bundles.md)
+
+## 平台
+
+- [HarmonyOS](platforms/harmonyos.md)：支持范围、构建和验证。
+- 宿主接入：[iOS](../packages/render-ios/README.md)、[Android](../packages/render-android/README.md)、[macOS](../packages/render-macos/README.md)、[HarmonyOS](../packages/render-harmony/README.md)。
+- [布局引擎](../packages/layout/README.md)。
+
+Web 的构建命令在[构建与运行](reference/build.md)。
+
+## 排查
+
+- [TS 错误堆栈](diagnostics/error-stacks.md)
+- [DevTools](diagnostics/devtools.md)
+- [性能验证](diagnostics/performance.md)
+
+## 参与开发
+
+修改框架、Renderer、CLI 或仓库示例时，从 [CONTRIBUTING.md](../CONTRIBUTING.md) 进入。设计记录在 [`internal/`](../internal/README.md)，不定义公开 API。

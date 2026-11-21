@@ -57,6 +57,14 @@ public struct RenderProps: Decodable {
     public var placeholderTextColor: String?
     public let accessibilityLabel: String?
     public let accessibilityRole: String?
+    public let accessibilityHint: String?
+    public let accessibilityValue: String?
+    public let accessible: Bool?
+    public let accessibilityHidden: Bool?
+    public let accessibilityChecked: Bool?
+    public let accessibilitySelected: Bool?
+    public let accessibilityClickable: Bool?
+    public let accessibilityLongClickable: Bool?
     public let textDecorationLine: String?
     public let scrollEnabled: Bool?
     public let scrollAnchorOffset: Double?
@@ -154,9 +162,19 @@ private final class TSPrimitiveView: UIView {
     override func accessibilityActivate() -> Bool { activate?() ?? false }
 }
 
+private final class TSAccessibleLabel: UILabel {
+    var activate: (() -> Bool)?
+    override func accessibilityActivate() -> Bool { activate?() ?? false }
+}
+private final class TSAccessibleImage: UIImageView {
+    var activate: (() -> Bool)?
+    override func accessibilityActivate() -> Bool { activate?() ?? false }
+}
 private final class NodeRecord {
     var anchorOffset: Double = 0
     var declaredProps: RenderProps?
+    lazy var defaultAccessibilityTraits = view.accessibilityTraits
+    lazy var defaultAccessibilityElement = view.isAccessibilityElement
     var pageBackgroundColor = UIColor.clear
     let view: UIView
     let content: UIView
@@ -168,6 +186,7 @@ private final class NodeRecord {
     var maxLength: Int?
     var applyingValue = false
     var imageGeneration = UUID()
+    var imageTask: URLSessionDataTask?
     var mediaSource = ""
     var spanRanges: [NSRange] = []
     var videoLoop = false
@@ -303,7 +322,8 @@ private final class TouchSession {
 
     public func clear() {
         touchSessions.removeAll()
-        for record in nodes.values { releaseMedia(record) }
+        let records = Array(nodes.values); nodes.removeAll()
+        for record in records { releaseMedia(record) }
         for child in root.subviews { child.removeFromSuperview() }
         nodes.removeAll()
         revision = 0
@@ -320,6 +340,21 @@ private final class TouchSession {
             return { record.animation.cancel() }
         }
         if method == "cancelAnimation" { record.animation.cancel(); completion(.success(NSNull())); return nil }
+        if method == "accessibilityAnnounce" {
+            guard let message = (args as? [String: Any])?["message"] as? String, !message.isEmpty, message.utf16.count <= 16384 else { throw NativeExtensionError.invalidArguments }
+            UIAccessibility.post(notification: .announcement, argument: message)
+            completion(.success(NSNull())); return nil
+        }
+        if method == "accessibilityFocus" {
+            guard record.view.isAccessibilityElement else { throw NativeExtensionError.unsupportedMethod("NOT_ACCESSIBLE") }
+            var ancestor: UIView? = record.view
+            while let view = ancestor {
+                guard !view.accessibilityElementsHidden, !view.isHidden else { throw NativeExtensionError.unsupportedMethod("NOT_ACCESSIBLE") }
+                ancestor = view.superview
+            }
+            UIAccessibility.post(notification: .layoutChanged, argument: record.view)
+            completion(.success(NSNull())); return nil
+        }
         if let native = record.native { return try native.invoke(method, args: args, completion: completion) }
         if method == "focus", let field = record.view as? UITextField { field.becomeFirstResponder() }
         else if method == "blur", let field = record.view as? UITextField { field.resignFirstResponder() }
@@ -410,10 +445,10 @@ private final class TouchSession {
             switch command.kind {
             case "View": view = TSPrimitiveView(); content = view
             case "Text":
-                let label = UILabel(); label.numberOfLines = 0
+                let label = TSAccessibleLabel(); label.numberOfLines = 0
                 view = label; content = label
             case "RichText":
-                let label = UILabel(); label.numberOfLines = 0
+                let label = TSAccessibleLabel(); label.numberOfLines = 0
                 view = label; content = label
             case "TextInput":
                 let field = UITextField()
@@ -440,7 +475,7 @@ private final class TouchSession {
                 scroll.addSubview(inner)
                 view = scroll; content = inner
             case "Image":
-                let image = UIImageView(); image.contentMode = .scaleAspectFit; image.clipsToBounds = true
+                let image = TSAccessibleImage(); image.contentMode = .scaleAspectFit; image.clipsToBounds = true
                 view = image; content = image
             case "Native":
                 guard let name = command.nativeName, let factory = extensions.components[name] else { throw RenderError.invalidCommand }
@@ -460,13 +495,15 @@ private final class TouchSession {
             let record = NodeRecord(view: view, content: content, kind: command.kind ?? "")
             record.native = native
             record.extensionToken = extensionToken
+            _ = record.defaultAccessibilityTraits; _ = record.defaultAccessibilityElement
             nodes[command.nodeId] = record
-            if let control = view as? TSPrimitiveView {
-                control.activate = { [weak self, weak record] in
-                    guard let self, let record, record.events.contains("tap"), record.declaredProps?.disabled != true else { return false }
-                    self.emitTap(command.nodeId, record: record); return true
-                }
+            let activate: () -> Bool = { [weak self, weak record] in
+                guard let self, let record, record.events.contains("tap"), record.declaredProps?.accessibilityClickable != false, record.declaredProps?.disabled != true else { return false }
+                self.emitTap(command.nodeId, record: record); return true
             }
+            (view as? TSPrimitiveView)?.activate = activate
+            (view as? TSAccessibleLabel)?.activate = activate
+            (view as? TSAccessibleImage)?.activate = activate
             view.isUserInteractionEnabled = true
             view.isMultipleTouchEnabled = true
             do {
@@ -515,6 +552,7 @@ private final class TouchSession {
         case "BindEvent":
             guard let event = command.event, let enabled = command.enabled else { throw RenderError.invalidCommand }
             if enabled { record.events.insert(event) } else { record.events.remove(event) }
+            updateAccessibility(record)
             for recognizer in record.view.gestureRecognizers ?? [] {
                 if recognizer.name == "anseronui.tap" { recognizer.isEnabled = record.events.contains("tap") || record.events.contains("spanClick") }
                 else if recognizer is UILongPressGestureRecognizer { recognizer.isEnabled = record.events.contains("longPress") }
@@ -550,12 +588,8 @@ private final class TouchSession {
         view.isHidden = props.visibility == "hidden"
         view.accessibilityIdentifier = props.testID
         record.touchAction = props.touchAction ?? "auto"
-        view.accessibilityLabel = props.accessibilityLabel
-        if record.kind == "View" {
-            view.isAccessibilityElement = props.accessibilityRole == "button"
-            view.accessibilityTraits = props.accessibilityRole == "button" ? (props.disabled == true ? [.button, .notEnabled] : .button) : []
-            view.isUserInteractionEnabled = props.disabled != true
-        }
+        updateAccessibility(record)
+        if record.kind == "View" { view.isUserInteractionEnabled = props.disabled != true }
         if let scroll = view as? UIScrollView {
             scroll.isScrollEnabled = props.scrollEnabled ?? true
             scroll.showsVerticalScrollIndicator = props.showsVerticalScrollIndicator ?? true
@@ -652,17 +686,51 @@ private final class TouchSession {
             field.returnKeyType = props.returnKeyType == "done" ? .done : (props.returnKeyType == "go" ? .go : (props.returnKeyType == "search" ? .search : (props.returnKeyType == "send" ? .send : .default)))
             field.autocapitalizationType = props.autoCapitalize == "characters" ? .allCharacters : (props.autoCapitalize == "words" ? .words : (props.autoCapitalize == "sentences" ? .sentences : .none))
             field.autocorrectionType = props.autoCorrect == false ? .no : .default
-            field.accessibilityLabel = props.accessibilityLabel
             record.maxLength = props.maxLength
             field.delegate = props.maxLength == nil ? nil : self
             record.applyingValue = false
         }
     }
 
+    private func updateAccessibility(_ record: NodeRecord) {
+        guard let p = record.declaredProps else { return }
+        let view = record.view
+        let excluded = p.accessible == false || p.accessibilityRole == "none"
+        let clickable = p.accessibilityClickable ?? record.events.contains("tap")
+        let longClickable = p.accessibilityLongClickable ?? record.events.contains("longPress")
+        let explicit = p.accessible == true || p.accessibilityRole != nil || p.accessibilityLabel != nil || clickable || longClickable
+        view.isAccessibilityElement = !excluded && (explicit || record.defaultAccessibilityElement)
+        view.accessibilityElementsHidden = p.accessibilityHidden == true
+        view.accessibilityLabel = excluded ? nil : p.accessibilityLabel
+        view.accessibilityHint = excluded ? nil : p.accessibilityHint
+        view.accessibilityValue = excluded ? nil : p.accessibilityValue
+        var traits: UIAccessibilityTraits = p.accessibilityRole == nil ? record.defaultAccessibilityTraits : []
+        switch p.accessibilityRole {
+        case "button", "checkbox": traits.insert(.button)
+        case "text": traits.insert(.staticText)
+        case "image": traits.insert(.image)
+        case "search": traits.insert(.searchField)
+        default: break
+        }
+        if clickable { traits.insert(.button) }
+        if p.accessibilitySelected == true || p.accessibilityChecked == true { traits.insert(.selected) }
+        if p.disabled == true { traits.insert(.notEnabled) }
+        view.accessibilityTraits = excluded ? [] : traits
+        view.accessibilityCustomActions = nil
+        if !excluded && longClickable && record.events.contains("longPress") {
+            view.accessibilityCustomActions = [UIAccessibilityCustomAction(name: NSLocalizedString("Long press", comment: "Accessibility action"), actionHandler: { [weak self, weak record] _ in
+                guard let self, let record, record.declaredProps?.disabled != true,
+                      record.events.contains("longPress"), let id = self.nodes.first(where: { $0.value === record })?.key else { return false }
+                self.onEvent?(RendererEvent(type: "NativeEvent", nodeId: id, revision: self.revision, event: "longPress")); return true
+            })]
+        }
+    }
+
     private func releaseMedia(_ record: NodeRecord) {
         record.animation.cancel()
         record.imageGeneration = UUID()
-        record.native?.dispose(); record.native = nil
+        record.imageTask?.cancel(); record.imageTask = nil
+        let native = record.native; record.native = nil; native?.dispose()
         record.player?.pause()
         if let token = record.timeObserver { record.player?.removeTimeObserver(token) }
         if let token = record.endObserver { NotificationCenter.default.removeObserver(token) }
@@ -690,11 +758,11 @@ private final class TouchSession {
     private func updateImage(_ record: NodeRecord, props: RenderProps) {
         if let image = record.view as? UIImageView {
             image.contentMode = resizeMode(props.resizeMode)
-            image.accessibilityLabel = props.accessibilityLabel
             let source = props.src ?? ""
             if source != record.mediaSource {
                 record.mediaSource = source
                 let generation = UUID(); record.imageGeneration = generation
+                record.imageTask?.cancel(); record.imageTask = nil
                 image.image = nil
                 if let placeholder = props.placeholderSrc, let url = mediaURL(placeholder) { image.image = UIImage(contentsOfFile: url.path) }
                 guard let url = mediaURL(source) else {
@@ -712,13 +780,14 @@ private final class TouchSession {
                         else { self.emitMedia("loadFailure", id: self.nodeId(for: record), source: source, errorCode: 1) }
                     }
                 } else {
-                    URLSession.shared.dataTask(with: url) { [weak image, weak record, weak self] data, _, error in
+                    record.imageTask = URLSession.shared.dataTask(with: url) { [weak image, weak record, weak self] data, _, error in
                         DispatchQueue.main.async {
                             guard let image, let record, let self, record.imageGeneration == generation else { return }
                             if let data, let loaded = UIImage(data: data) { image.image = loaded; self.emitMedia("loadSuccess", id: self.nodeId(for: record), source: source) }
                             else { self.emitMedia("loadFailure", id: self.nodeId(for: record), source: source, errorCode: 1) }
                         }
-                    }.resume()
+                    }
+                    record.imageTask?.resume()
                 }
             }
         }

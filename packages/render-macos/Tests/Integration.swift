@@ -131,6 +131,16 @@ import AVKit
         wait("visible page resumes native video") { video.player?.rate != 0 }
         button("重置").accessibilityPerformPress()
         wait("TSX stop resets player") { video.player?.rate == 0 && video.player!.currentTime().seconds < 0.05 }
+        let readerCheckbox = descendants(view).first { $0.identifier?.rawValue == "accessibility-checkbox" }!
+        check(readerCheckbox.accessibilityRole() == .checkBox, "AOT reader role")
+        check(readerCheckbox.accessibilityPerformPress(), "AOT reader checkbox activates")
+        wait("AOT reader checkbox state") { (readerCheckbox.accessibilityValue() as? NSNumber)?.boolValue == true }
+        check(readerCheckbox.accessibilityCustomActions()?.first?.handler?() == true, "AOT reader long press")
+        wait("AOT reader long press callback") { label("已触发长按") }
+        button("播报当前结果").accessibilityPerformPress()
+        button("读屏聚焦到结果").accessibilityPerformPress()
+        RunLoop.main.run(until:Date(timeIntervalSinceNow:0.2))
+        check(!label("播报请求失败") && !label("聚焦请求失败"), "AOT reader ref methods accepted")
         let listStart = ProcessInfo.processInfo.systemUptime
         view.load(page:"virtual-list")
         func row(_ id: Int) -> NSView? { descendants(view).first { $0.identifier?.rawValue == "list-row-\(id)" } }

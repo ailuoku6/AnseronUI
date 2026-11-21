@@ -1,3 +1,4 @@
+import { cleanupAll } from './cleanup.js';
 import { BrowserRadioServices } from './radio-services.js';
 import { BrowserApplicationServices } from './application-services.js';
 import type { BrowserServiceOptions } from './application-services.js';
@@ -13,6 +14,7 @@ export class BrowserNativeServices {
   private tasks = new Map<string, AbortController>();
   private disposers = new Set<() => void>();
   private sequence = 0;
+  private disposed = false;
   private radio: BrowserRadioServices;
   private application: BrowserApplicationServices;
   constructor(private root: HTMLElement, private sources: Record<string, NativeEventSource> = {}, options: BrowserServiceOptions = {}) {
@@ -60,7 +62,7 @@ export class BrowserNativeServices {
     if (!stream) {
       if (!this.available(module, module === 'location' ? 'watchPosition' : 'subscribe')) fail('UNSUPPORTED: ' + module + '.subscribe');
       const stops: (() => void)[] = [];
-      stream = { module, stop: () => stops.forEach(stop => stop()) };
+      stream = { module, stop: () => cleanupAll(stops) };
       this.streams.set(id, stream);
       const source = Object.prototype.hasOwnProperty.call(this.sources, module) ? this.sources[module] : undefined;
       if (source) {
@@ -92,8 +94,11 @@ export class BrowserNativeServices {
       else current.waiting = complete;
     });
   }
-  private close(id: string) { this.streams.get(id)?.stop(); this.streams.delete(id); }
-  private remember(file: File): FileReference { const id = 'web-file-' + ++this.sequence; this.files.set(id, file); return { id, name: file.name, size: file.size, mimeType: file.type }; }
+  private close(id: string) {
+    const stream = this.streams.get(id); this.streams.delete(id);
+    if (stream) cleanupAll([() => stream.stop(), () => stream.waiting?.(null, 'CANCELLED')]);
+  }
+  private remember(file: File): FileReference { if (this.disposed) fail('CANCELLED'); const id = 'web-file-' + ++this.sequence; this.files.set(id, file); return { id, name: file.name, size: file.size, mimeType: file.type }; }
   private file(args: any): File { return this.files.get(String(args?.id)) ?? fail('INVALID_ARGUMENT: unknown file'); }
   private pick(photo: boolean, signal: AbortSignal): Promise<FileReference | null> {
     return new Promise(resolve => {
@@ -146,7 +151,7 @@ export class BrowserNativeServices {
   }
   async call(module: string, method: string, raw: unknown, signal: AbortSignal): Promise<unknown> {
     const args = (raw ?? {}) as any;
-    if (signal.aborted) fail('CANCELLED');
+    if (this.disposed || signal.aborted) fail('CANCELLED');
     if (module === 'events') { if (method === 'close') { this.close(String(args.id)); return null; } if (method === 'next') return this.event(String(args.id), String(args.module), signal); fail('UNSUPPORTED'); }
     if (module === 'capabilities') return this.available(String(args.module), args.method);
     if (!this.available(module, method)) fail('UNSUPPORTED: ' + module + '.' + method);
@@ -196,6 +201,7 @@ export class BrowserNativeServices {
       const timeout = Number(args.timeout ?? 30000); if (!Number.isFinite(timeout) || timeout <= 0) fail('INVALID_ARGUMENT: timeout');
       const taskId = String(args.taskId ?? ''); if (module === 'transfers') { if (!taskId || this.tasks.has(taskId)) fail('INVALID_ARGUMENT: duplicate taskId'); }
       const controller = new AbortController(); const abort = () => controller.abort(); signal.addEventListener('abort', abort, { once: true });
+      this.disposers.add(abort);
       if (module === 'transfers') this.tasks.set(taskId, controller);
       let timedOut = false;
       const timer = this.win.setTimeout(() => { timedOut = true; abort(); }, timeout);
@@ -211,9 +217,14 @@ export class BrowserNativeServices {
         if (method === 'download') return this.remember(new File([blob], new URL(options.url, this.win.location.href).pathname.split('/').pop() || 'download', { type: blob.type }));
         return { status: response.status, headers, body: await blob.text() };
       } catch (error) { if (controller.signal.aborted) fail(timedOut ? 'TIMEOUT' : 'CANCELLED'); throw error; }
-      finally { this.win.clearTimeout(timer); signal.removeEventListener('abort', abort); if (module === 'transfers') this.tasks.delete(taskId); }
+      finally { this.win.clearTimeout(timer); signal.removeEventListener('abort', abort); this.disposers.delete(abort); if (module === 'transfers') this.tasks.delete(taskId); }
     }
     fail('UNSUPPORTED');
   }
-  dispose() { this.radio.dispose(); for (const id of this.streams.keys()) this.close(id); for (const stop of this.disposers) stop(); this.disposers.clear(); for (const task of this.tasks.values()) task.abort(); this.tasks.clear(); this.files.clear(); }
+  dispose() {
+    if (this.disposed) return; this.disposed = true;
+    const streams = Array.from(this.streams.keys()), stops = Array.from(this.disposers), tasks = Array.from(this.tasks.values());
+    this.disposers.clear(); this.tasks.clear(); this.files.clear();
+    cleanupAll([() => this.radio.dispose(), ...streams.map(id => () => this.close(id)), ...stops, ...tasks.map(task => () => task.abort())]);
+  }
 }

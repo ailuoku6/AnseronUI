@@ -1,3 +1,4 @@
+import { cleanupAll } from './cleanup.js';
 import { BrowserNativeServices } from "./native-services.js";
 import type { PlatformExtensions } from "./extensions.js";
 import { ReferenceRuntime } from "@anseronui/core";
@@ -151,11 +152,9 @@ export class BrowserHost<R extends BrowserRuntimeAdapter = BrowserRuntimeAdapter
     this.disposed = true;
     try { this.send({ type: "DestroySurface" }); await this.flush(); }
     finally {
-      this.profileWaiter?.reject(new Error('SURFACE_DISPOSED')); this.profileWaiter = null;
-      this.backWaiter?.(false); this.backWaiter = null;
-      for (const cancel of this.requests.values()) cancel();
-      this.requests.clear();
-      this.nativeServices.dispose(); this.renderer.dispose(); this.runtime.dispose();
+      const profile = this.profileWaiter, back = this.backWaiter; this.profileWaiter = null; this.backWaiter = null;
+      const cancellations = Array.from(this.requests.values()); this.requests.clear();
+      cleanupAll([() => profile?.reject(new Error('SURFACE_DISPOSED')), () => back?.(false), ...cancellations, () => this.nativeServices.dispose(), () => this.renderer.dispose(), () => this.runtime.dispose()]);
     }
   }
 

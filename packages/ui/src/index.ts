@@ -79,12 +79,29 @@ export interface TouchEvent extends TouchPoint {
   /** Call synchronously to stop traversal to other nodes for this event. */
   stopPropagation(): void;
 }
+export type AccessibilityRole = "button" | "text" | "image" | "checkbox" | "search" | "none";
+export interface AccessibilityInfo {
+  /** Reader actions; defaults to the bound onClick/onLongPress handlers. */
+  clickable: boolean;
+  longClickable: boolean;
+}
 export interface CommonProps {
   key?: Key; style?: Style; children?: Child;
   ref?: RefTarget<NodeHandle>;
   /** Animate this node's changed visual styles and computed frame; initial mount is immediate. */
   animation?: AnimationOptions;
-  testID?: string; accessibilityLabel?: string; accessibilityRole?: "button";
+  testID?: string;
+  accessibilityLabel?: string;
+  accessibilityRole?: AccessibilityRole;
+  accessibilityHint?: string;
+  accessibilityValue?: string;
+  /** Expose this node to the reader using platform grouping. false excludes only this node. */
+  accessible?: boolean;
+  /** Exclude this node and its descendants from the accessibility tree. */
+  accessibilityHidden?: boolean;
+  accessibilityChecked?: boolean;
+  accessibilitySelected?: boolean;
+  accessibilityInfo?: AccessibilityInfo;
   onClick?: () => void;
   onLongPress?: () => void;
   /** Synchronous system back callback. Return true to consume the press. */
@@ -180,6 +197,10 @@ export interface NodeHandle {
   animate(style: AnimationStyle, options?: AnimationOptions): Promise<AnimationResult>;
   /** Freeze at the current displayed values. */
   cancelAnimation(): Promise<void>;
+  /** Requests reader focus; does not open the input keyboard. */
+  accessibilityFocus(): Promise<void>;
+  /** Resolves when the host accepts the request, not when speech finishes. */
+  accessibilityAnnounce(message: string): Promise<void>;
   focus(): Promise<void>;
   blur(): Promise<void>;
   scrollTo(x: number, y: number, animated?: boolean): Promise<void>;

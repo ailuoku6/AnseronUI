@@ -1,3 +1,4 @@
+import { cleanup } from './Cleanup';
 class Subscription {
   readonly module: string;
   queue: Object[] = [];
@@ -41,7 +42,7 @@ export class HarmonyEvents {
   close(id: string): void {
     const entry = this.entries.get(id); if (!entry) return;
     this.entries.delete(id); entry.reject?.(new Error('CANCELLED'));
-    if (!this.hasModule(entry.module)) this.onChange(entry.module, false);
+    if (!this.hasModule(entry.module)) cleanup(() => this.onChange(entry.module, false));
   }
   hasModule(module: string): boolean { for (const entry of this.entries.values()) if (entry.module === module) return true; return false; }
   dispose(): void { this.closed = true; const ids = Array.from(this.entries.keys()); for (const id of ids) this.close(id); }

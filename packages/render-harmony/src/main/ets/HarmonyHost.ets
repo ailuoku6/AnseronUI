@@ -1,3 +1,5 @@
+import accessibility from '@ohos.accessibility';
+import { cleanup } from './Cleanup';
 import { HarmonyMedia } from './HarmonyMedia';
 import { HarmonyEvents } from './HarmonyEvents';
 import { window } from '@kit.ArkUI';
@@ -64,6 +66,7 @@ interface Inspection { type: string; enabled: boolean; reset: boolean; }
 interface Ack { type: string; revision: number; reason?: string; }
 interface Result { type: string; requestId: number; ok: boolean; value: string; }
 interface Measurement { type: string; requestId: number; nodeId: number; width: number; height: number; baseline: number; }
+interface AccessibilityArgs { message?: string; }
 export interface ServiceArgs {
   milliseconds?: number; url?: string; method?: string; body?: string; timeout?: number; headers?: Record<string, string>;
   namespace?: string; key?: string; value?: string; text?: string;
@@ -284,6 +287,16 @@ export class HarmonyHost {
       }
       if (p.module === '__view') {
         if (p.method === 'animate') { const clock = this.animationClock(); cancelOperation = () => clock.cancel(args.nodeId!); clock.animate(args.nodeId!, args.args as AnimationRequest).then(value => complete(true, value)).catch((error: Error) => complete(false, String(error))); }
+        else if (p.method === 'accessibilityAnnounce' || p.method === 'accessibilityFocus') {
+          const values = args.args as AccessibilityArgs;
+          if (p.method === 'accessibilityAnnounce' && (typeof values?.message !== 'string' || !values.message.length || values.message.length > 16384)) throw new Error('INVALID_ACCESSIBILITY_MESSAGE');
+          let target = '';
+          this.ui.runScopedTask(() => { target = native.invokeView(this.renderer, args.nodeId!, p.method!, JSON.stringify(args.args ?? null)) as string; });
+          const event = new accessibility.EventInfo(p.method === 'accessibilityFocus' ? 'requestFocusForAccessibility' : 'announceForAccessibility', this.context.abilityInfo.bundleName, 'common');
+          if (p.method === 'accessibilityFocus') event.customId = target;
+          else event.textAnnouncedForAccessibility = values.message!;
+          accessibility.sendAccessibilityEvent(event).then(() => complete(true, null)).catch((error: Error) => complete(false, serviceError(error)));
+        }
         else if (p.method === 'cancelAnimation') { this.animations?.cancel(args.nodeId!); complete(true, null); }
         else {
           let result: Object | null = null;
@@ -488,19 +501,21 @@ export class HarmonyHost {
   private finish(): void {
     if (this.closed) return;
     this.closed = true;
-    this.cancellations.forEach(action => action()); this.cancellations.clear();
+    const cancellations = Array.from(this.cancellations.values()); this.cancellations.clear(); cancellations.forEach(action => cleanup(action));
     clearTimeout(this.backDeadline); this.backWaiter = null;
-    this.extensions.forEach(extension => extension.dispose());
-    this.stopLinking?.(); this.stopLinking = null;
-    this.events.dispose();
-    try { this.systemWindow?.off('keyboardHeightChange', this.keyboardListener); this.systemWindow?.off('avoidAreaChange', this.avoidListener); this.netConnection?.unregister(() => {}); } catch (_error) {}
+    const extensions = this.extensions; this.extensions = []; extensions.forEach(extension => cleanup(() => extension.dispose()));
+    const stopLinking = this.stopLinking; this.stopLinking = null; if (stopLinking) cleanup(stopLinking);
+    cleanup(() => this.events.dispose());
+    cleanup(() => this.systemWindow?.off('keyboardHeightChange', this.keyboardListener));
+    cleanup(() => this.systemWindow?.off('avoidAreaChange', this.avoidListener));
+    cleanup(() => this.netConnection?.unregister(() => {}));
     this.systemWindow = null; this.netConnection = null;
-    this.animations?.dispose(); this.transitions.clear();
-    this.services?.dispose(); this.services = null;
-    this.radio?.dispose(); this.radio = null; this.applicationServices = null;
-    if (this.worker) native.close(this.worker);
-    if (this.renderer) native.unmount(this.renderer);
-    this.media?.dispose();
+    cleanup(() => this.animations?.dispose()); this.animations = null; this.transitions.clear();
+    cleanup(() => this.services?.dispose()); this.services = null;
+    cleanup(() => this.radio?.dispose()); this.radio = null; this.applicationServices = null;
+    if (this.worker) cleanup((): void => { native.close(this.worker); });
+    cleanup(() => this.media?.dispose()); this.media = null;
+    if (this.renderer) cleanup((): void => { native.unmount(this.renderer); });
     this.worker = 0; this.renderer = 0;
   }
 }

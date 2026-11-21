@@ -28,7 +28,7 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(paths.includes('dist/sdk/packages/devtools/src/vite.ts'));
     assert.ok(!paths.some(path => path.endsWith('/.DS_Store')));
     for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md',
-      'docs/guides/app-icons.md', 'docs/guides/styles.md', 'docs/guides/virtual-list.md', 'docs/guides/page-lifecycle.md',
+      'docs/guides/project/app-icons.md', 'docs/guides/ui/styles.md', 'docs/guides/ui/virtual-list.md', 'docs/guides/navigation/page-lifecycle.md',
       'docs/diagnostics/devtools.md', 'docs/diagnostics/performance.md', 'docs/platforms/harmonyos.md',
       'scripts/anseronui.mjs', 'scripts/templates/app/gitignore', 'scripts/harmony-app.mjs', 'scripts/harmony-library.mjs',
       'packages/render-harmony/src/main/ets/HarmonyMedia.ets', 'packages/render-harmony/src/main/ets/HarmonyVideoSurface.ets',
@@ -73,7 +73,7 @@ test('packed SDK creates a portable app with all native templates and no private
     const app = join(directory, 'PortableApp');
     run(process.execPath, [join(directory, 'package/dist/sdk/scripts/anseronui.mjs'), 'create', app]);
     const readme = readFileSync(join(app, 'README.md'), 'utf8');
-    const iconDocs = 'node_modules/anseronui/dist/sdk/docs/guides/app-icons.md';
+    const iconDocs = 'node_modules/anseronui/dist/sdk/docs/guides/project/app-icons.md';
     assert.ok(readme.includes(`](${iconDocs})`));
     assert.ok(existsSync(join(directory, 'package', iconDocs.replace('node_modules/anseronui/', ''))));
     assert.ok(readme.includes('docs/platforms/harmonyos.md'));

@@ -46,6 +46,7 @@ import AVKit
         return image
     }
     static func run() throws {
+        try accessibility()
         try darkStyles()
         try themeImagesAndLineHeight()
         try text()
@@ -57,6 +58,31 @@ import AVKit
         try animation()
         try media()
         print("PASS: renderer regressions (text layout/hits, image scaling, IME, input, mouse cancellation, animations, video lifecycle)")
+    }
+    static func accessibility() throws {
+        let f = Fixture(); defer { f.close() }
+        try f.create(1,"View",["testID":"reader","accessibilityRole":"checkbox","accessibilityLabel":"通知","accessibilityHint":"切换通知","accessibilityChecked":true],NSRect(x:0,y:0,width:100,height:40))
+        try f.bind(1,["tap","longPress"])
+        let view = f.widget("reader")
+        Integration.check(view.accessibilityRole() == .checkBox && view.isAccessibilityElement(),"checkbox is a reader element")
+        Integration.check(view.accessibilityLabel() == "通知" && view.accessibilityHelp() == "切换通知","reader label and help")
+        Integration.check((view.accessibilityValue() as? NSNumber)?.boolValue == true,"checked reader value")
+        Integration.check(view.accessibilityPerformPress(),"reader press reaches tap handler")
+        Integration.check(f.events.last?.type == "Tap","reader press event")
+        let action = view.accessibilityCustomActions()!.first!
+        Integration.check(action.handler?() == true,"reader long press action")
+        Integration.check(f.events.last?.event == "longPress","reader long press event")
+        try f.apply([["type":"SetProps","nodeId":1,"props":["testID":"reader","accessibilityRole":"button","disabled":true]]])
+        Integration.check(!view.accessibilityPerformPress() && !view.isAccessibilityEnabled(),"disabled reader activation")
+        try f.apply([["type":"SetProps","nodeId":1,"props":["testID":"reader","accessibilityRole":"none"]]])
+        Integration.check(!view.isAccessibilityElement(),"none excludes node")
+        try f.apply([["type":"SetProps","nodeId":1,"props":["testID":"reader","accessibilityHidden":true]]])
+        Integration.check(view.isAccessibilityHidden(),"hide reader subtree")
+        try f.apply([["type":"SetProps","nodeId":1,"props":["testID":"reader"]]])
+        Integration.check(!view.isAccessibilityHidden() && view.accessibilityHelp() == nil && view.accessibilityLabel() == nil,"removed reader overrides reset")
+        try f.create(2,"Text",["testID":"reader-text","text":"打开","accessibilityRole":"button"],NSRect(x:0,y:50,width:100,height:40))
+        try f.bind(2,["tap"])
+        Integration.check(f.widget("reader-text").accessibilityPerformPress(),"text reader button activation")
     }
     static func themeImagesAndLineHeight() throws {
         let f = Fixture(); defer { f.close() }

@@ -39,7 +39,11 @@ export class BrowserPageStack<T extends BrowserStackPage = BrowserStackPage> {
   private async synchronize(): Promise<void> {
     if (this.disposed) return;
     const retained = new Set(this.router.routeEntries.map(entry => entry.id));
-    for (const [id, page] of this.pages) if (!retained.has(id)) { this.pages.delete(id); await page.host.destroy(); page.root.remove(); }
+    let failure: unknown;
+    for (const [id, page] of this.pages) if (!retained.has(id)) {
+      this.pages.delete(id);
+      try { await this.releasePage(page); } catch (error) { failure ??= error; }
+    }
     const id = this.router.entryId; const entry = this.router.routeEntries.find(value => value.id === id);
     if (!entry) return;
     if (this.activeId !== entry.id && this.activeId !== undefined) await this.pages.get(this.activeId)?.host.setVisibility?.(false);
@@ -58,6 +62,14 @@ export class BrowserPageStack<T extends BrowserStackPage = BrowserStackPage> {
     await this.evictHidden(this.maxRetainedPages - 1);
     // The container may have changed size while this entry was covered.
     if (this.router.entryId === entry.id) await current.host.resize(current.root.clientWidth, current.root.clientHeight);
+    if (failure) throw failure;
+  }
+  private async releasePage(page: { host: T; root: HTMLElement }): Promise<void> {
+    let failure: unknown;
+    try { await page.host.setVisibility?.(false); } catch (error) { failure = error; }
+    try { await page.host.destroy(); } catch (error) { failure ??= error; }
+    finally { page.root.remove(); }
+    if (failure) throw failure;
   }
   private validateLimit(limit: number): void {
     if (limit !== Infinity && (!Number.isInteger(limit) || limit < 1)) throw new Error('INVALID_PAGE_RETENTION_LIMIT');
@@ -83,11 +95,14 @@ export class BrowserPageStack<T extends BrowserStackPage = BrowserStackPage> {
   }
   private async evictHidden(keep: number): Promise<void> {
     const hidden = this.router.routeEntries.filter(entry => entry.id !== this.router.entryId && this.pages.has(entry.id));
+    let failure: unknown;
     for (const entry of hidden.slice(0, Math.max(0, hidden.length - keep))) {
       const page = this.pages.get(entry.id)!;
-      this.pages.delete(entry.id); await page.host.setVisibility?.(false); await page.host.destroy(); page.root.remove();
-      this.retention.onEvict?.(entry.page);
+      this.pages.delete(entry.id);
+      try { await this.releasePage(page); } catch (error) { failure ??= error; }
+      try { this.retention.onEvict?.(entry.page); } catch (error) { failure ??= error; }
     }
+    if (failure) throw failure;
   }
   async resize(): Promise<void> {
     if (this.disposed) return;

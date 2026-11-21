@@ -1,8 +1,8 @@
 # 开源文档整理
 
 - 状态：done
-- 更新日期：2026-11-08
-- 当前重点：补充 Core 多页合包、独立编译设计边界、scriptc/Flexily 技术基础与 TS/TSX 限制；许可证仍待所有者选择。
+- 更新日期：2026-11-20
+- 当前重点：文档按页面、界面、能力、工程四部分组织，目录只在 `docs/README.md`。许可证仍待所有者选择。
 - 工作区：AnseronUI（本地目录名仍为 TSNative）。
 
 ## 文档地图
@@ -24,6 +24,19 @@
 - `.gitignore` 覆盖源码树中的生成 Core 副本、编译器 checkout、依赖缓存和本机状态；保留源码、锁文件和示例资源。
 - 前轮：类型检查、36 项框架测试、CLI/构建测试、107 个链接、5 段 TSX 示例及 50 个忽略用例通过。
 - 本轮增补：类型检查、36 项框架测试、构建指纹测试通过；21 份文档 140 个链接通过；3 个新示例通过类型检查、4 项 JSX/Hook 拒绝规则及 4 个固定版 library 编译探针符合文档。
+
+## 2026-11-20 入门路径
+
+- 应用作者使用 `npx anseronui create`。`--local-framework` 只写在框架开发文档。
+- 入门文档是 `docs/getting-started/quick-start.md` 和 `docs/getting-started/pages.md`。原来的 `app-development.md` 已删除。
+- 公开示例的导入路径是 `anseronui/ui`。
+
+## 2026-11-20 结构
+
+- 根目录新增 `CONTRIBUTING.md`，只保留贡献入口。
+- `docs/reference/components.md` 与 `docs/reference/typescript.md` 是查阅文档。
+- `docs/architecture/overview.md` 是架构说明。
+- `docs/README.md` 只做目录，不再写文档职责。
 
 ## 后续事项
 

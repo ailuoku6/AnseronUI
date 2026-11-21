@@ -5,7 +5,7 @@
 `useEffect` 仍表达挂载与卸载。需要随显示/隐藏停止和重新启动的资源使用 `usePageEffect`：
 
 ```tsx
-import { usePageEffect, usePageVisibility, useServices, useTimers } from '@anseronui/ui';
+import { usePageEffect, usePageVisibility, useServices, useTimers } from 'anseronui/ui';
 
 const services = useServices();
 const timers = useTimers();
@@ -20,7 +20,7 @@ usePageEffect(() => {
 }, []);
 ```
 
-订阅参数应按对应原生能力填写，详见[标准系统能力](native-services.md)。`services.page.isVisible()` 可同步读取，`services.page.subscribe(listener)` 可直接监听并返回取消函数。重复设置相同可见性不会重复触发 setup/cleanup。依赖数组语义与 `useEffect` 相同；没有 cleanup 的工作需要自行确保可重复启动。
+订阅参数应按对应原生能力填写，详见[标准系统能力](../services/native-services.md)。`services.page.isVisible()` 可同步读取，`services.page.subscribe(listener)` 可直接监听并返回取消函数。重复设置相同可见性不会重复触发 setup/cleanup。依赖数组语义与 `useEffect` 相同；没有 cleanup 的工作需要自行确保可重复启动。
 
 | 资源 | 隐藏行为 | 恢复行为 |
 | --- | --- | --- |

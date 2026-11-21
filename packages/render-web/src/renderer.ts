@@ -1,3 +1,5 @@
+import { applyAccessibility } from "./accessibility.js";
+import { cleanupAll } from './cleanup.js';
 import { NodeAnimation, visualDefaults, colorValues, paintElement } from "./animation.js";
 import type { NativeViewFactory, NativeViewInstance } from "./extensions.js";
 import type { EventKind, NodeKind, RenderCommand, RenderProps } from "@anseronui/protocol";
@@ -22,6 +24,8 @@ export type RendererEvent = { type: "Tap"; nodeId: number; revision: number } |
 /** Applies one checked transaction to a single DOM root. */
 export class DOMRenderer {
   private records = new Map<number, NodeRecord>();
+  private announcement?: HTMLElement;
+  private announcementTimer?: ReturnType<typeof setTimeout>;
   private revision = 0;
   private disposed = false;
   private pageActive = true;
@@ -127,19 +131,27 @@ export class DOMRenderer {
   }
 
   clear(): void {
+    clearTimeout(this.announcementTimer); this.announcementTimer = undefined;
+    this.announcement = undefined;
     this.resumeVideos.clear();
     this.pointers.clear();
-    for (const record of this.records.values()) { record.animation.cancel(); this.releaseMedia(record); record.native?.dispose?.(); }
-    this.root.replaceChildren();
-    this.records.clear();
-    this.revision = 0;
+    const records = Array.from(this.records.values()); this.records.clear(); this.revision = 0;
+    cleanupAll([...records.map(record => () => this.releaseRecord(record)), () => this.root.replaceChildren()]);
+  }
+  private releaseRecord(record: NodeRecord): void {
+    const native = record.native; record.native = undefined;
+    cleanupAll([() => record.animation.cancel(), () => this.releaseMedia(record), () => native?.dispose?.()]);
   }
   private releaseMedia(record: NodeRecord): void {
+    if (record.kind === 'Image') { record.element.removeAttribute('src'); return; }
     if (record.kind !== 'Video') return;
     const video = record.element as HTMLVideoElement;
-    this.resumeVideos.delete(video); video.pause(); video.removeAttribute('src'); video.load();
+    this.resumeVideos.delete(video); cleanupAll([() => video.pause(), () => video.removeAttribute('src'), () => video.load()]);
   }
-  dispose(): void { if (!this.disposed) { this.clear(); this.appearance?.removeEventListener('change', this.appearanceChanged); for (const [name, listener] of this.pointerListeners) this.root.removeEventListener(name, listener, true); this.disposed = true; } }
+  dispose(): void {
+    if (this.disposed) return; this.disposed = true;
+    cleanupAll([() => this.clear(), () => this.appearance?.removeEventListener('change', this.appearanceChanged), ...Array.from(this.pointerListeners, ([name, listener]) => () => this.root.removeEventListener(name, listener, true))]);
+  }
   getNode(nodeId: number): HTMLElement | undefined { return this.records.get(nodeId)?.element; }
 
   async invoke(nodeId: number, method: string, args: any): Promise<unknown> {
@@ -152,6 +164,26 @@ export class DOMRenderer {
     }
     if (method === "animate") return record.animation.animate(args?.style, args?.options ?? {});
     if (method === "cancelAnimation") { record.animation.cancel(); return null; }
+    if (method === "accessibilityAnnounce") {
+      if (typeof args?.message !== "string" || !args.message.length || args.message.length > 16384) throw new Error("INVALID_ACCESSIBILITY_MESSAGE");
+      if (!this.announcement) {
+        this.announcement = element.ownerDocument.createElement("div");
+        this.announcement.setAttribute("role", "status");
+        this.announcement.setAttribute("aria-live", "polite");
+        this.announcement.setAttribute("aria-atomic", "true");
+        this.announcement.style.cssText = "position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap";
+        this.root.append(this.announcement);
+      }
+      clearTimeout(this.announcementTimer);
+      this.announcement.textContent = "";
+      this.announcementTimer = setTimeout(() => { if (this.announcement) this.announcement.textContent = args.message; }, 50);
+      return null;
+    }
+    if (method === "accessibilityFocus") {
+      if (element.closest('[aria-hidden="true"]') || record.props?.accessible === false || record.props?.accessibilityRole === "none") throw new Error("NOT_ACCESSIBLE");
+      if (!element.hasAttribute("tabindex") && record.kind !== "TextInput") element.tabIndex = -1;
+      element.focus(); return null;
+    }
     if (record.native) {
       if (!record.native.invoke) throw new Error("UNSUPPORTED_VIEW_METHOD: " + method);
       return (await record.native.invoke(method, args)) ?? null;
@@ -246,7 +278,8 @@ export class DOMRenderer {
         const span = (event.target as Element | null)?.closest<HTMLElement>("[data-tsn-span]");
         if (span && record.enabled.has("spanClick")) this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "spanClick", value: span.dataset.tsnSpan });
       });
-      element.addEventListener("click", () => {
+      element.addEventListener("click", event => {
+        if (record.props?.disabled === true || (record.props?.accessibilityClickable === false && event.detail === 0)) return;
         if (record.enabled.has("tap")) this.onEvent({ type: "Tap", nodeId: command.nodeId, revision: this.revision });
       });
       let pressTimer = 0;
@@ -292,13 +325,16 @@ export class DOMRenderer {
           this.onEvent({ type: "InputChange", nodeId: command.nodeId, revision: this.revision, value: (element as HTMLInputElement).value, inputRevision: record.inputRevision });
         });
       }
+      element.addEventListener("anseronui-accessibility-longpress", () => {
+        if (record.enabled.has("longPress") && record.props?.disabled !== true) this.onEvent({ type: "NativeEvent", nodeId: command.nodeId, revision: this.revision, event: "longPress" });
+      });
       return;
     }
     if (command.type === "RemoveNode") {
       const record = this.records.get(command.nodeId)!;
       const descendants = new Set<HTMLElement>([record.element]);
       for (const child of record.element.querySelectorAll("*")) descendants.add(child as HTMLElement);
-      for (const [id, item] of this.records) if (descendants.has(item.element)) { this.records.delete(id); item.animation.cancel(); this.releaseMedia(item); item.native?.dispose?.(); }
+      for (const [id, item] of this.records) if (descendants.has(item.element)) { this.records.delete(id); this.releaseRecord(item); }
       record.element.remove();
       return;
     }
@@ -317,6 +353,7 @@ export class DOMRenderer {
     } else if (command.type === "BindEvent") {
       if (command.enabled) record.enabled.add(command.event);
       else record.enabled.delete(command.event);
+      applyAccessibility(record.element, record.kind, record.props ?? {}, record.enabled.has("tap"), record.enabled.has("longPress"));
     }
   }
 
@@ -331,19 +368,7 @@ export class DOMRenderer {
     if (!appearanceOnly) record.native?.setProps(JSON.parse(String(props.nativeProps ?? "{}")));
     const element = record.element;
     if (typeof props.testID === "string") element.dataset.testid = props.testID;
-    if (typeof props.accessibilityLabel === "string") element.setAttribute("aria-label", props.accessibilityLabel);
-    if (record.kind === "View") {
-      if (props.accessibilityRole === "button") {
-        element.setAttribute("role", "button");
-        element.setAttribute("aria-disabled", String(props.disabled === true));
-        element.tabIndex = props.disabled === true ? -1 : 0;
-        element.onkeydown = event => {
-          if ((event.key === "Enter" || event.key === " ") && !event.repeat && props.disabled !== true) {
-            event.preventDefault(); element.click();
-          }
-        };
-      } else { element.removeAttribute("role"); element.removeAttribute("aria-disabled"); element.removeAttribute("tabindex"); element.onkeydown = null; }
-    }
+    applyAccessibility(element, record.kind, props, record.enabled.has("tap"), record.enabled.has("longPress"));
     if (record.kind === "Text") element.textContent = String(props.text ?? "");
     if (record.kind === "RichText") {
       const spans = JSON.parse(String(props.spans ?? "[]")) as { text?: string; color?: string; dmColor?: string; fontSize?: number; fontWeight?: string; fontStyle?: string; textDecorationLine?: string }[];

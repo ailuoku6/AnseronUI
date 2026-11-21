@@ -36,7 +36,7 @@ private final class ServiceStream {
     var waiting: NativeCompletion?
     var stops: [() -> Void] = []
     init(_ module: String) { self.module = module }
-    func dispose() { stops.forEach { $0() }; stops.removeAll(); waiting = nil }
+    func dispose() { let actions = stops; stops.removeAll(); waiting = nil; actions.forEach { $0() } }
 }
 @MainActor final class StandardServices: NSObject, CLLocationManagerDelegate {
     #if os(iOS)
@@ -473,13 +473,13 @@ private final class ServiceStream {
     func dispose() {
         guard !disposed else { return }; disposed = true
         radio.dispose()
-        streams.values.forEach { $0.dispose() }; streams.removeAll(); networkRequests.removeAll(); networkMonitor?.cancel(); networkMonitor = nil
+        let activeStreams = Array(streams.values); streams.removeAll(); activeStreams.forEach { $0.dispose() }; networkRequests.removeAll(); networkMonitor?.cancel(); networkMonitor = nil
         locationRequests.removeAll(); locationPermission = nil; locationManager?.stopUpdatingLocation(); locationManager?.delegate = nil
         let cancels = uiCancellations.values; uiCancellations.removeAll(); cancels.forEach { $0() }
         #if os(iOS)
         pickers.values.forEach { $0.controller.dismiss(animated: false) }; pickers.removeAll()
         #endif
-        tasks.values.forEach { $0.cancel() }; tasks.removeAll(); observations.removeAll()
+        let activeTasks = Array(tasks.values); tasks.removeAll(); activeTasks.forEach { $0.cancel() }; observations.removeAll()
         files.values.forEach { try? FileManager.default.removeItem(at: $0) }; files.removeAll()
     }
 }

@@ -56,6 +56,9 @@ data class TextSize(val width: Float, val height: Float, val baseline: Float)
 data class TouchPoint(val x: Double, val y: Double, val pageX: Double, val pageY: Double, val pointerId: Long)
 
 private class NodeRecord(val view: View, val content: ViewGroup?, val kind: String) {
+    val defaultAccessibilityDelegate = if (android.os.Build.VERSION.SDK_INT >= 29) view.accessibilityDelegate else null
+    var accessibilityOverridden = false
+    val defaultAccessibilityImportance = view.importantForAccessibility
     val defaultTypeface = (view as? TextView)?.typeface
     var declaredProps: JSONObject? = null
     var resolvedProps: JSONObject? = null
@@ -69,6 +72,7 @@ private class NodeRecord(val view: View, val content: ViewGroup?, val kind: Stri
     var applyingValue = false
     var mediaSource = ""
     var mediaGeneration = AtomicLong(0)
+    val imageLoads = mutableListOf<() -> Unit>()
     var timePoll: Runnable? = null
     var touchAction = "auto"
     var native: AndroidNativeComponent? = null
@@ -379,7 +383,12 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         }
     }
 
-    fun clear() { sessions.clear(); textMeasurements.evictAll(); nodes.values.forEach { releaseNode(it) }; surface.removeAllViews(); nodes.clear(); recordsByView.clear(); textPool.clear(); revision = 0L }
+    fun clear() {
+        sessions.clear(); textMeasurements.evictAll()
+        val records = nodes.values.toList(); nodes.clear(); recordsByView.clear(); textPool.clear(); revision = 0L
+        records.forEach { cleanup { releaseNode(it) } }
+        cleanup { surface.removeAllViews() }
+    }
     fun invoke(nodeId: Long, method: String, args: Any?, complete: NativeCompletion): (() -> Unit)? {
         val record = nodes[nodeId] ?: error("NODE_UNMOUNTED")
         if (method == "measure") {
@@ -394,6 +403,21 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             return { record.animation.cancel() }
         }
         if (method == "cancelAnimation") { record.animation.cancel(); complete(Result.success(null)); return null }
+        if (method == "accessibilityAnnounce") {
+            val message = (args as? JSONObject)?.opt("message") as? String ?: error("INVALID_ACCESSIBILITY_MESSAGE")
+            require(message.isNotEmpty() && message.length <= 16384) { "INVALID_ACCESSIBILITY_MESSAGE" }
+            record.view.announceForAccessibility(message); complete(Result.success(null)); return null
+        }
+        if (method == "accessibilityFocus") {
+            require(record.view.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO && record.view.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS) { "NOT_ACCESSIBLE" }
+            var ancestor: View? = record.view
+            while (ancestor != null) {
+                require(ancestor.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS && ancestor.visibility == View.VISIBLE) { "NOT_ACCESSIBLE" }
+                ancestor = ancestor.parent as? View
+            }
+            record.view.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+            complete(Result.success(null)); return null
+        }
         record.native?.let { return it.invoke(method, args, complete) }
         val view = record.view
         if (method == "focus" && view is EditText) {
@@ -639,12 +663,76 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 val event = command.getString("event")
                 val enabled = command.getBoolean("enabled")
                 if (enabled) record.events.add(event) else record.events.remove(event)
+                updateAccessibility(record)
                 if (record.kind in setOf("View", "Text", "RichText", "ScrollView", "Image")) {
                     if (event == "tap") record.view.isClickable = enabled
                     if (event == "longPress") record.view.isLongClickable = enabled
                 }
             }
             else -> error("Unknown command")
+        }
+    }
+
+    private fun updateAccessibility(record: NodeRecord) {
+        val p = record.declaredProps ?: return
+        val view = record.view
+        val overrides = p.keys().asSequence().any { it == "accessible" || it.startsWith("accessibility") }
+        // Native extensions own their default delegate and virtual accessibility tree.
+        if (record.kind == "Native" && !overrides) {
+            if (record.accessibilityOverridden) {
+                view.accessibilityDelegate = record.defaultAccessibilityDelegate
+                view.importantForAccessibility = record.defaultAccessibilityImportance
+            }
+            record.accessibilityOverridden = false
+            return
+        }
+        record.accessibilityOverridden = true
+        val role = p.optString("accessibilityRole")
+        val excluded = role == "none" || (p.has("accessible") && !p.optBoolean("accessible"))
+        val explicit = p.optBoolean("accessible") || role.isNotEmpty() || p.has("accessibilityLabel")
+        view.contentDescription = if (excluded) null else p.optString("accessibilityLabel").takeIf { it.isNotEmpty() }
+        view.importantForAccessibility = when {
+            p.optBoolean("accessibilityHidden") -> View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            excluded -> View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            explicit -> View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            else -> record.defaultAccessibilityImportance
+        }
+        if (record.kind == "View") view.isFocusable = !excluded && (explicit || record.events.contains("tap") || record.events.contains("longPress"))
+        if (android.os.Build.VERSION.SDK_INT >= 28) view.isScreenReaderFocusable = !excluded && (p.optBoolean("accessible") || role.isNotEmpty())
+        view.isSelected = p.optBoolean("accessibilitySelected")
+        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = when (role) {
+                    "button" -> "android.widget.Button"
+                    "text" -> "android.widget.TextView"
+                    "image" -> "android.widget.ImageView"
+                    "checkbox" -> "android.widget.CheckBox"
+                    "search" -> "android.widget.EditText"
+                    else -> info.className
+                }
+                info.isCheckable = role == "checkbox"
+                info.isChecked = p.optBoolean("accessibilityChecked")
+                info.isSelected = p.optBoolean("accessibilitySelected")
+                if (p.has("accessibilityHint")) info.hintText = p.optString("accessibilityHint")
+                if (android.os.Build.VERSION.SDK_INT >= 30) info.stateDescription = p.optString("accessibilityValue").takeIf { it.isNotEmpty() }
+                else if (p.has("accessibilityValue")) info.contentDescription = listOfNotNull(view.contentDescription, p.optString("accessibilityValue")).joinToString(", ")
+                if (p.has("accessibilityClickable")) {
+                    info.isClickable = p.optBoolean("accessibilityClickable")
+                    if (!info.isClickable) info.removeAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+                    else info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+                }
+                if (p.has("accessibilityLongClickable")) {
+                    info.isLongClickable = p.optBoolean("accessibilityLongClickable")
+                    if (!info.isLongClickable) info.removeAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK)
+                    else info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK)
+                }
+            }
+            override fun performAccessibilityAction(host: View, action: Int, args: android.os.Bundle?): Boolean {
+                if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK && (!host.isEnabled || !p.optBoolean("accessibilityClickable", true))) return false
+                if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK && (!host.isEnabled || !p.optBoolean("accessibilityLongClickable", true))) return false
+                return super.performAccessibilityAction(host, action, args)
+            }
         }
     }
 
@@ -662,18 +750,9 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         for (key in listOf("opacity","translateX","translateY","scaleX","scaleY","rotate","borderRadius")) if (props.has(key)) visual[key] = props.getDouble(key)
         visual.putAll(mapOf("r" to Color.red(color).toDouble(), "g" to Color.green(color).toDouble(), "b" to Color.blue(color).toDouble(), "a" to Color.alpha(color)/255.0))
         record.animation.stage(visual)
-        view.contentDescription = props.optString("accessibilityLabel").takeIf { it.isNotEmpty() }
         view.transitionName = props.optString("testID").takeIf { it.isNotEmpty() }
         view.isEnabled = props.optBoolean("editable", true) && !props.optBoolean("disabled", false)
-        if (record.kind == "View") {
-            view.isFocusable = props.optString("accessibilityRole") == "button"
-            view.accessibilityDelegate = if (view.isFocusable) object : View.AccessibilityDelegate() {
-                override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
-                    super.onInitializeAccessibilityNodeInfo(host, info)
-                    info.className = "android.widget.Button"
-                }
-            } else null
-        }
+        updateAccessibility(record)
         view.visibility = if (props.optString("visibility") == "hidden") View.INVISIBLE else View.VISIBLE
         val background = view.background as? GradientDrawable ?: GradientDrawable().also { view.background = it }
         background.setStroke((props.optDouble("borderWidth", 0.0) * density).roundToInt(), parseColor(props.optString("borderColor", ""), Color.TRANSPARENT))
@@ -778,7 +857,6 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             view.isVerticalScrollBarEnabled = props.optBoolean("showsVerticalScrollIndicator", true)
         }
         if (view is ImageView) {
-            view.contentDescription = props.optString("accessibilityLabel").takeIf { it.isNotEmpty() }
             view.scaleType = when (props.optString("resizeMode")) {
                 "contain" -> ImageView.ScaleType.FIT_CENTER
                 "stretch" -> ImageView.ScaleType.FIT_XY
@@ -788,16 +866,17 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             if (source != record.mediaSource) {
                 record.mediaSource = source
                 val generation = record.mediaGeneration.incrementAndGet()
+                val previousLoads = record.imageLoads.toList(); record.imageLoads.clear(); previousLoads.forEach { cleanup(it) }
                 view.setImageDrawable(null)
                 val placeholder = props.optString("placeholderSrc", "")
-                if (placeholder.isNotEmpty()) loadBitmap(placeholder) { bitmap, _ -> if (bitmap != null && view.drawable == null && generation == record.mediaGeneration.get()) view.setImageBitmap(bitmap) }
-                loadBitmap(source) { bitmap, error ->
+                if (placeholder.isNotEmpty()) record.imageLoads.add(loadBitmap(placeholder) { bitmap, _ -> if (bitmap != null && view.drawable == null && generation == record.mediaGeneration.get()) view.setImageBitmap(bitmap) })
+                record.imageLoads.add(loadBitmap(source) { bitmap, error ->
                     if (generation != record.mediaGeneration.get()) return@loadBitmap
                     if (bitmap != null) {
                         view.setImageBitmap(bitmap)
                         emitMedia(record, "loadSuccess", source)
                     } else emitMedia(record, "loadFailure", source, 1)
-                }
+                })
             }
         }
         if (view is AndroidVideoView && !appearanceOnly) {
@@ -881,17 +960,18 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
 
     private fun releaseNode(record: NodeRecord) {
         record.shadowBitmap = null
-        record.animation.cancel()
+        cleanup { record.animation.cancel() }
         record.mediaGeneration.incrementAndGet()
+        val loads = record.imageLoads.toList(); record.imageLoads.clear(); loads.forEach { cleanup(it) }
         record.timePoll?.let { root.removeCallbacks(it) }; record.timePoll = null
         (record.view as? AndroidVideoView)?.let {
             resumeVideos.remove(it)
             it.prepared = false; it.mediaPlayer = null
             it.player.setOnPreparedListener(null); it.player.setOnCompletionListener(null)
             it.player.setOnInfoListener(null); it.player.setOnErrorListener(null)
-            it.player.stopPlayback()
+            cleanup { it.player.stopPlayback() }
         }
-        record.native?.dispose()
+        val native = record.native; record.native = null; cleanup { native?.dispose() }
     }
 
     private fun recycleLeaf(record: NodeRecord) {
@@ -907,6 +987,9 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         view.text = ""; view.typeface = record.defaultTypeface
         view.maxLines = Int.MAX_VALUE; view.ellipsize = null
         view.contentDescription = null; view.transitionName = null
+        view.importantForAccessibility = record.defaultAccessibilityImportance
+        view.accessibilityDelegate = null
+        if (android.os.Build.VERSION.SDK_INT >= 28) view.isScreenReaderFocusable = false
         textPool.addLast(view)
     }
 
@@ -941,15 +1024,33 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         return parent
     }
 
-    private fun loadBitmap(source: String, complete: (android.graphics.Bitmap?, Throwable?) -> Unit) {
-        Thread {
+    private fun loadBitmap(source: String, complete: (android.graphics.Bitmap?, Throwable?) -> Unit): () -> Unit {
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val stream = java.util.concurrent.atomic.AtomicReference<java.io.InputStream?>()
+        val connection = java.util.concurrent.atomic.AtomicReference<java.net.HttpURLConnection?>()
+        val worker = Thread {
             try {
+                if (cancelled.get()) return@Thread
                 val input = if (source.startsWith("asset://") && Regex("[A-Za-z0-9_.-]+").matches(source.removePrefix("asset://"))) root.context.assets.open(source.removePrefix("asset://"))
-                    else if (source.startsWith("http://") || source.startsWith("https://")) URL(source).openStream() else java.io.File(URI(source)).inputStream()
-                val bitmap = input.use { BitmapFactory.decodeStream(it) }
-                root.post { complete(bitmap, null) }
-            } catch (error: Throwable) { root.post { complete(null, error) } }
-        }.start()
+                    else if (source.startsWith("http://") || source.startsWith("https://")) {
+                        val request = URL(source).openConnection() as java.net.HttpURLConnection
+                        request.connectTimeout = 15000; request.readTimeout = 15000; connection.set(request)
+                        if (cancelled.get()) { request.disconnect(); return@Thread }
+                        request.inputStream
+                    } else java.io.File(URI(source)).inputStream()
+                stream.set(input)
+                val bitmap = input.use { if (cancelled.get()) null else BitmapFactory.decodeStream(it) }
+                root.post { if (!cancelled.get()) complete(bitmap, null) }
+            } catch (error: Throwable) { root.post { if (!cancelled.get()) complete(null, error) } }
+            finally { stream.set(null); cleanup { connection.getAndSet(null)?.disconnect() } }
+        }
+        worker.start()
+        return {
+            cancelled.set(true)
+            cleanup { stream.getAndSet(null)?.close() }
+            cleanup { connection.getAndSet(null)?.disconnect() }
+            worker.interrupt()
+        }
     }
 
     private fun emitMedia(record: NodeRecord, event: String, source: String? = null, errorCode: Int? = null, state: String? = null, time: Double? = null, duration: Double? = null) {

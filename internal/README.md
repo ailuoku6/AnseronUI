@@ -24,4 +24,4 @@
 - [外观与文本布局验证](verification/appearance-text-layout.md)
 - [2026-11-13 性能验证快照](verification/performance-baseline-2026-11-13.md)
 
-平台日常使用说明见[用户文档目录](../docs/README.md)。测试命令和维护流程见[框架开发指南](../docs/contributing/framework-development.md)。
+平台日常使用说明见[文档目录](../docs/README.md)。贡献入口见[CONTRIBUTING.md](../CONTRIBUTING.md)。测试命令和维护流程见[框架开发指南](../docs/contributing/framework-development.md)。

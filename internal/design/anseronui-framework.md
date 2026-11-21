@@ -1,6 +1,6 @@
 # AnseronUI：基于 scriptc 的跨端 UI 框架技术方案
 
-> 本文保留设计演进和调研依据，提案中的 API 不代表当前已实现接口。当前实现请阅读[架构与原理](../../docs/architecture/architecture.md)和[能力清单](../../docs/guides/capabilities.md)。
+> 本文保留设计演进和调研依据，提案中的 API 不代表当前已实现接口。当前实现请阅读[架构](../../docs/architecture/overview.md)和[组件参考](../../docs/reference/components.md)。
 
 日期：2026-11-06。修订：v5（2026-11-07），在 v4 的 Promise/async-await、无 JS 引擎、热更新扩展接口和 React 风格开发模型基础上，正式引入项目内适配的 Flexily 布局引擎。状态：本文是目标方案；布局包、基础 SDK/Core、Web 参考渲染器和 Android/iOS 渲染模块已开始实施，该阶段的实际验证以[实施状态快照](framework-implementation-status.md)为准，后续已实现的 async embedding 和三端宿主见当前[公开文档](../../docs/README.md)。框架于 2026-11-08 正式命名为 **AnseronUI**，本地包名统一使用 `@anseronui/*`，尚未发布。
 

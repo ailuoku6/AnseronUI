@@ -1,3 +1,4 @@
+import { cleanup } from './Cleanup';
 import native from 'libanseronui.so';
 import { displaySync } from '@kit.ArkGraphics2D';
 export type VisualValues = Record<string, number | string>;
@@ -40,7 +41,12 @@ export class HarmonyAnimation {
     if (previous) previous.complete({ finished: false });
     if (this.entries.size === 0 && this.running) { this.clock.stop(); this.running = false; }
   }
-  dispose(): void { this.entries.forEach(animation => animation.complete({ finished: false })); this.entries.clear(); this.clock.stop(); this.clock.off('frame'); this.running = false; }
+  dispose(): void {
+    const animations = Array.from(this.entries.values()); this.entries.clear();
+    animations.forEach(animation => cleanup(() => animation.complete({ finished: false })));
+    if (this.running) cleanup(() => this.clock.stop());
+    cleanup(() => this.clock.off('frame')); this.running = false;
+  }
   animate(node: number, request: Request, initial?: VisualValues): Promise<Result> {
     this.cancel(node);
     const options = request.options ?? {};

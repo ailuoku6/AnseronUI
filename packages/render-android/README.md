@@ -58,7 +58,7 @@ if (pageView.pop()) return
 super.onBackPressed()
 ```
 
-上面是示例 Activity 的处理方式；使用自己的返回键分发器时保留相同顺序。平台 API、自定义组件和 ref 见[原生扩展](../../docs/guides/native-extensions.md)。`testID` 映射为 `View.transitionName`，不占用无障碍标签。
+上面是示例 Activity 的处理方式；使用自己的返回键分发器时保留相同顺序。平台 API、自定义组件和 ref 见[原生扩展](../../docs/guides/services/native-extensions.md)。`testID` 映射为 `View.transitionName`，不占用无障碍标签。
 
 ## 平台约束
 
@@ -74,4 +74,4 @@ super.onBackPressed()
 
 示例 `RenderViewTest` 使用注入 transport 验证容器、动画、富文本与按钮样式；`SharedCoreTest` 验证真实 AOT 页面。视频专项用例 `testVideoRendersPixelsAndHonorsPausedState` 检查画面像素、初始暂停、进度、暂停、重置和页面替换。运行设备测试前准备好模拟器、当前 Core 和测试依赖；HTTP 用例需要启动 5174 fixture 并设置 `adb reverse tcp:5174 tcp:5174`。
 
-更多入口：[中文文档](../../docs/README.md) · [能力清单](../../docs/guides/capabilities.md) · [架构与原理](../../docs/architecture/architecture.md)。
+更多入口：[文档目录](../../docs/README.md) · [组件参考](../../docs/reference/components.md) · [架构](../../docs/architecture/overview.md)。

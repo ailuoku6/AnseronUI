@@ -357,7 +357,7 @@ effectiveVisible = appVisible && windowVisible && containerVisible && routeIsTop
 | 内存压力 | trimMemory 回收隐藏实例，保留路由名称/参数 |
 | WindowStage 销毁/明确容器 destroy | 注销窗口监听并进入 Closing；不再访问失效窗口 |
 
-临时 detach 不等于最终 destroy。隐藏期间暂停新渲染/UI 输入，但已经开始的事务应完成；不能因为页面隐藏而丢 ACK。现有 useEffect 仍按挂载/卸载，usePageEffect 按可见性重启；框架 timer 保留剩余时长，HTTP/普通 Promise 按当前合同继续，卸载才取消关联请求。参见仓库 [页面生命周期](../../docs/guides/page-lifecycle.md)。
+临时 detach 不等于最终 destroy。隐藏期间暂停新渲染/UI 输入，但已经开始的事务应完成；不能因为页面隐藏而丢 ACK。现有 useEffect 仍按挂载/卸载，usePageEffect 按可见性重启；框架 timer 保留剩余时长，HTTP/普通 Promise 按当前合同继续，卸载才取消关联请求。参见仓库 [页面生命周期](../../docs/guides/navigation/page-lifecycle.md)。
 
 保活容量计入当前页。建议首期示例显式设置小容量（如 3，仅为演示策略），不擅自改变所有平台默认值；记入每页 worker/线程栈开销。回收后返回会重建 Hook state，保留路由参数快照，不序列化任意闭包。
 
@@ -616,7 +616,7 @@ H00/H01 和 H06 的静态节点探针可独立推进；完整业务链必须等�
 - [Core 构建](../../scripts/build-core.mjs)：真实 target、archive 合并、缓存、manifest。
 - [插件解析](../../scripts/native-plugins.mjs)：schema 1/2 与平台校验。
 - [独立应用](../../scripts/standalone-app.mjs) 与 [CLI](../../scripts/anseronui.mjs)：用户构建/运行路径。
-- [生命周期](../../docs/guides/page-lifecycle.md)、[虚拟列表](../../docs/guides/virtual-list.md)、[系统服务](../../docs/guides/native-services.md)：当前工作区必须保留的语义。
+- [生命周期](../../docs/guides/navigation/page-lifecycle.md)、[虚拟列表](../../docs/guides/ui/virtual-list.md)、[系统服务](../../docs/guides/services/native-services.md)：当前工作区必须保留的语义。
 - scriptc 固定源码：`internal/toolchain/scriptc/packages/compiler/src/backend/targets.ts`、`backend/native/driver.ts`、`packages/runtime/src/scr_async.c`；来源清单 `internal/toolchain/scriptc.vendor.json`。
 
 ### 18.2 本次交付状态

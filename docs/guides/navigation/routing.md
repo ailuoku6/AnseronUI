@@ -1,10 +1,12 @@
 # 页面路由
 
+生成的详情按钮已经调用 `router.push` 和 `router.back`。本文说明参数、栈和页面保留。
+
 AnseronUI 的页面路由由宿主容器维护栈，TSX 通过 `useRouter()` 发起跳转。页面名称来自构建配置中注册的 `definePage`，iOS、Android、macOS 和 Web 使用同一套名称。
 
 ```tsx
-import { Button, Text, View, definePage, useEffect, useRouter, useState } from "@anseronui/ui";
-import type { RouteParams, UIElement } from "@anseronui/ui";
+import { Button, Text, View, definePage, useEffect, useRouter, useState } from "anseronui/ui";
+import type { RouteParams, UIElement } from "anseronui/ui";
 
 function Home(): UIElement {
   const router = useRouter();

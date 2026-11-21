@@ -59,4 +59,4 @@ npm run test:layout
 
 删除 `.verification/layout/upstream.git` 后，下次运行会重新获取固定提交。实际使用入口仍为 `@anseronui/layout`，不是上游完整组合 API。
 
-更多入口：[中文文档](../../docs/README.md) · [能力清单](../../docs/guides/capabilities.md) · [架构与原理](../../docs/architecture/architecture.md)。
+更多入口：[文档目录](../../docs/README.md) · [组件参考](../../docs/reference/components.md) · [架构](../../docs/architecture/overview.md)。

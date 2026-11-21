@@ -663,9 +663,15 @@ export class BusinessRuntime {
       const value = style[key];
       if (value !== undefined) outputProps[key] = value;
     }
-    for (const key of ["testID", "accessibilityLabel", "accessibilityRole", "numberOfLines", "ellipsizeMode", "editable", "secureTextEntry", "maxLength", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "placeholderTextColor", "dmPlaceholderTextColor", "scrollEnabled", "showsVerticalScrollIndicator", "scrollAnchorOffset"]) {
+    for (const key of ["testID", "accessibilityLabel", "accessibilityRole", "accessibilityHint", "accessibilityValue", "accessible", "accessibilityHidden", "accessibilityChecked", "accessibilitySelected", "numberOfLines", "ellipsizeMode", "editable", "secureTextEntry", "maxLength", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "placeholderTextColor", "dmPlaceholderTextColor", "scrollEnabled", "showsVerticalScrollIndicator", "scrollAnchorOffset"]) {
       const value = props[key];
       if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") outputProps[key] = value;
+    }
+    const accessibilityInfo = props.accessibilityInfo as import("@anseronui/ui").AccessibilityInfo | undefined;
+    if (accessibilityInfo !== undefined) {
+      if (typeof accessibilityInfo.clickable !== "boolean" || typeof accessibilityInfo.longClickable !== "boolean") throw new Error("INVALID_ACCESSIBILITY_INFO");
+      outputProps.accessibilityClickable = accessibilityInfo.clickable;
+      outputProps.accessibilityLongClickable = accessibilityInfo.longClickable;
     }
     const events: EventCallbacks = {};
     if (typeof props.onClick === "function") events.tap = props.onClick as EventCallbacks["tap"];
@@ -1008,6 +1014,11 @@ export class BusinessRuntime {
     const handle: import("@anseronui/ui").NodeHandle = { nodeId, invoke,
       animate: (style, options = {}) => { validateAnimationStyle(style); validateAnimationOptions(options); return invoke("animate", { style, options }); },
       cancelAnimation: () => invoke("cancelAnimation"),
+      accessibilityFocus: () => invoke("accessibilityFocus"),
+      accessibilityAnnounce: message => {
+        if (typeof message !== "string" || message.length === 0 || message.length > 16384) return Promise.reject(new Error("INVALID_ACCESSIBILITY_MESSAGE"));
+        return invoke("accessibilityAnnounce", { message });
+      },
       focus: () => invoke("focus"), blur: () => invoke("blur"),
       scrollTo: (x, y, animated = false) => invoke("scrollTo", { x, y, animated }),
       measure: () => invoke("measure"),

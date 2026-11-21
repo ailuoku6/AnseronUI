@@ -1,4 +1,4 @@
-> **AnseronUI 中文说明**：本目录保留 Flexily 0.8.5 的上游源码，并增加面向 scriptc 的静态入口和适配。下方 README、`CHANGELOG.md`、`CONTRIBUTING.md` 与 `LICENSE` 保留上游原文，便于来源与许可追溯；上游的终端插件、完整组合 API 和性能描述不代表 AnseronUI 的支持范围。业务使用请阅读 [AnseronUI 布局引擎](../layout/README.md)、[源码适配说明](README.scriptc.md)和[架构文档](../../docs/architecture/architecture.md)。来源版本与提交见 `UPSTREAM-scriptc-adaptation.json`。
+> **AnseronUI 中文说明**：本目录保留 Flexily 0.8.5 的上游源码，并增加面向 scriptc 的静态入口和适配。下方 README、`CHANGELOG.md`、`CONTRIBUTING.md` 与 `LICENSE` 保留上游原文，便于来源与许可追溯；上游的终端插件、完整组合 API 和性能描述不代表 AnseronUI 的支持范围。业务使用请阅读 [AnseronUI 布局引擎](../layout/README.md)、[源码适配说明](README.scriptc.md)和[架构文档](../../docs/architecture/overview.md)。来源版本与提交见 `UPSTREAM-scriptc-adaptation.json`。
 
 ---
 

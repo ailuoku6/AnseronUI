@@ -2,9 +2,27 @@
 
 AnseronUI 用 TypeScript/TSX 编写共享页面，并将页面编译为 iOS、Android、Web、macOS 和 HarmonyOS 应用。页面共享布局、状态、交互和业务逻辑。各平台宿主提供原生视图和系统能力。
 
-新用户从[App 开发手册](docs/getting-started/app-development.md)开始。手册说明如何从本仓库创建 App、编写页面、添加导航、调用系统服务并验证目标平台。
+## 开始
 
-## 开始之前
+安装 Node.js 24+。先准备你要运行的一个平台，再创建应用：
+
+```sh
+npx anseronui create hello-app --application-id com.example.hello
+cd hello-app
+npm install
+npm run setup
+npm run ios
+```
+
+`npm run android`、`npm run macos`、`npm run harmony` 运行其他原生平台。Web 使用 `npm run build:web` 和 `npm run dev:web`。
+
+完整的第一次运行见[快速开始](docs/getting-started/quick-start.md)。接着改页面：[编写页面](docs/getting-started/pages.md)。
+
+## 文档
+
+应用文档按页面、界面、能力、工程四部分组织，见[文档目录](docs/README.md)。修改框架见[参与开发](CONTRIBUTING.md)。
+
+## 环境
 
 | 目标 | 环境 |
 | --- | --- |
@@ -15,15 +33,7 @@ AnseronUI 用 TypeScript/TSX 编写共享页面，并将页面编译为 iOS、An
 | HarmonyOS | DevEco Studio 6.0.1、API 21 SDK、主机 LLVM 23；当前目标为 arm64 |
 | Web | 支持 WebAssembly 和 ES modules 的浏览器；构建需要 Zig 工具链 |
 
-主要验证环境为 Apple Silicon Mac。Android SDK 和 NDK 路径可分别通过 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 与 `ANDROID_NDK_ROOT` 设置。
-
-## 文档
-
-[文档目录](docs/README.md)按开发顺序列出教程，再链接到组件、平台和架构参考。已有原生应用的宿主接入见[工程创建与接入](docs/getting-started/tooling.md)。
-
-## 开发 AnseronUI
-
-本仓库包含框架源码、平台 Renderer、CLI 和示例。修改框架或运行仓库示例时，从[框架开发指南](docs/contributing/framework-development.md)开始。框架结构和执行流程见[架构文档](docs/architecture/architecture.md)。设计记录和实验位于 `internal/`，它们不是用户 API 文档。
+主要验证环境为 Apple Silicon Mac。Android SDK 和 NDK 路径可分别通过 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 与 `ANDROID_NDK_ROOT` 设置。设备、Release 和签名见[构建与运行](docs/reference/build.md)。
 
 ## 许可
 

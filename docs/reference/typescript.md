@@ -34,15 +34,15 @@ AnseronUI 不是把任意 TypeScript 原样交给 JavaScript 引擎运行。共�
 | 复杂动态标签、命名空间属性 | 不属于当前 JSX lowering 支持形状 | 使用显式命名的组件，必要时用条件分支选择整段 JSX |
 | 条件、循环或嵌套回调里的 Hook | 会改变 Hook 调用顺序，报 `HOOK_NOT_TOP_LEVEL` | 在组件或自定义 Hook 顶层调用，把条件放入回调或返回值 |
 | 模块顶层调用 `useState/useServices` | 报 `HOOK_OUTSIDE_COMPONENT` | 在函数组件或自定义 Hook 内获取 |
-| React 专用组件/插件 | 不会因为语法相似就兼容 | 使用 `@anseronui/ui` API，先移植依赖的运行时语义 |
+| React 专用组件/插件 | 不会因为语法相似就兼容 | 使用 `anseronui/ui` API，先移植依赖的运行时语义 |
 
-自定义 Hook、具名组件 HOC、组件作为属性、JSX 插槽和 render prop 已有示例及回归验证，见[自定义 Hook 与组件组合](../guides/component-composition.md)。HOC 返回的具名组件具有独立的 Hook 检查作用域；普通嵌套回调仍不能调用 Hook。属性需显式转发，不能照搬带 JSX spread 的 React HOC。
+自定义 Hook、具名组件 HOC、组件作为属性、JSX 插槽和 render prop 已有示例及回归验证，见[自定义 Hook 与组件组合](../guides/ui/component-composition.md)。HOC 返回的具名组件具有独立的 Hook 检查作用域；普通嵌套回调仍不能调用 Hook。属性需显式转发，不能照搬带 JSX spread 的 React HOC。
 
 这些是本项目 [UI compiler](../../packages/ui-compiler/src/index.ts) 的约束，不等于 scriptc 原生 JSX 功能的全部范围。JSX 属性展开受限，也不等于所有普通对象展开都被禁用。
 
 ```tsx
-import { Button, View, useState } from "@anseronui/ui";
-import type { Style } from "@anseronui/ui";
+import { Button, View, useState } from "anseronui/ui";
+import type { Style } from "anseronui/ui";
 
 function CounterCard(props: { style?: Style; initial: number }) {
   const [count, setCount] = useState(props.initial);
@@ -99,12 +99,12 @@ export function itemCount(value: string | string[]): number {
 | DOM 操作 | Web Renderer 或 Web Module 内实现 | 共享页面访问 `window`、`document`、HTMLElement |
 | 动画 | `animation` 或节点 `animate()` | 在 Core 内自行用浏览器帧时钟逐帧驱动 |
 
-全局 `setTimeout` / `clearTimeout` 是 AnseronUI 的编译适配，并非放开 scriptc 原生 Node timer 实现；详见[计时器](../guides/timers.md)。显式导入同名框架函数也可使用，局部/其他库的同名绑定不会改写。
+全局 `setTimeout` / `clearTimeout` 是 AnseronUI 的编译适配，并非放开 scriptc 原生 Node timer 实现；详见[计时器](../guides/navigation/timers.md)。显式导入同名框架函数也可使用，局部/其他库的同名绑定不会改写。
 
 生成器函数、Node 网络/流/进程/worker 等仍受 library 准入限制；Wasm 宿主也没有开放完整文件系统或 Node 环境。本项目统一把这些副作用交给宿主。
 
 ```tsx
-import { Button, Text, View, useServices, useState } from "@anseronui/ui";
+import { Button, Text, View, useServices, useState } from "anseronui/ui";
 
 function LoadMessage() {
   const services = useServices();

@@ -1,6 +1,6 @@
 # 仓库结构与维护
 
-本文面向框架贡献者。它说明源码归属、生成文件边界和验证入口。框架架构见[架构与运行原理](../architecture/architecture.md)。
+本文面向框架贡献者。它说明源码归属、生成文件边界和验证入口。框架架构见[架构与运行原理](../architecture/overview.md)。
 
 ## 源码位置
 
@@ -16,7 +16,22 @@
 | `internal/verification` | 特定环境和提交的验证记录 |
 | `internal/toolchain/scriptc` | 受版本管理的 scriptc 源码及 AnseronUI 适配 |
 
-用户文档集中在 `docs/`。各 Renderer README 只记录对应宿主的 API、接入步骤和平台测试。上游 vendored 文件保留上游原文。
+## 文档位置
+
+公开文档按应用的四部分组织，入口是 `docs/README.md`：
+
+- `docs/getting-started/`：学习。只有创建应用和编写页面。
+- `docs/guides/navigation/`：页面。路由、生命周期、返回键、计时器。
+- `docs/guides/ui/`：界面。样式、事件、动画、组件组合、虚拟列表。
+- `docs/guides/services/`：能力。系统服务和原生扩展。
+- `docs/guides/project/`：工程。应用图标和接入已有工程。
+- `docs/reference/`：组件 API、TS/TSX 限制、构建与运行。
+- `docs/architecture/`：运行原理和编译边界。
+- `docs/platforms/`：单一平台的支持范围。其他平台的宿主 API 在对应 `packages/render-*/README.md`。
+- `docs/diagnostics/`：错误堆栈、DevTools 和性能检查。
+- `docs/contributing/`：框架开发和仓库维护。根目录 `CONTRIBUTING.md` 只保留流程入口。
+
+各 Renderer README 只记录对应宿主的 API、接入步骤和平台测试。`internal/` 不定义公开 API。`internal/toolchain/scriptc/` 与 `packages/flexily/` 保留上游原文。使用 AnseronUI 时，以 `docs/` 和 `packages/layout/README.md` 为准。
 
 ## 源码与生成文件
 

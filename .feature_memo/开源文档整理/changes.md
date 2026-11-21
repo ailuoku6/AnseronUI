@@ -1,5 +1,17 @@
 # 变更与验证
 
+## 2026-11-20 入门
+
+- 删除 `docs/getting-started/app-development.md`。新增快速开始和编写页面。
+- 构建文档只保留已创建应用的运行、签名和配置。接入已有工程单独成篇。
+- 用户示例改为 `anseronui/ui`。`--local-framework` 移到框架开发文档。
+
+## 2026-11-20
+
+- 公开文档改为按读者任务分层。根目录增加 `CONTRIBUTING.md`。
+- 组件参考移到 `docs/reference/components.md`，TS/TSX 限制移到 `docs/reference/typescript.md`，架构说明移到 `docs/architecture/overview.md`。
+- 相对链接已核对。未改各篇技术内容。
+
 ## 2026-11-08
 
 - 完成根 README、平台包 README 中文化，延续上一轮新增的文档索引、能力与架构文档并核对源码。

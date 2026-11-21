@@ -47,6 +47,21 @@ function fixture() {
   return { ...classes, service, context, events, clients, permission, scanner, tag, characteristic, report: () => scanListener({ scanResult: [{ deviceId: 'd1', deviceName: 'Battery', rssi: -30 }] }), detect: () => nfcListener(null, { technology: [6] }), get scansStopped() { return scansStopped; }, get nfcStopped() { return nfcStopped; }, get writes() { return writes; } };
 }
 const invoke = (f, module, method, args = {}) => f.service.invoke(module, method, args, () => {});
+test('disposing an unused page does not stop NFC or BLE', () => {
+  const f = fixture();
+  f.service.dispose(); f.service.dispose();
+  assert.equal(f.nfcStopped, 0); assert.equal(f.scansStopped, 0);
+});
+test('page disposal tolerates BLE listener removal throwing and still stops scanning', async () => {
+  const f = fixture();
+  f.scanner.off = () => { throw new Error('PERMISSION_DENIED'); };
+  const result = invoke(f, 'bluetooth', 'scan', { serviceUUIDs: [], durationMs: 500 });
+  const rejected = assert.rejects(result, /CANCELLED/);
+  await drain();
+  assert.doesNotThrow(() => f.service.dispose());
+  await rejected;
+  assert.equal(f.scansStopped, 1);
+});
 async function scan(f, t) {
   const result = invoke(f, 'bluetooth', 'scan', { serviceUUIDs: ['180f'], durationMs: 500 });
   await drain(); f.report(); t.mock.timers.tick(500); return result;

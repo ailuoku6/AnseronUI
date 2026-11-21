@@ -3,6 +3,25 @@ import assert from 'node:assert/strict';
 import { loadETS } from './load-ets.mjs';
 
 const { HarmonyEvents } = loadETS('HarmonyEvents');
+test('subscription teardown rejects every poll even when a system unsubscribe fails', async () => {
+  const events = new HarmonyEvents(), stopped = [];
+  events.onChange = (module, active) => { if (!active) { stopped.push(module); throw new Error('unsubscribe'); } };
+  const first = assert.rejects(events.next('1', 'location'), /CANCELLED/);
+  const second = assert.rejects(events.next('2', 'network'), /CANCELLED/);
+  events.dispose(); await Promise.all([first, second]);
+  assert.deepEqual(stopped, ['location', 'network']); events.dispose(); assert.equal(stopped.length, 2);
+});
+test('page stack destroys every host after hide or destroy fails', () => {
+  const { HarmonyPageStack } = loadETS('HarmonyPageStack'), released = [];
+  let disposing = false;
+  const stack = new HarmonyPageStack(['home','details'], route => ({
+    setVisible() { if (disposing) throw new Error('hide'); },
+    destroy() { released.push(route.page); if (route.page === 'home') throw new Error('destroy'); },
+  }));
+  stack.load('home'); stack.navigate(stack.current(), 'push', 'details'); disposing = true;
+  stack.destroy(); assert.deepEqual(released, ['home','details']); assert.equal(stack.entries.length, 0);
+  stack.destroy(); assert.equal(released.length, 2);
+});
 test('subscriptions attach once, cancel on last close, coalesce state and reject after disposal', async () => {
   const events = new HarmonyEvents(), changes = [];
   events.onChange = (module, enabled) => changes.push([module, enabled]);

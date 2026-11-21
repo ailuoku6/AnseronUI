@@ -1,6 +1,8 @@
 # 标准系统能力
 
-`useServices()` 直接提供以下系统能力，iOS、Android、macOS、HarmonyOS 与 Web 宿主接入，无需逐个注册 Module。示例 App 的「扩展」页面下半部分包含可点击用例：基础信息、存储、剪贴板、弹窗、分享、环境监听、HTTP、文件传输、权限和定位。
+页面能运行之后，用 `useServices()` 调用存储、网络和设备能力。先看下面的存储和 HTTP。平台差异、权限和订阅在后面。
+
+iOS、Android、macOS、HarmonyOS 与 Web 宿主已经接入这些能力，不用再注册 Module。仓库示例的「扩展」页面有可点击用例。
 
 ```tsx
 const services = useServices();
@@ -208,4 +210,4 @@ WorkScheduler 的有限定时任务设置 repeatCount:1，时间条件至少两�
 
 BLE/NFC 需在 harmony.permissions 声明 ACCESS_BLUETOOTH / NFC_TAG（带 ohos.permission. 前缀）；默认 BLE 写入最多 20 字节。隐藏页停止扫描、断开连接、释放 NFC 会话。状态订阅合并最新值；BLE 与 linking 保留最多 64 条有序事件。定位/传输监听按订阅所有权取消；文件选择器返回的引用只在创建它的 Host 内有效。
 
-构建权限、原生扩展、验证命令、系统约束来源与完整设备验收边界见[鸿蒙支持](../platforms/harmonyos.md)。
+构建权限、原生扩展、验证命令、系统约束来源与完整设备验收边界见[鸿蒙支持](../../platforms/harmonyos.md)。

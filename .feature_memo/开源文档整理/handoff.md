@@ -1,6 +1,10 @@
 # 交接
 
-从 `index.md` 进入。中文开源文档及本轮补充已完成。
+从 `index.md` 进入。文档体系以 `docs/README.md` 为准：学习两篇，然后按页面、界面、能力、工程进入 `docs/guides/` 下的四个目录。构建命令在 `docs/reference/build.md`。应用作者仍从 `npx anseronui create` 和 `docs/getting-started/quick-start.md` 开始。不要把 `--local-framework` 或「npm 尚未发布」写回用户文档。
+
+公开文档按开始、指南、参考、原理、平台、排查、贡献分层。组件 API 在 `docs/reference/components.md`，TS/TSX 限制在 `docs/reference/typescript.md`，架构在 `docs/architecture/overview.md`。根目录 `CONTRIBUTING.md` 是贡献入口。
+
+中文开源文档及本轮补充已完成。
 
 新增 `docs/core-bundles.md` 解释：所有配置页面与框架当前合编为一个目标产物，不是每页一份 Core；实例隔离不同于产物划分。框架预编译与业务包分离只是设计方向，必须解决 ABI、Hook/闭包、runtime 内存与重入，尚未实施。
 

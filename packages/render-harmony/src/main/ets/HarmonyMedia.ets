@@ -1,3 +1,4 @@
+import { cleanup } from './Cleanup';
 import { BuilderNode, FrameNode } from '@kit.ArkUI';
 import { media } from '@kit.MediaKit';
 import { common } from '@kit.AbilityKit';
@@ -129,7 +130,7 @@ class VideoEntry {
     if (props.playControl === 'stop' && previous.playControl !== 'stop' && this.player && ['prepared','playing','paused','completed'].includes(this.player.state)) this.player.seek(0);
   }
   setVisible(visible: boolean): void { this.visible = visible; this.applyControl(); }
-  dispose(): void { if (this.disposed) return; this.disposed = true; this.epoch++; void this.release(); this.builder.dispose(); }
+  dispose(): void { if (this.disposed) return; this.disposed = true; this.epoch++; void this.release(); cleanup(() => this.builder.dispose()); }
 }
 export class HarmonyMedia {
   private entries: Map<number, VideoEntry> = new Map();
@@ -143,5 +144,5 @@ export class HarmonyMedia {
   update(node: number, bytes: string): void { const entry = this.entries.get(node); if (!entry) throw new Error('VIDEO_UNMOUNTED'); entry.update(JSON.parse(bytes) as VideoProperties); }
   visible(visible: boolean): void { this.isVisible = visible; this.entries.forEach(entry => entry.setVisible(visible)); }
   remove(node: number): void { this.entries.get(node)?.dispose(); this.entries.delete(node); }
-  dispose(): void { this.entries.forEach(entry => entry.dispose()); this.entries.clear(); }
+  dispose(): void { const entries = Array.from(this.entries.values()); this.entries.clear(); entries.forEach(entry => cleanup(() => entry.dispose())); }
 }

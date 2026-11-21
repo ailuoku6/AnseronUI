@@ -1,6 +1,6 @@
 # 框架开发与仓库示例
 
-本文面向修改 AnseronUI 框架的贡献者。创建独立 App、编写页面和运行应用，请从[根 README](../../README.md)开始。以下命令均在框架仓库根目录执行。
+本文面向修改 AnseronUI 框架的贡献者。贡献入口见 [CONTRIBUTING.md](../../CONTRIBUTING.md)。用已发布的 npm 包创建应用，请从[快速开始](../getting-started/quick-start.md)开始。以下命令均在框架仓库根目录执行。
 
 ## 开发环境与依赖
 
@@ -22,6 +22,24 @@ npm run prepare:compiler
 ```
 
 `internal/toolchain/scriptc` 是主仓库内管理的 [scriptc](https://github.com/vercel-labs/scriptc) 0.4.8 上游源码，已包含 `internal/toolchain/async-embedding.patch` 的适配。`prepare:compiler` 安装必要依赖、复用匹配的 LLVM helper 并编译编译器入口，不会克隆 Git 子仓。
+
+## 用本仓库源码创建应用
+
+要让应用直接编译本仓库里的框架源码时，使用 `--local-framework`：
+
+```sh
+npm run prepare:compiler
+npm run anseronui -- create ../dev-app --local-framework
+cd ../dev-app
+npm run setup
+npm run ios
+```
+
+这种应用的页面路径相对于框架仓库，并和仓库共享编译缓存。多个这样的应用要串行构建。缓存规则见[Core 与业务包](../architecture/core-bundles.md)。
+
+普通应用使用 `npx anseronui create`。它依赖已发布的 `anseronui` 包，并在应用自己的 `.anseronui/sdk` 里保存 SDK 和缓存。`--package <版本或tarball>` 可以指定依赖版本。
+
+把页面嵌进已有原生工程见[接入已有工程](../guides/project/existing-app.md)。
 
 ## 运行仓库示例
 
@@ -84,7 +102,7 @@ npm run test:macos
 
 「组件」页使用全部八个基础组件，包含计数、禁用按钮、输入、富文本、触摸传播、离线图片和视频；页面内还可以切换「布局样式」和「动画」。悬浮球由共享 TSX 和触摸事件实现。「扩展」页演示 Module、自定义原生开关和 ref。
 
-示例媒体在 `examples/components/assets/`，通过 `asset://showcase.png` 和 `asset://showcase.mp4` 使用。业务自己的资源需要按宿主打包规则加入，详见[能力清单](../guides/capabilities.md)。
+示例媒体在 `examples/components/assets/`，通过 `asset://showcase.png` 和 `asset://showcase.mp4` 使用。业务自己的资源需要按宿主打包规则加入，详见[组件参考](../reference/components.md)。
 
 ## 检查与验证
 
@@ -131,7 +149,7 @@ AnseronUI 自有代码采用 MIT。第三方许可见根目录 `THIRD_PARTY_NOTI
 
 工作流执行 `npm ci --ignore-scripts`，再通过 `npm publish --access public --provenance` 发布根目录的 `anseronui` 包。发布命令自动执行现有 `prepublishOnly` 检查和 `prepack` 打包；任一检查失败都会终止发布。它不构建 iOS/Android 应用，也不发布各 workspace 包。
 
-认证采用 [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)，无需配置 `NPM_TOKEN`。先在 npm 的 `anseronui` 包设置中添加 GitHub Actions trusted publisher：
+npm 上的包名是 `anseronui`。认证采用 [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)，无需配置 `NPM_TOKEN`。publisher 配置为：
 
 | 字段 | 值 |
 | --- | --- |
@@ -141,7 +159,7 @@ AnseronUI 自有代码采用 MIT。第三方许可见根目录 `THIRD_PARTY_NOTI
 | Environment name | 留空，工作流未配置 environment |
 | Allowed actions | 允许直接使用 `npm publish` |
 
-如果包尚不存在，先在本机登录 npm 完成首次发布，再配置 trusted publisher。新建的 trusted publisher 需要在两天内成功发布一次才能完成验证；配置过期时需重新创建。所有字段需与仓库及工作流大小写一致。
+字段需与仓库及工作流大小写一致。重新创建 trusted publisher 后，要在两天内成功发布一次，配置才会保持有效。
 
 提交并推送待发布的源码和工作流后，使用匹配当前版本的标签触发发布：
 
@@ -151,4 +169,4 @@ git tag "v${release_version}"
 git push origin "v${release_version}"
 ```
 
-后续版本先执行 `npm version patch --no-git-tag-version`，提交并推送 `package.json`、`package-lock.json` 和本次修改，再创建相应标签。同一 npm 版本不能重复发布；手动触发也会发布所选 ref 中的版本，因此需要选择尚未发布的版本提交。手动入口需在默认分支包含此工作流后才会出现在 Actions 中。
+后续版本先执行 `npm version patch --no-git-tag-version`，提交并推送 `package.json`、`package-lock.json` 和本次修改，再创建相应标签。同一个版本号不能再次发布。手动触发也会发布所选 ref 里的版本，所以要选择 npm 上还没有的版本。手动入口需在默认分支包含此工作流后才会出现在 Actions 中。

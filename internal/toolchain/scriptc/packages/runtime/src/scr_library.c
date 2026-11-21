@@ -611,7 +611,16 @@ void scr_library_reset(void) {
   scr_library_arena_reset();
   for (size_t i = 0; i < scr_library_nresets; i++) scr_library_resets[i]();
   scr_lib_session_cleanup();
+  scr_dyn_conversion_clear();
   scr_collect_cycles();
+  /* Reuse pools must outlive all teardowns, but not the owning session or
+   * thread. RC audit disables these pools and cannot detect their leaks. */
+  scr_dyn_pool_clear();
+  scr_str_spare_clear();
+  scr_cyc_context_cleanup();
+  free(scr_library_arena);
+  scr_library_arena = NULL;
+  scr_library_arena_cap = 0;
 #ifdef SCR_RC_AUDIT
   scr_library_audit_zero();
 #endif

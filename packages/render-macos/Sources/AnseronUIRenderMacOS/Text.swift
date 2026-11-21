@@ -45,6 +45,8 @@ import AppKit
 /// Retains NSTextField's accessibility semantics without its cell's second
 /// layout pass. Core supplies the frame; TextKit draws from its top-left corner.
 @MainActor final class DesktopTextField: NSTextField {
+    var pressAction: (() -> Bool)?
+    override func accessibilityPerformPress() -> Bool { pressAction?() ?? false }
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {

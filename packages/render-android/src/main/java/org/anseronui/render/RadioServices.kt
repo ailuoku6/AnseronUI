@@ -30,6 +30,7 @@ internal class RadioServices(private val context: Context, private val activity:
     private val listeners = mutableSetOf<(Any?) -> Unit>()
     private var nfcCompletion: NativeCompletion? = null
     private var nfcTimer: Runnable? = null
+    private var stopNfcReader: (() -> Unit)? = null
     fun methods(module: String): List<String> = when {
         module == "bluetooth" && context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE) -> listOf("scan", "connect", "disconnect", "getServices", "read", "write", "setNotify", "subscribe")
         module == "nfc" && NfcAdapter.getDefaultAdapter(context) != null -> listOf("read", "writeText")
@@ -126,12 +127,21 @@ internal class RadioServices(private val context: Context, private val activity:
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) { ui.post { if (operation == "setNotify" && targetGatt === gatt && targetCharacteristic === descriptor.characteristic) { if (status == 0) finish(Result.success(null)) else fail("IO_ERROR: notify $status") } } }
         override fun onCharacteristicChanged(gatt: BluetoothGatt, item: BluetoothGattCharacteristic) { val bytes = item.value?.map { it.toInt() and 255 } ?: emptyList(); ui.post { if (connections[gatt.device.address] === gatt) listeners.toList().forEach { it(JSONObject().put("deviceId", gatt.device.address).put("service", item.service.uuid.toString()).put("characteristic", item.uuid.toString()).put("value", JSONArray(bytes))) } } }
     }
-    private fun endNFC(result: Result<Any?>) { nfcTimer?.let { ui.removeCallbacks(it) }; nfcTimer = null; activity()?.let { NfcAdapter.getDefaultAdapter(context)?.disableReaderMode(it) }; val done = nfcCompletion; nfcCompletion = null; done?.invoke(result) }
+    private fun endNFC(result: Result<Any?>) {
+        nfcTimer?.let { ui.removeCallbacks(it) }; nfcTimer = null
+        val stop = stopNfcReader; stopNfcReader = null
+        val done = nfcCompletion; nfcCompletion = null
+        // Only stop a reader this service actually enabled. Page disposal also runs
+        // in apps without NFC permission, and platform cleanup may itself fail.
+        stop?.let { runCatching { it() } }
+        done?.invoke(result)
+    }
     private fun nfc(method: String, args: JSONObject, complete: NativeCompletion): () -> Unit {
         check(nfcCompletion == null) { "INVALID_ARGUMENT: NFC busy" }
+        check(context.checkSelfPermission(Manifest.permission.NFC) == PackageManager.PERMISSION_GRANTED) { "PERMISSION_DENIED: NFC" }
         val adapter = NfcAdapter.getDefaultAdapter(context) ?: throw IllegalStateException("UNSUPPORTED: NFC")
         check(adapter.isEnabled) { "UNSUPPORTED: enable NFC in settings" }; val host = activity() ?: throw IllegalStateException("UNSUPPORTED: Activity required")
-        val text = if (method == "writeText") args.getString("text") else null; nfcCompletion = complete
+        val text = if (method == "writeText") args.getString("text") else null
         val session = complete
         adapter.enableReaderMode(host, { tag ->
             val result = runCatching<Any?> {
@@ -151,8 +161,10 @@ internal class RadioServices(private val context: Context, private val activity:
                 }
             }; ui.post { if (nfcCompletion === session) endNFC(result) }
         }, NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_NFC_B or NfcAdapter.FLAG_READER_NFC_F or NfcAdapter.FLAG_READER_NFC_V, null)
+        nfcCompletion = complete
+        stopNfcReader = { adapter.disableReaderMode(host) }
         val timer = Runnable { if (nfcCompletion === session) endNFC(Result.failure(IllegalStateException("TIMEOUT: NFC"))) }; nfcTimer = timer; ui.postDelayed(timer, 30000)
         return { if (nfcCompletion === session) endNFC(Result.failure(IllegalStateException("CANCELLED"))) }
     }
-    fun dispose() { pending = null; stopScan(); timeout?.let { ui.removeCallbacks(it) }; permissionCancel?.invoke(); permissionCancel = null; connections.values.forEach { runCatching { it.disconnect(); it.close() } }; connections.clear(); listeners.clear(); endNFC(Result.failure(IllegalStateException("CANCELLED"))) }
+    fun dispose() { pending = null; stopScan(); timeout?.let { ui.removeCallbacks(it) }; permissionCancel?.invoke(); permissionCancel = null; connections.values.toList().forEach { cleanup { it.disconnect() }; cleanup { it.close() } }; connections.clear(); listeners.clear(); endNFC(Result.failure(IllegalStateException("CANCELLED"))) }
 }

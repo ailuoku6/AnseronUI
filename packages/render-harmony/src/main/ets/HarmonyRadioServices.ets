@@ -113,7 +113,10 @@ export class HarmonyRadioServices {
           };
           const stop = (): void => {
             if (stopped) return; stopped = true; clearTimeout(timer);
-            scanner.off('BLEDeviceFind', listener); void scanner.stopScan().catch(() => {});
+            // Permissions or adapter state may change while the page is open.
+            // Attempt both cleanup actions even when one platform call fails.
+            try { scanner.off('BLEDeviceFind', listener); } catch (_error) {}
+            try { void scanner.stopScan().catch(() => {}); } catch (_error) {}
           };
           cancelAction = stop; scanner.on('BLEDeviceFind', listener);
           try {

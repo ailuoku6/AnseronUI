@@ -119,9 +119,10 @@ export function validateAnimationStyle(value: unknown): void {
 }
 export function validProps(value: unknown): boolean {
   if (!record(value)) return false;
-  const strings = ["text", "value", "placeholder", "backgroundColor", "color", "borderColor", "placeholderTextColor", "shadowColor", "dmBackgroundColor", "dmColor", "dmBorderColor", "dmPlaceholderTextColor", "dmShadowColor", "testID", "accessibilityLabel", "accessibilityRole", "src", "dmSrc", "placeholderSrc", "resizeMode", "playControl", "spans", "nativeProps"];
-  const booleans = ["disabled", "editable", "secureTextEntry", "autoCorrect", "scrollEnabled", "showsVerticalScrollIndicator", "controls", "autoplay", "loop", "muted"];
+  const strings = ["text", "value", "placeholder", "backgroundColor", "color", "borderColor", "placeholderTextColor", "shadowColor", "dmBackgroundColor", "dmColor", "dmBorderColor", "dmPlaceholderTextColor", "dmShadowColor", "testID", "accessibilityLabel", "accessibilityHint", "accessibilityValue", "src", "dmSrc", "placeholderSrc", "resizeMode", "playControl", "spans", "nativeProps"];
+  const booleans = ["accessible", "accessibilityHidden", "accessibilityChecked", "accessibilitySelected", "accessibilityClickable", "accessibilityLongClickable", "disabled", "editable", "secureTextEntry", "autoCorrect", "scrollEnabled", "showsVerticalScrollIndicator", "controls", "autoplay", "loop", "muted"];
   const enums: Record<string, readonly string[]> = {
+    accessibilityRole: ["button", "text", "image", "checkbox", "search", "none"],
     fontWeight: ["normal", "bold"], fontStyle: ["normal", "italic"], textAlign: ["left", "center", "right"],
     textDecorationLine: ["none", "underline", "line-through"], overflow: ["visible", "hidden"], visibility: ["visible", "hidden"],
     ellipsizeMode: ["tail", "clip"], keyboardType: ["default", "email-address", "numeric", "decimal-pad", "phone-pad", "url"],

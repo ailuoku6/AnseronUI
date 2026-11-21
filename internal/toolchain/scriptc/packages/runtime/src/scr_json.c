@@ -1170,6 +1170,24 @@ static void scr_dyn_obj_drop_keys(ScrDyn *d, bool keep_slots) {
   d->v.obj.cap = 0;
 }
 
+/* Disposed nodes retain only reusable storage. Drain after the session's
+ * final collection, which can put more children into these pools. */
+void scr_dyn_pool_clear(void) {
+#ifndef SCR_RC_AUDIT
+  ScrDyn **lists[] = {&scr_dyn_free_arr, &scr_dyn_free_obj, &scr_dyn_free_misc};
+  for (size_t i = 0; i < sizeof lists / sizeof lists[0]; i++) {
+    while (*lists[i]) {
+      ScrDyn *d = *lists[i];
+      *lists[i] = (ScrDyn *)d->v.str;
+      if (i == 0) scr_mem_free(d->v.arr.items);
+      else if (i == 1) scr_dyn_obj_drop_keys(d, false);
+      scr_cyc_free_inline(d);
+      scr_dyn_free_count--;
+    }
+  }
+#endif
+}
+
 /* Primitive kinds cannot acquire properties or change kind while live, so
  * an object property edge to one cannot participate in a cycle. Keep its RC edge
  * out of trial deletion and release it in collected teardown instead. Other
@@ -13852,6 +13870,27 @@ static void scr_dyn_visit_clear(ScrDynVisitSet *s, ScrDynVisitLog *log) {
     free(log->items);
     *log = (ScrDynVisitLog){NULL, 0, 0};
   }
+}
+
+/* Library sessions own these reusable conversion tables, even when the
+ * last conversion already released every value in them. */
+void scr_dyn_conversion_clear(void) {
+  scr_dyn_visit_clear(&scr_dyn_built, &scr_dyn_built_log);
+  scr_dyn_visit_clear(&scr_dyn_viewed, &scr_dyn_viewed_log);
+  free(scr_dyn_matching.slots);
+  free(scr_dyn_built.slots);
+  free(scr_dyn_viewed.slots);
+  free(scr_dyn_built_log.items);
+  free(scr_dyn_viewed_log.items);
+  scr_dyn_matching = scr_dyn_built = scr_dyn_viewed = (ScrDynVisitSet){0};
+  scr_dyn_built_log = scr_dyn_viewed_log = (ScrDynVisitLog){0};
+  scr_dyn_visit_depth = 0;
+  scr_dyn_build_track = scr_dyn_trusted = scr_dyn_session_ran_code = false;
+  scr_dyn_release((ScrDyn *)scr_dyn_visit_held);
+  scr_dyn_visit_held = NULL;
+  free(g_td_seen);
+  g_td_seen = NULL;
+  g_td_nseen = g_td_cap = 0;
 }
 
 static void scr_dyn_visit_exit(void) {

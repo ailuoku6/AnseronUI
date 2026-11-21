@@ -47,6 +47,40 @@ function createdNode(commands: RenderCommand[], kind: string): number {
 }
 
 describe("reference Core", () => {
+  it("transports reader semantics, resets removed props and scopes reader ref requests to mounted nodes", async () => {
+    const ref = createRef<import("@anseronui/ui").NodeHandle>();
+    let change = (_: boolean) => {};
+    const page = definePage("accessibility", () => {
+      const [enabled, setEnabled] = useState(true); change = setEnabled;
+      return <View ref={ref} {...(enabled ? { accessibilityRole: "checkbox" as const, accessibilityLabel: "通知", accessibilityHint: "切换通知",
+        accessibilityValue: "已开启", accessibilityChecked: true, accessibilitySelected: true, accessible: true, accessibilityHidden: false,
+        accessibilityInfo: { clickable: true, longClickable: false } } : {})} onClick={() => {}} />;
+    });
+    const h = harness(page); h.send({ type: "CreateSurface", page: "accessibility", width: 320, height: 480 });
+    const commit = h.drain().find(item => item.type === "Commit")!;
+    if (commit.type !== "Commit") throw new Error("No commit");
+    const props = commit.commands.find(item => item.type === "SetProps");
+    expect(props).toMatchObject({ props: { accessibilityRole: "checkbox", accessibilityLabel: "通知", accessibilityHint: "切换通知", accessibilityValue: "已开启",
+      accessibilityChecked: true, accessibilitySelected: true, accessible: true, accessibilityHidden: false, accessibilityClickable: true, accessibilityLongClickable: false } });
+    const handle = ref.current!;
+    for (const method of ["accessibilityFocus", "accessibilityAnnounce"] as const) {
+      const pending = method === "accessibilityFocus" ? handle.accessibilityFocus() : handle.accessibilityAnnounce("保存成功");
+      const request = h.drain().find(item => item.type === "InvokeModule")!;
+      expect(request).toMatchObject({ module: "__view", method, argument: JSON.stringify({ nodeId: handle.nodeId, args: method === "accessibilityFocus" ? null : { message: "保存成功" } }) });
+      if (request.type !== "InvokeModule") throw new Error("No request");
+      h.send({ type: "ModuleResult", requestId: request.requestId, ok: true, value: "null" }); h.drain(); await pending;
+    }
+    await expect(handle.accessibilityAnnounce("")).rejects.toThrow("INVALID_ACCESSIBILITY_MESSAGE");
+    change(false);
+    const reset = h.drain().find(item => item.type === "Commit")!;
+    if (reset.type !== "Commit") throw new Error("No reset");
+    expect(reset.commands.find(item => item.type === "SetProps")).toMatchObject({ props: {} });
+    expect(JSON.stringify(reset.commands)).not.toContain("accessibilityRole");
+    h.runtime.dispose();
+    await expect(handle.accessibilityFocus()).rejects.toThrow("NODE_UNMOUNTED");
+    await expect(handle.accessibilityAnnounce("失效节点")).rejects.toThrow("NODE_UNMOUNTED");
+  });
+
   it("transports dark color declarations, span colors and shadows and removes overrides on update", () => {
     let toggle = (_:boolean) => {};
     const page = definePage('dark-styles', () => {
@@ -461,6 +495,22 @@ describe("reference Core", () => {
     h.send({ type: "DestroySurface" });
     expect(h.drain().some(item => item.type === "SurfaceDisposed")).toBe(true);
     expect(effects.at(-1)).toBe("cleanup:2");
+  });
+
+  it("finishes surface disposal after user effect and ref cleanup throw", () => {
+    const released: string[] = [];
+    function Page(): UIElement {
+      useEffect(() => () => { released.push("first"); throw new Error("effect failed"); }, []);
+      useEffect(() => () => { released.push("second"); }, []);
+      return <View ref={node => { if (node === null) { released.push("ref"); throw new Error("ref failed"); } }} />;
+    }
+    const h = harness(definePage("cleanup", Page));
+    h.send({ type: "CreateSurface", page: "cleanup", width: 300, height: 100 }); h.drain();
+    h.send({ type: "DestroySurface" });
+    const output = h.drain();
+    expect(released).toEqual(["ref", "first", "second"]);
+    expect(output.some(item => item.type === "SurfaceDisposed")).toBe(true);
+    h.runtime.dispose(); expect(released).toHaveLength(3);
   });
 
   it("retains keyed component state and host IDs during reorder", () => {

@@ -2,6 +2,15 @@ import XCTest
 import UIKit
 @testable import AnseronUIDemo
 
+private final class PendingImageProtocol: URLProtocol {
+    static var started: XCTestExpectation?
+    static var stopped: XCTestExpectation?
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "cleanup-image.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Self.started?.fulfill() }
+    override func stopLoading() { Self.stopped?.fulfill() }
+}
+
 private final class RecordingCore: IOSCoreTransport {
     let bundleBuildId = "container-test"
     let runtimeEpoch: UInt32 = 1
@@ -78,6 +87,67 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
 }
 
 @MainActor final class RenderViewTests: XCTestCase {
+    @MainActor func testAccessibilitySemanticsActionsAndReset() throws {
+        let root = UIView()
+        let renderer = IOSRenderer(root: root)
+        var events: [RendererEvent] = []
+        renderer.onEvent = { events.append($0) }
+        var revision = 0
+        func apply(_ commands: [[String: Any]]) throws {
+            revision += 1
+            try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type":"Commit","revision":revision,"commands":commands]))
+        }
+        try apply([
+            ["type":"CreateNode","nodeId":1,"kind":"View"],
+            ["type":"SetProps","nodeId":1,"props":["accessibilityRole":"checkbox","accessibilityLabel":"通知","accessibilityHint":"切换通知","accessibilityChecked":true]],
+            ["type":"InsertChild","nodeId":1,"parentId":0,"index":0],
+            ["type":"BindEvent","nodeId":1,"event":"tap","enabled":true],
+            ["type":"BindEvent","nodeId":1,"event":"longPress","enabled":true],
+        ])
+        let node = try XCTUnwrap(root.subviews.first)
+        XCTAssertTrue(node.isAccessibilityElement)
+        XCTAssertEqual(node.accessibilityLabel, "通知")
+        XCTAssertTrue(node.accessibilityTraits.contains(.button))
+        XCTAssertTrue(node.accessibilityTraits.contains(.selected))
+        XCTAssertTrue(node.accessibilityActivate())
+        XCTAssertEqual(events.last?.type, "Tap")
+        let action = try XCTUnwrap(node.accessibilityCustomActions?.first)
+        XCTAssertTrue(action.actionHandler?(action) == true)
+        XCTAssertEqual(events.last?.event, "longPress")
+        try apply([["type":"SetProps","nodeId":1,"props":["accessibilityRole":"button","disabled":true]]])
+        XCTAssertFalse(node.accessibilityActivate())
+        XCTAssertTrue(node.accessibilityTraits.contains(.notEnabled))
+        try apply([["type":"SetProps","nodeId":1,"props":["accessibilityRole":"none"]]])
+        XCTAssertFalse(node.isAccessibilityElement)
+        try apply([["type":"SetProps","nodeId":1,"props":["accessibilityHidden":true]]])
+        XCTAssertTrue(node.accessibilityElementsHidden)
+        try apply([["type":"SetProps","nodeId":1,"props":[:]]])
+        XCTAssertNil(node.accessibilityLabel)
+        XCTAssertNil(node.accessibilityHint)
+        XCTAssertNil(node.accessibilityValue)
+        XCTAssertFalse(node.accessibilityElementsHidden)
+        XCTAssertFalse(node.accessibilityTraits.contains(.selected))
+        renderer.clear()
+    }
+
+    func testPageCleanupCancelsAnInFlightImageRequest() async throws {
+        let started = expectation(description: "image request started"), stopped = expectation(description: "image request cancelled")
+        PendingImageProtocol.started = started; PendingImageProtocol.stopped = stopped
+        URLProtocol.registerClass(PendingImageProtocol.self)
+        let renderer = IOSRenderer(root: UIView())
+        defer {
+            renderer.clear(); URLProtocol.unregisterClass(PendingImageProtocol.self)
+            PendingImageProtocol.started = nil; PendingImageProtocol.stopped = nil
+        }
+        try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type": "Commit", "revision": 1, "commands": [
+            ["type": "CreateNode", "nodeId": 1, "kind": "Image"],
+            ["type": "SetProps", "nodeId": 1, "props": ["src": "https://cleanup-image.invalid/pending.png"]],
+        ]]))
+        await fulfillment(of: [started], timeout: 5)
+        renderer.clear(); renderer.clear()
+        await fulfillment(of: [stopped], timeout: 5)
+        XCTAssertNil(renderer.view(for: 1))
+    }
     func testDarkStylesAndOuterShadowRepaintWithoutChangingInput() throws {
         let root = UIView(frame:CGRect(x:0,y:0,width:320,height:480))
         let window = UIWindow(frame:root.frame)

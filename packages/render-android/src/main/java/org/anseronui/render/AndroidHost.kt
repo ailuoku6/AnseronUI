@@ -383,17 +383,17 @@ class AndroidHost(
     private fun finish() {
         if (closed) return
         closed = true
-        requests.values.forEach { it() }
-        requests.clear()
-        network.shutdownNow()
-        core?.dispose()
-        core = null
+        val pending = requests.values.toList(); requests.clear()
+        pending.forEach { cleanup(it) }
+        backWaiter?.let { cleanup { it(false) } }; backWaiter = null
+        cleanup { network.shutdownNow() }
+        val runtime = core; core = null; cleanup { runtime?.dispose() }
         ui.post {
-            standardServices.dispose()
+            cleanup { standardServices.dispose() }
             val cancellations = extensionRequests.values.toList(); extensionRequests.clear()
-            cancellations.forEach { it() }
-            renderer.clear()
+            cancellations.forEach { cleanup(it) }
+            cleanup { renderer.clear() }
         }
-        thread.quitSafely()
+        cleanup { thread.quitSafely() }
     }
 }

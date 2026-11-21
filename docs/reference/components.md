@@ -18,7 +18,7 @@
 | `Video` | 视频 | `src`、`playControl`、`autoplay`、`loop`、`muted`、播放事件 |
 | `NativeComponent` | 自定义原生视图 | `name`、`nativeProps`、原生事件和 ref |
 
-这些组件支持 `style`、`ref`、`testID`、`accessibilityLabel`、`key` 和通用触摸事件。具体类型以 [`packages/ui/src/index.ts`](../../packages/ui/src/index.ts) 为准。
+这些组件支持 `style`、`ref`、`testID`、无障碍属性、`key` 和通用触摸事件。描述、角色、读屏动作、播报和聚焦见[无障碍](../guides/ui/accessibility.md)。具体类型以 [`packages/ui/src/index.ts`](../../packages/ui/src/index.ts) 为准。
 
 ## 常用属性
 
@@ -57,7 +57,7 @@
 | `onTouchDown`、`onTouchMove`、`onTouchUp`、`onTouchCancel` | 手势处理 | 支持捕获阶段和冒泡阶段 |
 | `onBackPress` | 返回键处理 | 返回 `true` 表示消费该事件 |
 
-触摸事件含 `target`、`currentTarget`、`eventPhase`、坐标和 `pointerId`。在回调中同步调用 `stopPropagation()` 停止框架事件传播。滚动交接由 `touchAction` 控制。完整分发顺序和滚动仲裁见[事件与手势](interactions.md)。
+触摸事件含 `target`、`currentTarget`、`eventPhase`、坐标和 `pointerId`。在回调中同步调用 `stopPropagation()` 停止框架事件传播。滚动交接由 `touchAction` 控制。完整分发顺序和滚动仲裁见[事件与手势](../guides/ui/interactions.md)。
 
 ## 页面与状态
 
@@ -65,10 +65,10 @@
 
 常用接口：
 
-- 页面导航使用 `useRouter()`。见[页面路由](routing.md)。
-- 页面隐藏时暂停工作使用 `usePageEffect()`。见[页面生命周期](page-lifecycle.md)。
-- 延迟任务使用 `setTimeout`、`clearTimeout` 或 `useTimers()`。见[计时器](timers.md)。
-- 原生服务使用 `useServices()`。见[标准系统服务](native-services.md)。
+- 页面导航使用 `useRouter()`。见[页面路由](../guides/navigation/routing.md)。
+- 页面隐藏时暂停工作使用 `usePageEffect()`。见[页面生命周期](../guides/navigation/page-lifecycle.md)。
+- 延迟任务使用 `setTimeout`、`clearTimeout` 或 `useTimers()`。见[计时器](../guides/navigation/timers.md)。
+- 原生服务使用 `useServices()`。见[标准系统服务](../guides/services/native-services.md)。
 
 ## 资源与媒体
 
@@ -76,13 +76,24 @@
 
 自动播放、编解码器、网络访问和系统权限由平台控制。媒体加载失败时，使用 `onError` 提供可恢复的界面状态。
 
-## 界面专题
+## 相关文档
 
-- [样式、布局与主题](styles.md)：Flex 属性、文字、夜间颜色、阴影和裁剪。
-- [事件与手势](interactions.md)：触摸捕获/冒泡、ScrollView 仲裁和返回键。
-- [动画](animations.md)：声明式动画、ref 动画和可动画属性。
-- [自定义 Hook 与组件组合](component-composition.md)：Hook、组件属性、插槽和 render prop。
-- [路由与页面生命周期](routing.md)：页面注册、导航参数、保活和回收。
-- [虚拟列表](virtual-list.md)：长列表和可变行高。
-- [原生组件](native-extensions.md)：自定义视图、组件 ref 和平台实现。
-- [编写限制](../getting-started/typescript-limitations.md)：TSX 语法和依赖边界。
+界面：
+
+- [样式](../guides/ui/styles.md)
+- [事件与手势](../guides/ui/interactions.md)
+- [动画](../guides/ui/animations.md)
+- [组件组合](../guides/ui/component-composition.md)
+- [虚拟列表](../guides/ui/virtual-list.md)
+
+页面：
+
+- [路由](../guides/navigation/routing.md)
+- [生命周期](../guides/navigation/page-lifecycle.md)
+
+能力：
+
+- [系统服务](../guides/services/native-services.md)
+- [原生扩展](../guides/services/native-extensions.md)
+
+限制见 [TypeScript 与 TSX](typescript.md)。全部目录见[文档](../README.md)。

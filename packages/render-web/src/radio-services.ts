@@ -72,5 +72,12 @@ export class BrowserRadioServices {
     finally { this.win.clearTimeout(timeout); signal.removeEventListener('abort', abort); controller.abort(); this.controllers.delete(controller); }
   }
   private removeListeners(device?: any) { for (const [item, listener] of this.listeners) if (!device || item.service.device === device) { item.removeEventListener('characteristicvaluechanged', listener); this.listeners.delete(item); } }
-  dispose() { this.disposed = true; for (const controller of this.controllers) controller.abort(); this.removeListeners(); for (const device of this.devices.values()) device.gatt?.disconnect(); this.devices.clear(); }
+  dispose() {
+    this.disposed = true;
+    for (const controller of this.controllers) controller.abort();
+    this.removeListeners();
+    const devices = Array.from(this.devices.values()); this.devices.clear();
+    // A device losing access must not prevent the rest of the page from closing.
+    for (const device of devices) { try { device.gatt?.disconnect(); } catch (_error) {} }
+  }
 }

@@ -1,5 +1,15 @@
 # 颜色、夜间模式与阴影
 
+先在首页上改布局和颜色。夜间模式、阴影和主题监听在后面。
+
+```tsx
+<View style={{ flexDirection: "column", padding: 24, gap: 16, backgroundColor: "#f5f7fb" }}>
+  <Text style={{ fontSize: 24, fontWeight: "bold", color: "#102030" }}>Hello</Text>
+</View>
+```
+
+`flexDirection`、`padding`、`gap` 和 `backgroundColor` 控制容器。`fontSize`、`fontWeight` 和 `color` 控制文字。改完后重新运行应用。
+
 `Style` 在 iOS、Android、macOS、HarmonyOS 和 Web 上支持背景、文字、边框及外阴影。颜色属性提供以 `dm` 为前缀的深色版本，跟随宿主当前的深色外观自动选择，无需在业务代码中监听主题并重新渲染。
 
 ## Button 的共享样式
@@ -15,7 +25,7 @@ TSX 的 `Button` 在共享 UI 层组合为 `View` 和单行 `Text`，新页面�
 `useServices().appearance.get()` 返回当前外观：`"light"` 或 `"dark"`。`appearance.subscribe(listener, onError?)` 监听当前值和之后的变化，返回取消订阅函数；组件卸载时应调用该函数。五端均已实现。这里读取的是页面宿主的实际外观，Web 跟随 `prefers-color-scheme`。
 
 ```tsx
-import { Text, useEffect, useServices, useState } from "@anseronui/ui";
+import { Text, useEffect, useServices, useState } from "anseronui/ui";
 
 function ThemeLabel() {
   const services = useServices();
@@ -93,7 +103,7 @@ function ThemeLabel() {
 跨平台颜色建议统一使用 `#RRGGBB`，例如 `#ffffff`。各宿主的额外颜色语法并不完全一致。设置 `"transparent"` 可以清除背景；阴影透明度使用 `shadowOpacity`。
 
 ```tsx
-import { View, Text, TextInput, useState } from "anseronui";
+import { View, Text, TextInput, useState } from "anseronui/ui";
 
 export default function Page() {
   const [value, setValue] = useState("");
@@ -184,7 +194,7 @@ export default function Page() {
 
 内置 `AnseronUIRenderView` 和 Web renderer 自动刷新已挂载的颜色，保留页面状态和输入内容。刷新不触发 Core 布局，不重放媒体控制指令或自定义原生组件的 `nativeProps`。系统默认输入颜色也会随原生主题变化。Android 默认 Activity 可能因系统配置变化重建，页面是否保留仍遵循 Activity 生命周期；宿主自行处理 `uiMode` 时，容器会在配置回调中刷新颜色。
 
-直接使用底层 `IOSRenderer`、`MacOSRenderer` 或 `AndroidRenderer` 的集成方，需要在宿主外观改变后调用 `appearanceChanged()`。涉及主题相关业务状态时，仍可使用[标准系统能力](native-services.md)中的 appearance 订阅。
+直接使用底层 `IOSRenderer`、`MacOSRenderer` 或 `AndroidRenderer` 的集成方，需要在宿主外观改变后调用 `appearanceChanged()`。涉及主题相关业务状态时，仍可使用[标准系统能力](../services/native-services.md)中的 appearance 订阅。
 
 `dm` 字段是声明式颜色配置，不能传给 `ref.animate()`；动画支持范围见[动画文档](animations.md)。配置了声明式背景动画时，主题背景变化沿用该动画配置，边框、文字和阴影颜色直接更新。
 

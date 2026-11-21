@@ -3,7 +3,7 @@
 AnseronUI 支持在 Core 内同步监听系统返回键。页面节点可以声明 `onBackPress`，回调返回 `true` 表示消费本次返回键，返回 `false` 表示交给宿主继续处理：通常是先执行 AnseronUI 路由 `back/pop`，栈为空后再执行系统默认退出。
 
 ```tsx
-import { Text, View, useState } from "@anseronui/ui";
+import { Text, View, useState } from "anseronui/ui";
 
 export function EditorPage() {
   const [editing, setEditing] = useState(true);

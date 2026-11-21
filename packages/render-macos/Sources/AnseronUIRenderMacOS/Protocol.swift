@@ -57,6 +57,14 @@ public struct RenderProps: Decodable, Sendable {
     public var placeholderTextColor: String?
     public let accessibilityLabel: String?
     public let accessibilityRole: String?
+    public let accessibilityHint: String?
+    public let accessibilityValue: String?
+    public let accessible: Bool?
+    public let accessibilityHidden: Bool?
+    public let accessibilityChecked: Bool?
+    public let accessibilitySelected: Bool?
+    public let accessibilityClickable: Bool?
+    public let accessibilityLongClickable: Bool?
     public let textDecorationLine: String?
     public let scrollEnabled: Bool?
     public let scrollAnchorOffset: Double?

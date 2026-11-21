@@ -11,15 +11,15 @@ Help the user build or debug an AnseronUI app using this repository's actual API
 
 - In a generated app, run commands from that app's root. Inspect `anseronui.config.json`, `package.json`, page source, and the affected platform host before editing.
 - In this repository, distinguish app/example work from framework work. App examples live under `examples/`; changes to `packages/`, `scripts/`, protocols, or renderer behavior are framework contributions. Follow [framework development](../../../docs/contributing/framework-development.md) for those changes.
-- For a new app or a full end-to-end workflow, follow the [App development handbook](../../../docs/getting-started/app-development.md). Avoid re-creating its setup steps from memory.
+- For a new app, use the published package: `npx anseronui create`. Follow [quick start](../../../docs/getting-started/quick-start.md) and [pages](../../../docs/getting-started/pages.md). Do not tell app authors to clone this repository or pass `--local-framework`.
 
 ## Preserve the AnseronUI programming model
 
 - Build shared screens with AnseronUI components and APIs from `anseronui/ui`. Do not assume React, React Native, browser DOM, Node.js, or arbitrary npm APIs are available in shared TSX.
 - Confirm a page is exported with `definePage` and registered in `anseronui.config.json`. A file that is not in the configured page/source set is not part of the app build.
-- Read [TSX constraints](../../../docs/getting-started/typescript-limitations.md) before adding syntax or dependencies that rely on dynamic loading, reflection, Node APIs, or React behavior.
-- Use `useServices()` for supported platform services. Check capability and permission results, handle cancellation and errors, and read [native services](../../../docs/guides/native-services.md) for platform differences.
-- Use native extensions only when a standard component or service cannot meet the requirement. A native extension needs a host implementation for every platform the app claims to support. Follow [native extension guidance](../../../docs/guides/native-extensions.md).
+- Read [TSX constraints](../../../docs/reference/typescript.md) before adding syntax or dependencies that rely on dynamic loading, reflection, Node APIs, or React behavior.
+- Use `useServices()` for supported platform services. Check capability and permission results, handle cancellation and errors, and read [native services](../../../docs/guides/services/native-services.md) for platform differences.
+- Use native extensions only when a standard component or service cannot meet the requirement. A native extension needs a host implementation for every platform the app claims to support. Follow [native extension guidance](../../../docs/guides/services/native-extensions.md).
 
 ## Develop and verify
 
@@ -30,7 +30,7 @@ npm run check
 npm run typecheck
 ```
 
-Then build and run the affected target. Common app commands are `npm run ios`, `npm run android`, `npm run macos`, `npm run harmony`, and `npm run build:web`. Web changes require a new Wasm build before refreshing the browser. Check [build and run](../../../docs/getting-started/tooling.md) for device selection, release builds, signing, and platform prerequisites.
+Then build and run the affected target. Common app commands are `npm run ios`, `npm run android`, `npm run macos`, `npm run harmony`, and `npm run build:web`. Web changes require a new Wasm build before refreshing the browser. Check [build and run](../../../docs/reference/build.md) for device selection, release builds, signing, and platform prerequisites.
 
 For repository examples, use the commands in [framework development](../../../docs/contributing/framework-development.md). Do not substitute the JavaScript reference host for a native or Wasm runtime check when the issue concerns AOT behavior or a platform renderer.
 
@@ -51,6 +51,6 @@ Report which platform and runtime were tested. Do not claim cross-platform suppo
 4. For runtime-only faults, inspect the affected platform's host logs and the relevant service, routing, or lifecycle contract. Do not infer platform behavior from the Web reference renderer.
 5. Change the smallest layer that owns the failure, then rerun the failing check and a relevant regression test.
 
-For route state and page reclamation, read [routing and lifecycle](../../../docs/guides/routing.md) and [page lifecycle](../../../docs/guides/page-lifecycle.md). For rendering or responsiveness, use the [performance guide](../../../docs/diagnostics/performance.md). Find other topics in the [documentation index](../../../docs/README.md).
+For route state and page reclamation, read [routing and lifecycle](../../../docs/guides/navigation/routing.md) and [page lifecycle](../../../docs/guides/navigation/page-lifecycle.md). For rendering or responsiveness, use the [performance guide](../../../docs/diagnostics/performance.md). Find other topics in the [documentation index](../../../docs/README.md).
 
 When information is missing, state the exact unresolved detail: target platform and OS/API version, command, failure stage, or relevant log. Continue with independent investigation while keeping platform-specific assumptions explicit.

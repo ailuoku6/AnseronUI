@@ -322,7 +322,7 @@ anseronui run harmony --device <device-id>
 | `scripts/native-plugins.mjs` | 双版本清单解析、新平台注册和依赖/权限生成 |
 | `scripts/sdk-files.mjs`、`scripts/pack-sdk.mjs` | SDK 分发、源码完整性与 npm tarball 验证 |
 | `examples/native/macos`、`examples/native/harmony`（新增） | 真实 Core 示例与平台集成验证 |
-| `docs/guides/capabilities.md`、`docs/getting-started/tooling.md`、根 README | 达到对应验收后更新公开支持范围 |
+| `docs/reference/components.md`、`docs/reference/build.md`、根 README | 达到对应验收后更新公开支持范围 |
 
 共享 Core、协议和 UI API 原则上复用；只有探针发现真实兼容缺口时才定向修改，并补上现有平台回归。
 
@@ -379,7 +379,7 @@ anseronui run harmony --device <device-id>
 
 ## 12. 依据与验证边界
 
-仓库依据：`docs/architecture/architecture.md`、`docs/architecture/core-bundles.md`、Renderer README、`scripts/build-core.mjs`、`scripts/standalone-app.mjs`、`scripts/native-plugins.mjs`、C transport 与锁定 scriptc 源码。当前源码优先于可能滞后的历史设计描述。
+仓库依据：`docs/architecture/overview.md`、`docs/architecture/core-bundles.md`、Renderer README、`scripts/build-core.mjs`、`scripts/standalone-app.mjs`、`scripts/native-plugins.mjs`、C transport 与锁定 scriptc 源码。当前源码优先于可能滞后的历史设计描述。
 
 2026-11-09 检索的官方接口依据：
 

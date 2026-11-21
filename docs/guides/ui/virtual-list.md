@@ -3,8 +3,8 @@
 `VirtualList<T>` 适合纵向长列表。它只挂载视口和预渲染区域内的行，使用实际布局结果更新行高，不要求所有行等高或预先知道高度。文本换行、展开/收起、异步内容变化都会重新测量。
 
 ```tsx
-import { Text, View, VirtualList, useRef } from '@anseronui/ui';
-import type { UIElement, VirtualListHandle } from '@anseronui/ui';
+import { Text, View, VirtualList, useRef } from 'anseronui/ui';
+import type { UIElement, VirtualListHandle } from 'anseronui/ui';
 
 interface Row { id: string; text: string }
 function Results(props: { rows: Row[] }): UIElement {
@@ -24,7 +24,7 @@ function Results(props: { rows: Row[] }): UIElement {
 }
 ```
 
-原生/Wasm AOT 页面应显式写泛型实参 `<VirtualList<Row>>`，并给回调参数标明类型。完整示例见 [`examples/virtual-list/page.tsx`](../../examples/virtual-list/page.tsx)：5000 行不同长度文本、动态展开、头部插入和深处定位。
+原生/Wasm AOT 页面应显式写泛型实参 `<VirtualList<Row>>`，并给回调参数标明类型。完整示例见 [`examples/virtual-list/page.tsx`](../../../examples/virtual-list/page.tsx)：5000 行不同长度文本、动态展开、头部插入和深处定位。
 
 | 属性 | 语义 |
 | --- | --- |

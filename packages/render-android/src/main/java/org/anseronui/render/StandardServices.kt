@@ -151,7 +151,13 @@ internal class StandardServices(private val root: View, private val baseUrl: URL
         val encoded = value.toString(); if (stream.last == encoded) return; stream.last = encoded
         val waiting = stream.waiting; if (waiting != null) { stream.waiting = null; waiting(Result.success(value)) } else stream.value = value
     }
-    private fun close(id: String) { streams.remove(id)?.stops?.toList()?.forEach { it() } }
+    private fun close(id: String) {
+        val stream = streams.remove(id) ?: return
+        val stops = stream.stops.toList(); stream.stops.clear()
+        val waiting = stream.waiting; stream.waiting = null
+        stops.forEach { cleanup(it) }
+        cleanup { waiting?.invoke(Result.failure(IllegalStateException("CANCELLED"))) }
+    }
     private fun next(args: JSONObject, complete: NativeCompletion): () -> Unit {
         val id = args.getString("id"); val module = args.getString("module")
         require(methods(module).contains("subscribe")) { "UNSUPPORTED: $module.subscribe" }
@@ -258,7 +264,7 @@ internal class StandardServices(private val root: View, private val baseUrl: URL
             }
             "location" -> {
                 var stop: (() -> Unit)? = null; var settled = false
-                val finish: (Result<Any?>) -> Unit = { if (!settled) { settled = true; stop?.invoke(); complete(it) } }
+                val finish: (Result<Any?>) -> Unit = { if (!settled) { settled = true; stop?.let { action -> cleanup(action) }; complete(it) } }
                 stop = watchLocation(finish); val timeout = Runnable { finish(Result.failure(IllegalStateException("TIMEOUT"))) }; ui.postDelayed(timeout, 15000)
                 return tracked { settled = true; ui.removeCallbacks(timeout); stop?.invoke() }
             }
@@ -281,7 +287,12 @@ internal class StandardServices(private val root: View, private val baseUrl: URL
         }
         error("UNSUPPORTED")
     }
-    private fun tracked(action: () -> Unit): () -> Unit { lateinit var stop: () -> Unit; stop = { cancellations.remove(stop); action() }; cancellations.add(stop); return stop }
+    private fun tracked(action: () -> Unit): () -> Unit {
+        var stopped = false
+        lateinit var stop: () -> Unit
+        stop = { if (!stopped) { stopped = true; cancellations.remove(stop); cleanup(action) } }
+        cancellations.add(stop); return stop
+    }
     private fun fragment(): ServiceResultFragment {
         val a = activity ?: error("UNSUPPORTED: Activity required"); val manager = a.fragmentManager
         return manager.findFragmentByTag("anseronui.results") as? ServiceResultFragment ?: ServiceResultFragment().also { manager.beginTransaction().add(it, "anseronui.results").commitAllowingStateLoss(); manager.executePendingTransactions() }
@@ -367,9 +378,15 @@ internal class StandardServices(private val root: View, private val baseUrl: URL
         return { task.cancelled = true; task.connection?.disconnect(); task.future?.cancel(true); tasks.remove(id, task); Unit }
     }
     fun dispose() {
-        if (disposed) return; disposed = true; radio.dispose()
-        streams.keys.toList().forEach { close(it) }; cancellations.toList().forEach { it() }; cancellations.clear()
-        tasks.values.forEach { it.cancelled = true; it.connection?.disconnect(); it.future?.cancel(true) }; tasks.clear(); io.shutdownNow()
-        val owned = files.values.map { it.first }.toSet(); AnseronUIFileProvider.files.entries.removeIf { it.value.first in owned }; owned.forEach { it.delete() }; files.clear()
+        if (disposed) return; disposed = true
+        cleanup { radio.dispose() }
+        streams.keys.toList().forEach { close(it) }
+        val cancels = cancellations.toList(); cancellations.clear(); cancels.forEach { cleanup(it) }
+        val transfers = tasks.values.toList(); tasks.clear()
+        transfers.forEach { task -> task.cancelled = true; cleanup { task.connection?.disconnect() }; cleanup { task.future?.cancel(true) } }
+        cleanup { io.shutdownNow() }
+        val owned = files.values.map { it.first }.toSet(); files.clear()
+        cleanup { AnseronUIFileProvider.files.entries.removeIf { it.value.first in owned } }
+        owned.forEach { cleanup { it.delete() } }
     }
 }

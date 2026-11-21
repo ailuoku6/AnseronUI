@@ -24,6 +24,111 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class RenderViewTest {
+    @Test fun accessibilitySemanticsActionsAndReset() {
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        try { ui {
+        val root = FrameLayout(activity)
+        activity.addContentView(root, android.view.ViewGroup.LayoutParams(400, 400))
+        val events = mutableListOf<RendererEvent>()
+        val renderer = AndroidRenderer(root, onEvent = { events.add(it) })
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+            {"type":"CreateNode","nodeId":1,"kind":"View"},
+            {"type":"SetProps","nodeId":1,"props":{"accessibilityRole":"checkbox","accessibilityLabel":"通知","accessibilityHint":"切换通知","accessibilityChecked":true}},
+            {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+            {"type":"BindEvent","nodeId":1,"event":"tap","enabled":true},
+            {"type":"BindEvent","nodeId":1,"event":"longPress","enabled":true}
+        ]}""")
+        val node = renderer.viewFor(1)!!
+        val info = node.createAccessibilityNodeInfo()
+        assertEquals("android.widget.CheckBox", info.className)
+        assertEquals("通知", info.contentDescription)
+        assertEquals("切换通知", info.hintText)
+        assertTrue(info.isCheckable && info.isChecked && info.isClickable && info.isLongClickable)
+        assertTrue(node.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
+        assertEquals("Tap", events.last().type)
+        assertTrue(node.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK, null))
+        assertEquals("longPress", events.last().event)
+        renderer.applyJson("""{"type":"Commit","revision":2,"commands":[{"type":"SetProps","nodeId":1,"props":{"accessibilityRole":"button","disabled":true}}]}""")
+        assertFalse(node.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
+        renderer.applyJson("""{"type":"Commit","revision":3,"commands":[{"type":"SetProps","nodeId":1,"props":{"accessibilityRole":"none"}}]}""")
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, node.importantForAccessibility)
+        renderer.applyJson("""{"type":"Commit","revision":4,"commands":[{"type":"SetProps","nodeId":1,"props":{"accessibilityHidden":true}}]}""")
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, node.importantForAccessibility)
+        renderer.applyJson("""{"type":"Commit","revision":5,"commands":[{"type":"SetProps","nodeId":1,"props":{}}]}""")
+        assertNull(node.contentDescription)
+        assertFalse(node.createAccessibilityNodeInfo().isChecked)
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO, node.importantForAccessibility)
+        renderer.clear()
+        } } finally { ui { activity.finish() } }
+    }
+
+    @Test fun pageCleanupCancelsAnInFlightImageRequest() {
+        val server = java.net.ServerSocket(0)
+        val accepted = CountDownLatch(1); val disconnected = CountDownLatch(1)
+        val worker = Thread {
+            server.accept().use { socket ->
+                socket.soTimeout = 5000
+                val input = socket.getInputStream().bufferedReader()
+                while (!input.readLine().isNullOrEmpty()) { }
+                accepted.countDown()
+                try { if (input.read() == -1) disconnected.countDown() }
+                catch (_: java.net.SocketException) { disconnected.countDown() }
+            }
+        }
+        worker.start()
+        lateinit var renderer: AndroidRenderer
+        try {
+            ui {
+                renderer = AndroidRenderer(FrameLayout(instrumentation.targetContext))
+                renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+                    {"type":"CreateNode","nodeId":1,"kind":"Image"},
+                    {"type":"SetProps","nodeId":1,"props":{"src":"http://127.0.0.1:${server.localPort}/pending.png"}}
+                ]}""")
+            }
+            assertTrue("Image request must reach the server", accepted.await(5, TimeUnit.SECONDS))
+            ui { renderer.clear(); renderer.clear() }
+            assertTrue("Page teardown must disconnect the unfinished image request", disconnected.await(5, TimeUnit.SECONDS))
+        } finally { ui { renderer.clear() }; server.close(); worker.join(6000) }
+    }
+    @Test fun serviceCleanupContinuesAfterSubscriptionCancellationFails() = ui {
+        val released = mutableListOf<String>()
+        val sources: Map<String, org.anseronui.render.NativeEventSource> = mapOf(
+            "window" to { _ -> { released.add("window"); error("Expected unsubscribe failure") } },
+            "appearance" to { _ -> { released.add("appearance"); Unit } }
+        )
+        val serviceClass = Class.forName("org.anseronui.render.StandardServices")
+        val constructor = serviceClass.declaredConstructors.first { it.parameterTypes.size == 3 }.apply { isAccessible = true }
+        val services = constructor.newInstance(FrameLayout(instrumentation.targetContext), null, sources)
+        val invoke = serviceClass.getDeclaredMethod("invoke", String::class.java, String::class.java, Any::class.java, kotlin.jvm.functions.Function1::class.java).apply { isAccessible = true }
+        val completion: org.anseronui.render.NativeCompletion = {}
+        for (module in listOf("window", "appearance")) {
+            invoke.invoke(services, "events", "next", JSONObject().put("id", module).put("module", module), completion)
+        }
+        val dispose = serviceClass.getDeclaredMethod("dispose").apply { isAccessible = true }
+        dispose.invoke(services); dispose.invoke(services)
+        assertEquals(listOf("window", "appearance"), released)
+    }
+    @Test fun cleanupContinuesAfterNativeComponentDisposalFails() = ui {
+        val disposed = mutableListOf<String>()
+        val components = listOf("Broken", "Healthy").associateWith { name ->
+            { context: android.content.Context, _: (String, Any?) -> Unit ->
+                object : org.anseronui.render.AndroidNativeComponent {
+                    override val view = FrameLayout(context)
+                    override fun setProps(props: JSONObject) {}
+                    override fun dispose() { disposed.add(name); if (name == "Broken") error("Expected plugin disposal failure") }
+                }
+            }
+        }
+        val root = FrameLayout(instrumentation.targetContext)
+        val renderer = AndroidRenderer(root, org.anseronui.render.AndroidPlatformExtensions(components = components))
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+            {"type":"CreateNode","nodeId":1,"kind":"Native","nativeName":"Broken"},
+            {"type":"CreateNode","nodeId":2,"kind":"Native","nativeName":"Healthy"}
+        ]}""")
+        renderer.clear(); renderer.clear()
+        assertEquals(listOf("Broken", "Healthy"), disposed)
+        assertNull(renderer.viewFor(1)); assertNull(renderer.viewFor(2))
+    }
     @Test fun textLineHeightAndDarkImageSource() {
         val testActivity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
         val base = instrumentation.targetContext

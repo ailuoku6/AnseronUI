@@ -432,6 +432,14 @@ static ScrStr *scr_str_new_ascii(const char *bytes, size_t len) {
 #ifndef SCR_RC_AUDIT
 static SCR_TL ScrStr *scr_str_spare;
 #endif
+
+void scr_str_spare_clear(void) {
+#ifndef SCR_RC_AUDIT
+  ScrStr *spare = scr_str_spare;
+  scr_str_spare = NULL;
+  scr_mem_free(spare);
+#endif
+}
 /* The largest block the spare keeps. A larger one stays resident until a
  * string of about its size comes along, which may be never: a program that
  * replaces a 50 MB input with its edited copy would otherwise hold both. */

@@ -1,20 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadETS } from './load-ets.mjs';
+test('host teardown continues after cancellation, plugin and system listener failures', () => {
+  const { host, native } = fixture(), released = [];
+  const action = name => () => { released.push(name); };
+  const failure = name => () => { released.push(name); throw new Error(name); };
+  host.cancellations.set(1, failure('request')); host.cancellations.set(2, action('timer'));
+  host.extensions = [{ dispose: failure('plugin') }, { dispose: action('plugin2') }];
+  host.stopLinking = failure('linking'); host.events.onChange = () => {};
+  host.systemWindow = { off: failure('window') }; host.netConnection = { unregister: action('network') };
+  host.animations = { dispose: failure('animation') }; host.services = { dispose: action('services') };
+  host.radio = { dispose: action('radio') }; host.media = { dispose: action('media') };
+  native.close = action('core'); native.unmount = action('renderer');
+  assert.doesNotThrow(() => host.finish());
+  assert.deepEqual(released, ['request','timer','plugin','plugin2','linking','window','window','network','animation','services','radio','core','media','renderer']);
+  host.finish(); assert.equal(released.length, 14);
+  assert.equal(host.worker, 0); assert.equal(host.renderer, 0);
+});
 function fixture(measureText = () => ({ width: 40, height: 32 })) {
-  const sent = [], scopes = []; let inScope = false;
+  const sent = [], scopes = [], accessibilityEvents = []; let inScope = false;
   const native = { profile() {}, performance: () => ({ adapterStepMs: 2, uiQueueMs: 1 }), post(worker, message) { sent.push(JSON.parse(message)); }, supportsModule: () => false, invokeView() { assert.equal(inScope, true); return { focused: true }; } };
   const { HarmonyHost } = loadETS('HarmonyHost', {
     './HarmonyMedia': {}, './HarmonyAnimation': {}, './HarmonyServices': {}, './HarmonyRadioServices': {}, './HarmonyApplicationServices': {},
     '@kit.ArkUI': { NodeContent: class {}, FontStyle: { Italic: 1, Normal: 0 }, window: { AvoidAreaType: { TYPE_SYSTEM: 0, TYPE_CUTOUT: 1, TYPE_NAVIGATION_INDICATOR: 4 } } },
+    '@ohos.accessibility': { EventInfo: class { constructor(type, bundleName, triggerAction) { Object.assign(this, { type, bundleName, triggerAction }); } }, async sendAccessibilityEvent(event) { accessibilityEvents.push(event); } },
     '@kit.IMEKit': {}, '@kit.NetworkKit': {}, '@kit.AbilityKit': {}, '@ohos.promptAction': {}, '@kit.ArkData': {}, '@kit.NotificationKit': {}, '@kit.LocalizationKit': {},
     '@kit.BasicServicesKit': { systemDateTime: { getUptime: () => performance.now() * 1e6, TimeType: { STARTUP: 0 } } },
     '@kit.ArkTS': { util: { TextEncoder: class { encodeInto(value) { return new TextEncoder().encode(value); } } } }, 'libanseronui.so': native,
   }, { FontStyle: { Italic: 1, Normal: 0 } });
   const measures = [];
   const ui = { px2vp: n => n / 2, vp2px: n => n * 2, getMeasureUtils: () => ({ measureTextSize(value) { measures.push(value); return measureText(value); } }), runScopedTask(fn) { scopes.push(1); inScope = true; try { fn(); } finally { inScope = false; } } };
-  const host = new HarmonyHost({}, ui, 'test', 'home'); host.worker = 1; host.renderer = 1;
-  return { host, native, sent, scopes, measures };
+  const host = new HarmonyHost({ abilityInfo: { bundleName: 'org.anseronui.demo' } }, ui, 'test', 'home'); host.worker = 1; host.renderer = 1;
+  return { host, native, sent, scopes, measures, accessibilityEvents };
 }
 test('worker-origin ref commands enter the ArkUI instance scope', async () => {
   const f = fixture();
@@ -133,4 +150,26 @@ test('diagnostics retain original stacks and collection failures do not suppress
   host.output({ type:'Diagnostic', ...detail });
   assert.deepEqual(captured,detail);
   assert.deepEqual(legacy,{code:detail.code,message:detail.message});
+});
+
+test('reader requests validate native node existence and await system accessibility events', async () => {
+  const f = fixture();
+  f.native.invokeView = (_renderer, node, method) => { assert.equal(node, 7); return method === 'accessibilityFocus' ? 'reader-target' : null; };
+  for (const [index, method] of ['accessibilityFocus', 'accessibilityAnnounce'].entries()) {
+    f.host.invoke({ requestId: index + 1, module: '__view', method, argument: JSON.stringify({ nodeId: 7, args: { message: '保存成功' } }) });
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(f.accessibilityEvents[0].customId, 'reader-target');
+  assert.equal(f.accessibilityEvents[0].type, 'requestFocusForAccessibility');
+  assert.equal(f.accessibilityEvents[1].textAnnouncedForAccessibility, '保存成功');
+  assert.equal(f.accessibilityEvents[1].bundleName, 'org.anseronui.demo');
+  assert.equal(f.scopes.length, 2);
+  assert.ok(f.sent.every(message => message.payload.ok));
+  f.host.invoke({ requestId: 3, module: '__view', method: 'accessibilityAnnounce', argument: JSON.stringify({ nodeId: 7, args: { message: '' } }) });
+  assert.equal(f.sent.at(-1).payload.ok, false);
+  assert.equal(f.accessibilityEvents.length, 2);
+  f.native.invokeView = () => { throw new Error('NODE_NOT_FOUND'); };
+  f.host.invoke({ requestId: 4, module: '__view', method: 'accessibilityFocus', argument: JSON.stringify({ nodeId: 7 }) });
+  assert.equal(f.sent.at(-1).payload.ok, false);
+  assert.equal(f.accessibilityEvents.length, 2);
 });

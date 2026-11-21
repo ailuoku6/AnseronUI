@@ -8,6 +8,32 @@ class ElementStub {
   remove() {}
 }
 class DocumentStub extends EventTarget { hidden = false; createElement() { return new ElementStub(this); } }
+it('restores the previous page even when the removed page fails to destroy', async () => {
+  const root = new ElementStub(new DocumentStub()), destroyed: string[] = [], errors: unknown[] = [];
+  const stack = new BrowserPageStack(root as unknown as HTMLElement, async (_root, page) => ({
+    resize: async () => {}, handleBackPress: async () => false,
+    destroy: async () => { destroyed.push(page); if (page === 'details') throw new Error('plugin cleanup failed'); },
+  }), error => errors.push(error));
+  stack.router.load('home'); await stack.whenIdle();
+  const home = stack.host;
+  stack.router.push('details'); await stack.whenIdle();
+  stack.router.pop(); await expect(stack.whenIdle()).rejects.toThrow('plugin cleanup failed');
+  expect(stack.host).toBe(home); expect(root.children).toHaveLength(1); expect(errors).toHaveLength(1);
+  await stack.destroy(); expect(destroyed).toEqual(['details', 'home']);
+});
+it('destroys an evicted page even if hiding it fails', async () => {
+  const root = new ElementStub(new DocumentStub()), destroyed: string[] = [];
+  let fail = false;
+  const stack = new BrowserPageStack(root as unknown as HTMLElement, async (_root, page) => ({
+    resize: async () => {}, handleBackPress: async () => false,
+    setVisibility: async () => { if (fail && page === 'home') throw new Error('hide failed'); },
+    destroy: async () => { destroyed.push(page); },
+  }));
+  stack.router.load('home'); await stack.whenIdle(); stack.router.push('details'); await stack.whenIdle();
+  fail = true; await expect(stack.trimMemory()).rejects.toThrow('hide failed');
+  expect(destroyed).toEqual(['home']);
+  await expect(stack.destroy()).rejects.toThrow('hide failed'); expect(destroyed).toEqual(['home', 'details']);
+});
 it('preserves covered hosts, combines document/container visibility and recreates evicted entries with original params', async () => {
   const doc = new DocumentStub(); const root = new ElementStub(doc);
   const created: { page: string; events: boolean[]; destroyed: number; router: Function }[] = [];

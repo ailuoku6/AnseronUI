@@ -34,7 +34,7 @@ iOS CALayer、Android Skia 与 Harmony Rosen 的模糊核和栅格化不同，�
 
 检查中发现 UI compiler 将 HOC 返回的具名组件误判为普通嵌套回调，导致合法的 Hook 被拒绝。现让具名组件和自定义 Hook 拥有独立检查作用域，普通事件/effect 回调与条件中的 Hook 仍会拒绝。补充了正反向 lowering 测试和共享运行时状态回归。
 
-支持范围是本框架的函数组件模型，不等于 React 全部生态兼容。JSX props spread 仍不支持；HOC 应显式转发属性，并在模块顶层创建以保持函数身份。任意复杂泛型 HOC 仍需实际 AOT 验证。完整例子与限制见 `docs/guides/component-composition.md`。
+支持范围是本框架的函数组件模型，不等于 React 全部生态兼容。JSX props spread 仍不支持；HOC 应显式转发属性，并在模块顶层创建以保持函数身份。任意复杂泛型 HOC 仍需实际 AOT 验证。完整例子与限制见 `docs/guides/ui/component-composition.md`。
 
 ## 验证
 

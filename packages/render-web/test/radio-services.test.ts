@@ -3,6 +3,29 @@ import { BrowserNativeServices } from '../src/native-services.js';
 import { BrowserRadioServices } from '../src/radio-services.js';
 
 describe('browser BLE lifecycle', () => {
+  it('disposes an unused page without touching optional radio APIs', () => {
+    const bluetooth = vi.fn(() => { throw new Error('SecurityError'); });
+    const navigator = Object.defineProperty({}, 'bluetooth', { get: bluetooth });
+    const radio = new BrowserRadioServices({ navigator } as unknown as Window, () => {});
+    expect(() => { radio.dispose(); radio.dispose(); }).not.toThrow();
+    expect(bluetooth).not.toHaveBeenCalled();
+  });
+  it('continues page cleanup when a previously selected BLE device refuses disconnect', async () => {
+    const first = { id: 'first', gatt: { disconnect: vi.fn(() => { throw new DOMException('Permission revoked', 'SecurityError'); }) } };
+    const second = { id: 'second', gatt: { disconnect: vi.fn() } };
+    const requestDevice = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    const stop = vi.fn();
+    const native = new BrowserNativeServices({ ownerDocument: { defaultView: { navigator: { bluetooth: { requestDevice } } } } } as unknown as HTMLElement, { bluetooth: emit => { emit({ value: 'ready' }); return stop; } });
+    const signal = new AbortController().signal;
+    await native.call('bluetooth', 'scan', { serviceUUIDs: [] }, signal);
+    await native.call('bluetooth', 'scan', { serviceUUIDs: [] }, signal);
+    await native.call('events', 'next', { id: 'stream', module: 'bluetooth' }, signal);
+    expect(() => native.dispose()).not.toThrow();
+    expect(stop).toHaveBeenCalledOnce();
+    expect(second.gatt.disconnect).toHaveBeenCalledOnce();
+    expect(() => native.dispose()).not.toThrow();
+    expect(first.gatt.disconnect).toHaveBeenCalledOnce();
+  });
   function setup() {
     const characteristic = Object.assign(new EventTarget(), {
       uuid: '00002a19-0000-1000-8000-00805f9b34fb', properties: { read: true, write: true, notify: true },

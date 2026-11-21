@@ -1,3 +1,4 @@
+import { cleanupAll } from './cleanup.js';
 import type { Envelope, InputPayload, OutputPayload } from '@anseronui/protocol';
 import type { BrowserRuntimeAdapter } from './reference-host.js';
 
@@ -164,12 +165,13 @@ export class WasmRuntime implements BrowserRuntimeAdapter {
   }
   dispose(): void {
     if (this.disposed) return;
-    this.business.call('dispose');
-    this.framework.call('dispose');
-    for (let i=0; i<100 && this.business.call('async_pending'); i++) this.business.call('async_step', 1024);
     this.disposed = true;
-    const stopped = this.business.call('shutdown');
-    this.framework.call('shutdown');
-    if (!stopped) throw new Error('Core has unresolved async work at shutdown');
+    cleanupAll([
+      () => { this.business.call('dispose'); },
+      () => { this.framework.call('dispose'); },
+      () => { for (let i=0; i<100 && this.business.call('async_pending'); i++) this.business.call('async_step', 1024); },
+      () => { if (!this.business.call('shutdown')) throw new Error('Core has unresolved async work at shutdown'); },
+      () => { this.framework.call('shutdown'); },
+    ]);
   }
 }

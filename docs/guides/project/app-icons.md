@@ -2,7 +2,7 @@
 
 独立应用在 `anseronui.config.json` 的 `app.icon` 中配置图标。`npm run check` 校验配置和图片；各平台 `build` 在打包时生成并接入资源。Web 的 `dev:web` 同样提供 favicon。
 
-本功能面向 `anseronui create` 创建的应用，包括 `--local-framework` 工程。仓库自带的 iOS、Android、macOS 和 Web 演示宿主也读取根配置中的 `app.icon`。`integrate` 接入已有业务宿主时，图标仍由业务宿主负责。
+本功能面向 `anseronui create` 创建的应用。仓库里的 iOS、Android、macOS 和 Web 演示宿主也读取配置中的 `app.icon`。接入已有宿主时，图标仍由该宿主负责，见[接入已有工程](existing-app.md)。
 
 ## 新建 App 的默认图标
 

@@ -1459,6 +1459,9 @@ void scr_dyn_typed_ref_bind_array(ScrDyn *d, const ScrDynTypedArrayOps *ops);
  * for-in, Object.keys/values/entries, typeof and Array.isArray answer from
  * the native record, creating only the field values they return. */
 void scr_dyn_typed_ref_bind_record(ScrDyn *d, const ScrDynTypedRecordOps *ops);
+/* Release disposed nodes and their storage after the final session collection. */
+void scr_dyn_pool_clear(void);
+void scr_dyn_conversion_clear(void);
 /* Undeclared properties of checked records (scr_json.c). The checked
  * record builder notes its source object; a record whose source had own
  * properties the shape does not declare keeps them, in own-key order, in a

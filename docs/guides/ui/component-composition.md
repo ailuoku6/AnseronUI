@@ -7,7 +7,7 @@ AnseronUI 支持函数组件、自定义 Hook、返回组件的高阶函数、�
 自定义 Hook 是以 `use` 加大写字母开头的普通函数，可组合框架已有的 Hook。在组件或其他自定义 Hook 顶层调用，保持调用顺序固定。
 
 ```tsx
-import { Button, Text, View, useCallback, useMemo, useState } from 'anseronui';
+import { Button, Text, View, useCallback, useMemo, useState } from 'anseronui/ui';
 
 function useCounter(initial: number) {
   const [count, setCount] = useState(initial);
@@ -34,8 +34,8 @@ function Counter(props: { initial: number }) {
 可以把函数组件传给工厂，并返回新的函数组件。返回的组件应使用大写名称；其中可以有自己的 Hook。
 
 ```tsx
-import { View, useState, Button } from 'anseronui';
-import type { Component, UIElement } from 'anseronui';
+import { View, useState, Button } from 'anseronui/ui';
+import type { Component, UIElement } from 'anseronui/ui';
 
 interface CounterProps { initial: number; }
 
@@ -66,8 +66,8 @@ const CardCounter = withCard(Counter);
 | 渲染函数 | `renderFooter={(value: number) => <Text>{value}</Text>}` | `{props.renderFooter(2)}` |
 
 ```tsx
-import { Text, View } from 'anseronui';
-import type { Component, UIElement } from 'anseronui';
+import { Text, View } from 'anseronui/ui';
+import type { Component, UIElement } from 'anseronui/ui';
 
 interface PanelProps {
   Content: Component<{ initial: number }>;
@@ -99,6 +99,6 @@ function Page(): UIElement {
 
 ## 可运行示例和验证
 
-组件实验室的 `07 · Hooks / HOC / Slots` 使用同一段代码验证以上形式：点击自定义 Hook 和 HOC 的按钮后，再触发父组件更新，两个计数均应保留。源码见 [composition-showcase.tsx](../../examples/components/composition-showcase.tsx)。
+组件实验室的 `07 · Hooks / HOC / Slots` 使用同一段代码验证以上形式：点击自定义 Hook 和 HOC 的按钮后，再触发父组件更新，两个计数均应保留。源码见 [composition-showcase.tsx](../../../examples/components/composition-showcase.tsx)。
 
 回归入口为 `npm run test:framework`、原生 Core 的 `node scripts/test-native-core.mjs .verification/core-native/probe components`，以及安装最新构建后的 `node scripts/test-harmony-demo.mjs <device>`。目标平台 AOT 构建仍是确认 scriptc 支持边界的必要步骤。

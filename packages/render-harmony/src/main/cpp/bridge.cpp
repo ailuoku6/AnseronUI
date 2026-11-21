@@ -113,7 +113,7 @@ struct TouchSession {
   uint32_t target=0; anseronui::TouchPolicy policy; bool cancelled=false;
   float x=0,y=0,pageX=0,pageY=0,localOriginX=0,localOriginY=0,rootOriginX=0,rootOriginY=0;
 };
-struct Node { std::shared_ptr<bool> alive=std::make_shared<bool>(true); Surface *surface=nullptr;uint32_t id=0,parent=0,inputRevision=0;ArkUI_NodeHandle handle=nullptr,container=nullptr;std::string kind;std::string mediaSource;anseronui::NativeComponent custom;std::set<std::string> events;std::vector<uint32_t> children;bool updating=false;std::string touchAction="auto";bool enabled=true;float x=0,y=0,width=0,height=0,anchor=0,nextAnchor=0,appliedAnchor=0; std::map<std::string,std::string> strings; std::map<std::string,double> numbers; std::set<std::string> declared; std::vector<ArkUI_NodeHandle> spans;std::vector<std::pair<std::string,std::string>> spanColors; ArkUI_GestureRecognizer *longPress=nullptr;ArkUI_NodeHandle mediaNode=nullptr; };
+struct Node { std::shared_ptr<bool> alive=std::make_shared<bool>(true); Surface *surface=nullptr;uint32_t id=0,parent=0,inputRevision=0;ArkUI_NodeHandle handle=nullptr,container=nullptr;std::string kind;std::string mediaSource;anseronui::NativeComponent custom;std::set<std::string> events;std::vector<uint32_t> children;bool updating=false;std::string touchAction="auto";std::string accessibilityProps="{}";ArkUI_AccessibilityState *accessibilityState=nullptr;ArkUI_AccessibilityValue *accessibilityValue=nullptr;~Node(){if(accessibilityState)OH_ArkUI_AccessibilityState_Dispose(accessibilityState);if(accessibilityValue)OH_ArkUI_AccessibilityValue_Dispose(accessibilityValue);}bool enabled=true;float x=0,y=0,width=0,height=0,anchor=0,nextAnchor=0,appliedAnchor=0; std::map<std::string,std::string> strings; std::map<std::string,double> numbers; std::set<std::string> declared; std::vector<ArkUI_NodeHandle> spans;std::vector<std::pair<std::string,std::string>> spanColors; ArkUI_GestureRecognizer *longPress=nullptr;ArkUI_NodeHandle mediaNode=nullptr; };
 std::map<ArkUI_NodeHandle,Node*> rendererNodes;
 struct Surface { napi_env env; napi_ref event; napi_ref media;ArkUI_NodeContentHandle content;ArkUI_NodeHandle root;uint32_t revision=0;std::map<uint32_t,std::unique_ptr<Node>> nodes;bool dark=false,visible=true;float density=1;std::vector<uint32_t> roots;std::map<uint32_t,TouchSession> touches;
   Surface(napi_env e,napi_value c,napi_value fn,napi_value factory,float scale):env(e),density(scale){napi_create_reference(e,factory,1,&media);check(OH_ArkUI_GetNodeContentFromNapiValue(e,c,&content)==0,"INVALID_NODE_CONTENT");napi_create_reference(e,fn,1,&event);root=api->createNode(ARKUI_NODE_STACK);floats(root,NODE_WIDTH_PERCENT,{1});floats(root,NODE_HEIGHT_PERCENT,{1});ints(root,NODE_ALIGNMENT,{0});check(OH_ArkUI_NodeContent_AddNode(content,root)==0,"ATTACH_FAILED");}
@@ -303,7 +303,39 @@ void visual(Node &n) {
   }
   if(n.kind=="Video")ints(n.handle,NODE_CLIP,{1});
 }
+void accessibility(Node &n){
+  auto e=n.surface->env;auto p=parse(e,jsstr(e,n.accessibilityProps));auto h=n.handle;
+  auto flag=[&](const char *key,bool fallback=false){return has(e,p,key)?boolean(e,property(e,p,key)):fallback;};
+  auto label=[&](const char *key,ArkUI_NodeAttributeType attr){if(has(e,p,key))text(h,attr,str(e,property(e,p,key)));else api->resetAttribute(h,attr);};
+  label("accessibilityLabel",NODE_ACCESSIBILITY_TEXT);label("accessibilityHint",NODE_ACCESSIBILITY_DESCRIPTION);
+  const auto role=has(e,p,"accessibilityRole")?str(e,property(e,p,"accessibilityRole")):"";
+  const bool excluded=role=="none"||(has(e,p,"accessible")&&!flag("accessible"));
+  const bool clickable=flag("accessibilityClickable",n.events.count("tap")),longClickable=flag("accessibilityLongClickable",n.events.count("longPress"));
+  const bool explicitNode=flag("accessible")||!role.empty()||has(e,p,"accessibilityLabel")||clickable||longClickable;
+  if(flag("accessibilityHidden"))ints(h,NODE_ACCESSIBILITY_MODE,{ARKUI_ACCESSIBILITY_MODE_DISABLED_FOR_DESCENDANTS});
+  else if(excluded)ints(h,NODE_ACCESSIBILITY_MODE,{ARKUI_ACCESSIBILITY_MODE_DISABLED});
+  else if(explicitNode)ints(h,NODE_ACCESSIBILITY_MODE,{ARKUI_ACCESSIBILITY_MODE_ENABLED});
+  else api->resetAttribute(h,NODE_ACCESSIBILITY_MODE);
+  const std::map<std::string,int32_t> roles={{"button",ARKUI_NODE_BUTTON},{"text",ARKUI_NODE_TEXT},{"image",ARKUI_NODE_IMAGE},{"checkbox",ARKUI_NODE_CHECKBOX},{"search",ARKUI_NODE_TEXT_INPUT}};
+  if(!excluded&&roles.count(role))ints(h,NODE_ACCESSIBILITY_ROLE,{roles.at(role)});else api->resetAttribute(h,NODE_ACCESSIBILITY_ROLE);
+  if(!excluded&&explicitNode)ints(h,NODE_ACCESSIBILITY_GROUP,{1});else api->resetAttribute(h,NODE_ACCESSIBILITY_GROUP);
+  uint32_t actions=0;if(!excluded&&clickable)actions|=ARKUI_ACCESSIBILITY_ACTION_CLICK;if(!excluded&&longClickable)actions|=ARKUI_ACCESSIBILITY_ACTION_LONG_CLICK;
+  if(actions||has(e,p,"accessibilityClickable")||has(e,p,"accessibilityLongClickable"))ints(h,NODE_ACCESSIBILITY_ACTIONS,{static_cast<int32_t>(actions)});else api->resetAttribute(h,NODE_ACCESSIBILITY_ACTIONS);
+  if(has(e,p,"accessibilityChecked")||has(e,p,"accessibilitySelected")||has(e,p,"disabled")){
+    if(!n.accessibilityState)n.accessibilityState=OH_ArkUI_AccessibilityState_Create();
+    OH_ArkUI_AccessibilityState_SetDisabled(n.accessibilityState,flag("disabled"));
+    OH_ArkUI_AccessibilityState_SetSelected(n.accessibilityState,flag("accessibilitySelected"));
+    OH_ArkUI_AccessibilityState_SetCheckedState(n.accessibilityState,flag("accessibilityChecked")?ARKUI_ACCESSIBILITY_CHECKED:ARKUI_ACCESSIBILITY_UNCHECKED);
+    ArkUI_AttributeItem item{};item.object=n.accessibilityState;check(api->setAttribute(h,NODE_ACCESSIBILITY_STATE,&item)==0,"ACCESSIBILITY_STATE_FAILED");
+  }else api->resetAttribute(h,NODE_ACCESSIBILITY_STATE);
+  if(has(e,p,"accessibilityValue")){
+    if(!n.accessibilityValue)n.accessibilityValue=OH_ArkUI_AccessibilityValue_Create();
+    auto value=str(e,property(e,p,"accessibilityValue"));OH_ArkUI_AccessibilityValue_SetText(n.accessibilityValue,value.c_str());
+    ArkUI_AttributeItem item{};item.object=n.accessibilityValue;check(api->setAttribute(h,NODE_ACCESSIBILITY_VALUE,&item)==0,"ACCESSIBILITY_VALUE_FAILED");
+  }else api->resetAttribute(h,NODE_ACCESSIBILITY_VALUE);
+}
 void props(napi_env e,Node &n,napi_value p){
+  n.accessibilityProps=stringify(e,p);
   n.updating=true;
   struct Reset {Node &n;~Reset(){n.updating=false;}} reset{n};
   if(n.kind=="Video"){napi_value args[2];napi_create_uint32(e,n.id,&args[0]);args[1]=jsstr(e,stringify(e,p));n.surface->mediaCall("update",2,args);}
@@ -320,7 +352,6 @@ void props(napi_env e,Node &n,napi_value p){
     else if(k=="placeholder")text(h,NODE_TEXT_INPUT_PLACEHOLDER,str(e,v));
     else if(k=="testID")text(h,NODE_ID,str(e,v));
     else if(k=="accessibilityLabel")text(h,NODE_ACCESSIBILITY_TEXT,str(e,v));
-    else if(k=="accessibilityRole"){if(str(e,v)=="button"){ints(h,NODE_ACCESSIBILITY_ROLE,{ARKUI_NODE_BUTTON});ints(h,NODE_ACCESSIBILITY_GROUP,{1});}}
     else if(k=="backgroundColor"||k=="color"||k=="borderColor"||k=="placeholderTextColor")ints(h,k=="backgroundColor"?NODE_BACKGROUND_COLOR:k=="color"?NODE_FONT_COLOR:k=="borderColor"?NODE_BORDER_COLOR:NODE_TEXT_INPUT_PLACEHOLDER_COLOR,{static_cast<int32_t>(color(str(e,v)))});
     else if(k=="fontSize"||k=="opacity"||k=="borderWidth"||k=="borderRadius")floats(h,k=="fontSize"?NODE_FONT_SIZE:k=="opacity"?NODE_OPACITY:k=="borderWidth"?NODE_BORDER_WIDTH:NODE_BORDER_RADIUS,{static_cast<float>(number(e,v))});
     else if(k=="fontWeight")ints(h,NODE_FONT_WEIGHT,{str(e,v)=="bold"?ARKUI_FONT_WEIGHT_BOLD:ARKUI_FONT_WEIGHT_NORMAL});
@@ -377,6 +408,7 @@ void props(napi_env e,Node &n,napi_value p){
     if(!has(e,p,"showsVerticalScrollIndicator"))api->resetAttribute(n.handle,NODE_SCROLL_BAR_DISPLAY_MODE);
   }
   if(n.kind=="Image"&&!has(e,p,"placeholderSrc"))api->resetAttribute(n.handle,NODE_IMAGE_ALT);
+  accessibility(n);
   visual(n);
 }
 void apply(napi_env e,Surface &s,napi_value p){
@@ -413,7 +445,7 @@ void apply(napi_env e,Surface &s,napi_value p){
         floats(n.handle,NODE_POSITION,{x,y});floats(n.handle,NODE_WIDTH,{w});floats(n.handle,NODE_HEIGHT,{h});
         if(n.parent&&s.get(n.parent).kind=="ScrollView"){auto &parent=s.get(n.parent);float cw=0,ch=0;for(auto child:parent.children){auto &cn=s.get(child);cw=std::max(cw,cn.x+cn.width);ch=std::max(ch,cn.y+cn.height);}floats(parent.container,NODE_WIDTH,{cw});floats(parent.container,NODE_HEIGHT,{ch});}
       }else if(kind=="SetProps")props(e,n,property(e,c,"props"));
-      else if(kind=="BindEvent"){auto name=str(e,property(e,c,"event"));if(boolean(e,property(e,c,"enabled")))n.events.insert(name);else n.events.erase(name);if(name=="tap"){api->unregisterNodeEvent(n.handle,NODE_ON_CLICK);if(n.events.count(name))api->registerNodeEvent(n.handle,NODE_ON_CLICK,0,&n);}if(name=="longPress"){bindLongPress(n);if(n.longPress)OH_ArkUI_SetGestureRecognizerEnabled(n.longPress,n.events.count(name)>0);}}
+      else if(kind=="BindEvent"){auto name=str(e,property(e,c,"event"));if(boolean(e,property(e,c,"enabled")))n.events.insert(name);else n.events.erase(name);if(name=="tap"){api->unregisterNodeEvent(n.handle,NODE_ON_CLICK);if(n.events.count(name))api->registerNodeEvent(n.handle,NODE_ON_CLICK,0,&n);}if(name=="longPress"){bindLongPress(n);if(n.longPress)OH_ArkUI_SetGestureRecognizerEnabled(n.longPress,n.events.count(name)>0);}accessibility(n);}
       else check(false,"UNKNOWN_COMMAND");
     }
   }
@@ -437,6 +469,13 @@ napi_value mount(napi_env e,napi_callback_info i){auto a=arguments(e,i,4);float 
 napi_value commit(napi_env e,napi_callback_info i){auto a=arguments(e,i,2);uint32_t id=integer(e,a[0]);auto &surfaces=state(e).surfaces;check(surfaces.count(id),"SURFACE_NOT_FOUND");auto bytes=str(e,a[1]);check(bytes.size()<=MAX_BYTES,"MESSAGE_LIMIT");apply(e,*surfaces.at(id),parse(e,a[1]));return undefined(e);}
 napi_value unmount(napi_env e,napi_callback_info i){auto a=arguments(e,i,1);state(e).surfaces.erase(integer(e,a[0]));return undefined(e);}
 napi_value invokeView(napi_env e,napi_callback_info i){auto a=arguments(e,i,4);auto &surfaces=state(e).surfaces;uint32_t surface=integer(e,a[0]);check(surfaces.count(surface),"SURFACE_NOT_FOUND");auto &n=surfaces.at(surface)->get(integer(e,a[1]));std::string method=str(e,a[2]);auto value=parse(e,a[3]);
+  if(method=="accessibilityAnnounce")return undefined(e); // Existence check; ArkTS sends the system event.
+  if(method=="accessibilityFocus"){
+    for(auto *current=&n;current;current=current->parent?&current->surface->get(current->parent):nullptr){auto *mode=api->getAttribute(current->handle,NODE_ACCESSIBILITY_MODE);if(mode&&mode->size)check(mode->value[0].i32!=ARKUI_ACCESSIBILITY_MODE_DISABLED_FOR_DESCENDANTS&&(current!=&n||mode->value[0].i32!=ARKUI_ACCESSIBILITY_MODE_DISABLED),"NOT_ACCESSIBLE");}
+    auto *id=api->getAttribute(n.handle,NODE_ID);std::string target=id&&id->string?id->string:"";
+    if(target.empty()){target="anseronui-"+std::to_string(reinterpret_cast<uintptr_t>(n.surface))+"-"+std::to_string(n.id);text(n.handle,NODE_ID,target);}
+    return jsstr(e,target);
+  }
   if(method=="focus"||method=="blur"){if(n.kind!="TextInput"&&n.custom.invoke)return n.custom.invoke(e,method,str(e,a[3]));check(n.kind=="TextInput","NOT_FOCUSABLE");if(method=="focus"){auto result=OH_ArkUI_FocusRequest(n.handle);check(result==0,("FOCUS_REQUEST_FAILED: "+std::to_string(result)).c_str());}else ints(n.handle,NODE_FOCUS_STATUS,{0});return undefined(e);}
   if(method=="scrollTo"){if(n.kind!="ScrollView"&&n.custom.invoke)return n.custom.invoke(e,method,str(e,a[3]));check(n.kind=="ScrollView","NOT_SCROLLABLE");ArkUI_NumberValue values[3]{};values[0].f32=number(e,property(e,value,"x"));values[1].f32=number(e,property(e,value,"y"));values[2].i32=has(e,value,"animated")&&boolean(e,property(e,value,"animated"))?250:0;ArkUI_AttributeItem item{values,3,nullptr,nullptr};check(api->setAttribute(n.handle,NODE_SCROLL_OFFSET,&item)==0,"SCROLL_FAILED");return undefined(e);}
   if(method=="measure"){napi_value result;napi_create_object(e,&result);float x=n.x,y=n.y;for(uint32_t id=n.parent;id;id=n.surface->get(id).parent){auto &p=n.surface->get(id);x+=p.x;y+=p.y;if(p.kind=="ScrollView"){auto *offset=api->getAttribute(p.handle,NODE_SCROLL_OFFSET);if(offset&&offset->size>=2){x-=offset->value[0].f32;y-=offset->value[1].f32;}}}putnum(e,result,"x",x);putnum(e,result,"y",y);putnum(e,result,"width",n.width);putnum(e,result,"height",n.height);return result;}

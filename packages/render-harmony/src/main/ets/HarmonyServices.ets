@@ -1,3 +1,4 @@
+import { cleanup } from './Cleanup';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
@@ -172,7 +173,7 @@ export class HarmonyServices {
     let cancelled = false;
     let rejectCancel: (error: Error) => void = () => {};
     const cancellation = new Promise<Object>((_resolve, reject) => { rejectCancel = reject; });
-    const cancel = (): void => { if (cancelled) return; cancelled = true; request.destroy(); rejectCancel(new Error('CANCELLED')); };
+    const cancel = (): void => { if (cancelled) return; cancelled = true; cleanup(() => request.destroy()); rejectCancel(new Error('CANCELLED')); };
     this.tasks.set(id, cancel); setCancel(cancel);
     const fileId = this.identity(), path = this.context.cacheDir + '/anseronui-' + fileId;
     let output: fs.File | null = null;
@@ -211,7 +212,7 @@ export class HarmonyServices {
         return new HttpResponse(response.responseCode, response.result as string, response.header as Record<string, string>);
       } finally {
         if (uploadId) { const count = (this.uploads.get(uploadId) ?? 1) - 1; if (count > 0) this.uploads.set(uploadId, count); else this.uploads.delete(uploadId); }
-        request.destroy();
+        cleanup(() => request.destroy());
         if (output) { try { await fs.close(output); } catch (_error) {} }
         if (!this.files.has(fileId)) { try { await fs.unlink(path); } catch (_error) {} }
       }
@@ -221,7 +222,7 @@ export class HarmonyServices {
   }
   dispose(): void {
     this.closed = true;
-    this.tasks.forEach(cancel => cancel()); this.tasks.clear();
+    const tasks = Array.from(this.tasks.values()); this.tasks.clear(); tasks.forEach(cancel => cleanup(cancel));
     if (this.watchingLocation) { try { this.watchLocation(false); } catch (_error) {} }
     this.files.forEach(file => { void fs.unlink(file.path).catch(() => {}); }); this.files.clear();
   }

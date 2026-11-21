@@ -19,6 +19,9 @@ private final class DesktopScrollView: NSScrollView {
 @MainActor private final class NodeRecord {
     var anchorOffset: Double = 0
     var declaredProps: RenderProps?
+    var defaultAccessibilityRole: NSAccessibility.Role?
+    var defaultAccessibilitySubrole: NSAccessibility.Subrole?
+    var defaultAccessibilityElement = false
     let view: FlippedView
     var widget: NSView
     var content: NSView
@@ -60,6 +63,9 @@ private final class DesktopScrollView: NSScrollView {
     var displayedFirstFrame = false
     init(view: FlippedView, widget: NSView, content: NSView, kind: String) {
         self.view = view; self.widget = widget; self.content = content; self.kind = kind
+        defaultAccessibilityRole = widget.accessibilityRole()
+        defaultAccessibilitySubrole = widget.accessibilitySubrole()
+        defaultAccessibilityElement = widget.isAccessibilityElement()
     }
 }
 
@@ -151,7 +157,8 @@ private final class DesktopScrollView: NSScrollView {
     }
 
     public func clear() {
-        for record in nodes.values { release(record) }
+        let records = Array(nodes.values); nodes.removeAll()
+        for record in records { release(record) }
         pointer = nil; nodes.removeAll(); root.subviews.forEach { $0.removeFromSuperview() }; revision = 0
     }
     private func validate(_ commands: [RenderCommand]) throws {
@@ -221,6 +228,7 @@ private final class DesktopScrollView: NSScrollView {
         case "BindEvent":
             if c.enabled! { record.events.insert(c.event!) } else { record.events.remove(c.event!) }
             updateRecognizers(record)
+            updateAccessibility(record)
         default: throw RenderError.invalidCommand
         }
     }
@@ -284,9 +292,10 @@ private final class DesktopScrollView: NSScrollView {
         // AVPlayerView mouse handling. Install only the gestures Core requests.
         let clickView = r.widget is DesktopTextField ? r.widget : r.view
         r.view.pressAction = { [weak self, weak r] in
-            guard let self, let r, let id = self.id(for:r.view), r.events.contains("tap"), r.declaredProps?.disabled != true else { return false }
+            guard let self, let r, let id = self.id(for:r.view), r.events.contains("tap"), r.declaredProps?.accessibilityClickable != false, r.declaredProps?.disabled != true else { return false }
             self.onEvent?(RendererEvent(type:"Tap",nodeId:id,revision:self.revision)); return true
         }
+        (r.widget as? DesktopTextField)?.pressAction = r.view.pressAction
         let needsClick = (r.events.contains("tap") || r.events.contains("spanClick")) && !["TextInput","Video","ScrollView","Native"].contains(r.kind)
         if needsClick, r.clickRecognizer == nil {
             let click = NSClickGestureRecognizer(target:self,action:#selector(clicked(_:)))
@@ -329,12 +338,7 @@ private final class DesktopScrollView: NSScrollView {
             if wasEditing { root.window?.makeFirstResponder(replacement) }
         }
         r.widget.identifier = p.testID.map { NSUserInterfaceItemIdentifier($0) }
-        r.widget.setAccessibilityIdentifier(p.testID); r.widget.setAccessibilityLabel(p.accessibilityLabel)
-        if r.kind == "View" {
-            r.widget.setAccessibilityElement(p.accessibilityRole == "button")
-            r.widget.setAccessibilityRole(p.accessibilityRole == "button" ? .button : .group)
-            r.widget.setAccessibilityEnabled(p.disabled != true)
-        }
+        r.widget.setAccessibilityIdentifier(p.testID)
         let font = textFont(size:p.fontSize ?? 14, weight:p.fontWeight, style:p.fontStyle)
         if let label = r.widget as? NSTextField, r.kind == "Text" || r.kind == "RichText" {
             r.spans = p.spans.flatMap { try? JSONSerialization.jsonObject(with:Data($0.utf8)) as? [[String:Any]] } ?? []
@@ -374,7 +378,36 @@ private final class DesktopScrollView: NSScrollView {
             guard let props = try decodeNativeJSON(p.nativeProps ?? "{}") as? [String:Any] else { throw NativeExtensionError.invalidArguments }
             try native.setProps(props)
         }
+        updateAccessibility(r)
     }
+    private func updateAccessibility(_ r: NodeRecord) {
+        guard let p = r.declaredProps else { return }
+        let excluded = p.accessible == false || p.accessibilityRole == "none"
+        let clickable = p.accessibilityClickable ?? r.events.contains("tap")
+        let longClickable = p.accessibilityLongClickable ?? r.events.contains("longPress")
+        let explicit = p.accessible == true || p.accessibilityRole != nil || p.accessibilityLabel != nil || clickable || longClickable
+        let roles: [String: NSAccessibility.Role] = ["button":.button,"text":.staticText,"image":.image,"checkbox":.checkBox,"search":.textField]
+        r.widget.setAccessibilityRole(p.accessibilityRole.flatMap { roles[$0] } ?? r.defaultAccessibilityRole)
+        r.widget.setAccessibilitySubrole(p.accessibilityRole == "search" ? .searchField : r.defaultAccessibilitySubrole)
+        r.widget.setAccessibilityElement(!excluded && (explicit || r.defaultAccessibilityElement))
+        r.view.setAccessibilityHidden(p.accessibilityHidden == true)
+        r.widget.setAccessibilityLabel(excluded ? nil : p.accessibilityLabel)
+        r.widget.setAccessibilityHelp(excluded ? nil : p.accessibilityHint)
+        r.widget.setAccessibilityEnabled(p.disabled != true)
+        r.widget.setAccessibilitySelected(p.accessibilitySelected == true)
+        if p.accessibilityRole == "checkbox" { r.widget.setAccessibilityValue(NSNumber(value: p.accessibilityChecked == true)) }
+        else if let value = p.accessibilityValue { r.widget.setAccessibilityValue(value) }
+        else if let label = r.widget as? NSTextField { label.setAccessibilityValue(label.stringValue) }
+        else { r.widget.setAccessibilityValue(nil) }
+        r.widget.setAccessibilityCustomActions(nil)
+        if !excluded && longClickable && r.events.contains("longPress") {
+            r.widget.setAccessibilityCustomActions([NSAccessibilityCustomAction(name: NSLocalizedString("Long press", comment: "Accessibility action"), handler: { [weak self, weak r] in
+                guard let self, let r, r.declaredProps?.disabled != true, r.events.contains("longPress"), let id = self.id(for:r.view) else { return false }
+                self.onEvent?(RendererEvent(type:"NativeEvent",nodeId:id,revision:self.revision,event:"longPress")); return true
+            })])
+        }
+    }
+
     public func measure(kind: String, text: String, fontSize: Double, maxWidth: Double, props: RenderProps?) throws -> (width:Double,height:Double,baseline:Double) {
         guard fontSize.isFinite, fontSize > 0, maxWidth.isFinite, maxWidth >= 0 else { throw RenderError.invalidCommand }
         let font = textFont(size:fontSize,weight:props?.fontWeight,style:props?.fontStyle)
@@ -388,6 +421,22 @@ private final class DesktopScrollView: NSScrollView {
         guard let r = nodes[nodeId] else { throw NativeExtensionError.nodeUnmounted }
         if method == "animate" { try r.animation.animate(args) { completion(.success(["finished":$0])) }; return { r.animation.cancel() } }
         if method == "cancelAnimation" { r.animation.cancel(); completion(.success(NSNull())); return nil }
+        if method == "accessibilityAnnounce" {
+            guard let message = (args as? [String:Any])?["message"] as? String, !message.isEmpty, message.utf16.count <= 16384 else { throw NativeExtensionError.invalidArguments }
+            NSAccessibility.post(element: r.widget, notification: .announcementRequested, userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+            completion(.success(NSNull())); return nil
+        }
+        if method == "accessibilityFocus" {
+            guard r.widget.isAccessibilityElement() else { throw NativeExtensionError.unsupportedMethod("NOT_ACCESSIBLE") }
+            var ancestor: NSView? = r.widget
+            while let view = ancestor {
+                guard !view.isAccessibilityHidden(), !view.isHidden else { throw NativeExtensionError.unsupportedMethod("NOT_ACCESSIBLE") }
+                ancestor = view.superview
+            }
+            r.widget.setAccessibilityFocused(true)
+            NSAccessibility.post(element: r.widget, notification: .focusedUIElementChanged)
+            completion(.success(NSNull())); return nil
+        }
         if let native = r.native { return try native.invoke(method,args:args,completion:completion) }
         switch method {
         case "measure":
@@ -536,7 +585,7 @@ private final class DesktopScrollView: NSScrollView {
     }
     private func release(_ r:NodeRecord) {
         r.scrollEnd?.cancel(); r.scrollEnd = nil; r.animation.cancel(); r.imageTask?.cancel(); r.imageTask = nil
-        r.placeholderTask?.cancel(); r.placeholderTask = nil; r.native?.dispose(); r.native = nil
+        r.placeholderTask?.cancel(); r.placeholderTask = nil; let native = r.native; r.native = nil; native?.dispose()
         r.observers.forEach(NotificationCenter.default.removeObserver); r.observers.removeAll()
         r.player?.pause(); if let token = r.timeObserver { r.player?.removeTimeObserver(token) }
         r.timeObserver = nil; r.rateObserver = nil; r.statusObserver = nil; r.firstFrameObserver = nil; r.player = nil

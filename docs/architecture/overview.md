@@ -24,7 +24,7 @@ AnseronUI 的原生产物构建基于 **scriptc**，共享布局计算基于 **F
 | 布局算法 | Flexily 0.8.5，固定提交 `4850f1fb475f8147458059b45fb4f148d14a6ab4`；使用静态入口和已适配源码计算 Flex frame。`@anseronui/layout` 负责 surface 内节点所有权，平台负责字体测量 |
 | 框架与宿主 | AnseronUI 实现组件 API、TSX lowering、Hooks、协调、协议、跨端事件/服务、Renderer、路由和生命周期管理 |
 
-来源与适配见 [编译器准备脚本](../../scripts/prepare-compiler.mjs)、[async 补丁](../../internal/toolchain/async-embedding.patch)、[Flexily 来源清单](../../packages/flexily/UPSTREAM-scriptc-adaptation.json)和[布局包](../../packages/layout/README.md)。上游完整 API 和性能描述不自动成为本框架承诺；共享 TSX 应遵循 [TS/TSX 编写限制](../getting-started/typescript-limitations.md)。
+来源与适配见 [编译器准备脚本](../../scripts/prepare-compiler.mjs)、[async 补丁](../../internal/toolchain/async-embedding.patch)、[Flexily 来源清单](../../packages/flexily/UPSTREAM-scriptc-adaptation.json)和[布局包](../../packages/layout/README.md)。上游完整 API 和性能描述不自动成为本框架承诺；共享 TSX 应遵循 [TS/TSX 编写限制](../reference/typescript.md)。
 
 ## 独立 Core、业务包与实例
 

@@ -1,3 +1,4 @@
+import { cleanup } from './Cleanup';
 export interface PageHost {
   setVisible(visible: boolean): void;
   destroy(): void;
@@ -68,7 +69,7 @@ export class HarmonyPageStack {
   }
   private release(route: HarmonyRoute): void {
     const host = route.host; route.host = null;
-    if (host) { host.setVisible(false); host.destroy(); }
+    if (host) { cleanup(() => host.setVisible(false)); cleanup(() => host.destroy()); }
   }
   private enforceLimit(): void {
     let alive = this.entries.filter(route => route.host !== null).length;
@@ -81,5 +82,5 @@ export class HarmonyPageStack {
     for (const route of this.entries) if (route !== this.current() && route.host) { this.release(route); this.onEvict(route.page); }
     this.onChange();
   }
-  destroy(): void { this.closed = true; this.entries.forEach(route => this.release(route)); this.entries = []; this.onChange(); }
+  destroy(): void { if (this.closed) return; this.closed = true; const entries = this.entries; this.entries = []; entries.forEach(route => this.release(route)); this.onChange(); }
 }
