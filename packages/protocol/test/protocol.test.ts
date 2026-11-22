@@ -8,6 +8,9 @@ describe("protocol envelope", () => {
     for (const props of [{ shadowOpacity:1.1 }, { shadowOpacity:-0.1 }, { shadowRadius:-1 }, { shadowOffsetX:NaN }, { shadowOffsetY:Infinity }, { dmColor:123 }]) expect(validProps(props)).toBe(false);
   });
   it("accepts Liquid Glass properties and validates their values", () => {
+    expect(validProps({backgroundBlurRadius: 0})).toBe(true);
+    expect(validProps({backgroundBlurRadius: 20})).toBe(true);
+    for (const value of [-1, Infinity, '20']) expect(validProps({backgroundBlurRadius: value})).toBe(false);
     expect(validProps({ glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: true, glassEffectSpacing: 12 })).toBe(true);
     for (const props of [{ glassEffectStyle: "blur" }, { glassEffectSpacing: -1 }, { glassEffect: 1 }, { glassEffectInteractive: "yes" }]) expect(validProps(props)).toBe(false);
   });

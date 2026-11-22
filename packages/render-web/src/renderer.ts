@@ -365,6 +365,12 @@ export class DOMRenderer {
       const value = raw['dm' + key[0].toUpperCase() + key.slice(1)];
       if (value !== undefined) props[key] = value;
     }
+    // Grouping containers stay transparent; only glass surfaces get defaults.
+    if (record.kind === 'View' && props.glassEffect === true && props.glassEffectContainer !== true) {
+      props.backgroundColor ??= dark ? '#20242bcc' : '#f2f5facc';
+      props.opacity ??= 0.88;
+      props.backgroundBlurRadius ??= props.glassEffectStyle === 'clear' ? 12 : 20;
+    }
     if (!appearanceOnly) record.native?.setProps(JSON.parse(String(props.nativeProps ?? "{}")));
     const element = record.element;
     if (typeof props.testID === "string") element.dataset.testid = props.testID;
@@ -429,6 +435,8 @@ export class DOMRenderer {
     const visual = { ...visualDefaults, ...colorValues(String(props.backgroundColor ?? "transparent")) };
     for (const key of ["opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius"]) if (typeof props[key] === "number") visual[key] = props[key] as number;
     record.animation.stage(visual);
+    element.style.backdropFilter = Number(props.backgroundBlurRadius ?? 0) > 0 ? `blur(${props.backgroundBlurRadius}px)` : 'none';
+    element.style.setProperty('-webkit-backdrop-filter', element.style.backdropFilter);
     element.style.color = String(props.color ?? "");
     element.style.lineHeight = props.lineHeight === undefined ? "normal" : props.lineHeight + "px";
     element.style.fontSize = props.fontSize === undefined ? "" : props.fontSize + "px";

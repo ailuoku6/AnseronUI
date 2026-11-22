@@ -39,7 +39,7 @@ private final class BackReply {
 /// Owns the Core's fixed OS thread. UI callbacks only enqueue copied values.
 private final class CoreWorker {
     private let condition = NSCondition()
-    private var jobs: [() -> Void] = []
+    private var jobs: [(key: String?, run: () -> Void)] = []
     private var stopped = false
     private var thread: Thread?
     private let createCore: () throws -> MacOSCoreTransport
@@ -77,7 +77,13 @@ private final class CoreWorker {
     }
 
     func send(_ payload: [String: Any]) {
-        enqueue { [weak self] in
+        // Replace only adjacent, unsent positions, before assigning a protocol sequence.
+        var motionKey: String?
+        if payload["type"] as? String == "NativeEvent", payload["event"] as? String == "touchMove",
+           let node = payload["nodeId"] as? UInt32, let pointer = payload["pointerId"] as? UInt32 {
+            motionKey = String(node) + ":" + String(payload["targetId"] as? UInt32 ?? node) + ":" + String(pointer)
+        }
+        enqueue(coalescingKey: motionKey) { [weak self] in
             guard let self else { return }
             if payload["type"] as? String == "InspectRuntime" {
                 self.profiling = payload["enabled"] as? Bool ?? true
@@ -126,12 +132,18 @@ private final class CoreWorker {
         metric("adapterPostMs", profiling ? (ProcessInfo.processInfo.systemUptime - postStart) * 1000 : 0)
     }
 
-    private func enqueue(_ job: @escaping () throws -> Void) {
+    private func enqueue(coalescingKey: String? = nil, _ job: @escaping () throws -> Void) {
         condition.lock()
-        if !stopped { jobs.append { [weak self] in
-            do { try job(); try self?.drain() }
-            catch { self?.reportError(error); self?.finish() }
-        }; condition.signal() }
+        if !stopped {
+            let run: () -> Void = { [weak self] in
+                do { try job(); try self?.drain() }
+                catch { self?.reportError(error); self?.finish() }
+            }
+            if let key = coalescingKey, jobs.last?.key == key {
+                jobs[jobs.count - 1] = (key, run)
+            } else { jobs.append((coalescingKey, run)) }
+            condition.signal()
+        }
         condition.unlock()
     }
 
@@ -140,7 +152,7 @@ private final class CoreWorker {
             condition.lock()
             while jobs.isEmpty && !stopped { condition.wait() }
             if stopped { condition.unlock(); return }
-            let job = jobs.removeFirst()
+            let job = jobs.removeFirst().run
             condition.unlock()
             autoreleasepool { job() }
         }

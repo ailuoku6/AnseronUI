@@ -53,9 +53,17 @@
 
 ## Liquid Glass
 
+背景模糊也是独立样式：普通 `View` 可以直接设置 `style={{ backgroundBlurRadius: 20 }}`，不需要 `glassEffect`。样式对象写法、重置规则和各端实现见[背景模糊](../guides/ui/styles.md#背景模糊)。
+
 `View` 的 `style` 支持 `glassEffect`、`glassEffectStyle`（`regular` 或 `clear`）、`glassEffectTintColor`（颜色字符串）和 `glassEffectInteractive`。将 `glassEffectInteractive` 设为 `true` 可启用系统的按压高光等交互反馈，支持 iOS 26+ 和 macOS 27+；macOS 26 保留静态玻璃效果。`disabled` 会关闭交互反馈。多个玻璃子视图可以放在 `glassEffectContainer: true` 的 `View` 中，并用 `glassEffectSpacing` 设置融合间距。色调和样式只作用于 `glassEffect` 表面；容器效果主要用于组合子视图。
 
-原生效果要求 iOS 26 或 macOS 26。较早系统和其他平台会保留普通 `View`。玻璃表面不要再设置不透明 `backgroundColor`，否则会遮住系统效果；需要兼容旧系统时可同时提供半透明背景色作为降级外观。
+原生效果要求 iOS 26 或 macOS 26。较早系统、Android、HarmonyOS 和 Web 在 `glassEffect: true` 的表面上自动提供降级：浅色背景 `#f2f5facc`、深色背景 `#20242bcc`，节点 `opacity: 0.88`，`backgroundBlurRadius` 为 regular 20、clear 12（布局单位）。`glassEffectContainer` 仅分组，不会添加第二层降级背景。
+
+三个字段分别以业务显式值为准，未设置的字段才补默认值。`opacity: 0`、`backgroundBlurRadius: 0`、`backgroundColor: "transparent"` 都是有效覆盖；深色模式优先使用 `dmBackgroundColor`。移除或关闭 `glassEffect` 后默认降级随之移除，业务设置的样式保留。
+
+性能例外：Android 8–11 不自动开启默认模糊，只补背景色和透明度；业务显式设置正数 `backgroundBlurRadius` 时继续提供兼容模糊。Android 12+ 硬件绘制采用 GPU 显示列表和 RenderEffect，不再生成背景采样位图。
+
+`View` 的 `backgroundBlurRadius` 只模糊背景，文字和子视图保持清晰。Web 使用 CSS `backdrop-filter`；Android 12+ 的硬件 Canvas 复用背景 GPU 显示列表并使用 `RenderEffect.createBlurEffect`，旧系统和软件 Canvas 使用滤波降级；iOS/macOS 使用系统材质，HarmonyOS 使用 ArkUI 背景模糊强度近似，因此各端半径视觉不保证逐像素一致。背景模糊设为 0 时关闭模糊。原生 Liquid Glass 可用时仍使用系统玻璃，不叠加默认降级；显式背景色和透明度照常生效，不透明背景可能遮住原生玻璃。
 
 ## 公共事件
 

@@ -145,7 +145,7 @@ private final class DesktopScrollView: NSScrollView {
         let dark = root.effectiveAppearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua
         for r in nodes.values {
             guard let raw = r.declaredProps else { continue }
-            let p = raw.themed(dark)
+            let p = raw.themed(dark).glassFallback(dark, nativeGlass: { if #available(macOS 26.0, *) { return true }; return false }())
             r.background = parseColor(p.backgroundColor) ?? .clear
             let c = r.background.usingColorSpace(.sRGB) ?? .clear
             r.animation.stage(["r":c.redComponent*255,"g":c.greenComponent*255,"b":c.blueComponent*255,"a":c.alphaComponent]); r.animation.setActive(pageActive); r.animation.commit()
@@ -319,7 +319,10 @@ private final class DesktopScrollView: NSScrollView {
     }
     private func setProps(_ r: NodeRecord, _ raw: RenderProps) throws {
         r.declaredProps = raw
-        let p = raw.themed(root.effectiveAppearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua)
+        let dark = root.effectiveAppearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua
+        let nativeGlass: Bool
+        if #available(macOS 26.0, *) { nativeGlass = true } else { nativeGlass = false }
+        let p = raw.themed(dark).glassFallback(dark, nativeGlass: nativeGlass)
         r.touchAction = p.touchAction ?? "auto"
         r.background = parseColor(p.backgroundColor) ?? .clear
         try setGlassEffect(r, props: p)
@@ -391,12 +394,36 @@ private final class DesktopScrollView: NSScrollView {
 
     private func setGlassEffect(_ r: NodeRecord, props: RenderProps) throws {
         guard r.kind == "View" else { return }
-        let enabled = props.glassEffect == true || props.glassEffectContainer == true
+        let nativeGlass: Bool
+        if #available(macOS 26.0, *) { nativeGlass = true } else { nativeGlass = false }
+        let enabled = nativeGlass && (props.glassEffect == true || props.glassEffectContainer == true) || (props.backgroundBlurRadius ?? 0) > 0
         guard enabled else {
             guard let host = r.glassHost else { return }
             for child in r.glassContent?.subviews ?? [] { r.view.addSubview(child) }
             host.removeFromSuperview()
             r.glassHost = nil; r.glassContent = nil; r.content = r.view
+            return
+        }
+        if !nativeGlass || (props.glassEffect != true && props.glassEffectContainer != true) {
+            if let effect = r.glassHost as? NSVisualEffectView {
+                effect.material = (props.backgroundBlurRadius ?? 0) <= 12 ? .underWindowBackground : .contentBackground
+                effect.layer?.cornerRadius = props.borderRadius ?? 0
+                return
+            }
+            let effect = NSVisualEffectView(frame: r.view.bounds)
+            effect.blendingMode = .withinWindow; effect.state = .active
+            effect.material = (props.backgroundBlurRadius ?? 0) <= 12 ? .underWindowBackground : .contentBackground
+            effect.autoresizingMask = [.width, .height]
+            effect.wantsLayer = true; effect.layer?.cornerRadius = props.borderRadius ?? 0
+            let contentView = FlippedView(frame:r.view.bounds)
+            contentView.autoresizingMask = [.width, .height]
+            effect.addSubview(contentView)
+            let old = r.glassHost
+            let children = r.glassContent?.subviews ?? r.view.subviews.filter { $0 !== old }
+            r.view.addSubview(effect)
+            for child in children { contentView.addSubview(child) }
+            old?.removeFromSuperview()
+            r.glassHost = effect; r.glassContent = contentView; r.content = contentView
             return
         }
         guard #available(macOS 26.0, *) else { return }

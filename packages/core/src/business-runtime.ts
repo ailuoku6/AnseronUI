@@ -169,11 +169,10 @@ export class BusinessRuntime {
         let blocked = false;
         for (const event of events) {
           if (event.type !== "Tap" && event.type !== "NativeEvent") continue;
-          // Measurement effects can keep a variable-height list dirty for
-          // several commits. Apply current viewport state before that next
-          // render, otherwise continuous scrolling starves behind refinement.
-          const scroll = event.type === "NativeEvent" && event.event === "scroll";
-          if (blocked || surface.dirty && !scroll) { blocked = true; surface.deferredEvents.push(event); }
+          // Consume current motion and its gesture boundaries before rendering
+          // again. Requiring an ACK per sample makes drags chase old positions.
+          const continuous = event.type === "NativeEvent" && ["scroll", "touchDown", "touchMove", "touchUp", "touchCancel"].includes(event.event);
+          if (blocked || surface.dirty && !continuous) { blocked = true; surface.deferredEvents.push(event); }
           else this.invokeEvent(surface, { ...event, revision: surface.revision });
         }
       }
@@ -312,10 +311,10 @@ export class BusinessRuntime {
       }
     } else if (payload.type === "Tap" || payload.type === "InputChange" || payload.type === "NativeEvent") {
       if (!surface.visible) return;
-      if (payload.type === "NativeEvent" && (payload.event === "scroll" || payload.event === "scrollEnd") && payload.revision <= surface.revision) {
-        // Unlike a tap, an offset remains the native viewport's current state
-        // when a commit overtakes its event on the Core owner thread. Node IDs
-        // are not reused; invokeEvent still rejects nodes that were unmounted.
+      if (payload.type === "NativeEvent" && ["scroll", "scrollEnd", "touchDown", "touchMove", "touchUp", "touchCancel"].includes(payload.event) && payload.revision <= surface.revision) {
+        // Native motion remains valid when a commit overtakes its event. In
+        // particular, a late up/cancel must still finish the active gesture.
+        // IDs are not reused; invokeEvent rejects nodes that were unmounted.
         if (surface.pending || surface.dirty) this.deferEvent(surface, payload);
         else this.invokeEvent(surface, { ...payload, revision: surface.revision });
       } else if ((payload.type === "Tap" || payload.type === "NativeEvent") && (surface.pending || surface.dirty) &&
@@ -346,6 +345,17 @@ export class BusinessRuntime {
   }
 
   private deferEvent(surface: Surface, event: UIInput): void {
+    // Pending motion is a latest-position snapshot, not a path to replay one
+    // render/ACK at a time. Keep gesture boundaries and other inputs as barriers.
+    if (event.type === "NativeEvent" && event.event === "touchMove") {
+      for (let i = surface.deferredEvents.length - 1; i >= 0; i--) {
+        const previous = surface.deferredEvents[i];
+        if (previous.type !== "NativeEvent" || previous.event !== "touchMove") break;
+        if (previous.nodeId === event.nodeId && previous.targetId === event.targetId && previous.pointerId === event.pointerId) {
+          surface.deferredEvents.splice(i, 1); break;
+        }
+      }
+    }
     // Scroll offsets describe current viewport state. Replaying old offsets after
     // an asynchronous layout makes virtual lists chase a fling for seconds.
     // Discrete events are barriers: never move a scroll update across a tap/input.
@@ -659,7 +669,7 @@ export class BusinessRuntime {
     }
     if (props.animation !== undefined) { validateAnimationOptions(props.animation); outputProps.animation = JSON.stringify(props.animation); }
     if (typeof props.disabled === "boolean") outputProps.disabled = props.disabled;
-    for (const key of ["translateX", "translateY", "scaleX", "scaleY", "rotate", "backgroundColor", "color", "dmBackgroundColor", "dmColor", "dmBorderColor", "shadowColor", "dmShadowColor", "shadowOpacity", "shadowRadius", "shadowOffsetX", "shadowOffsetY", "placeholderTextColor", "dmPlaceholderTextColor", "opacity", "fontSize", "lineHeight", "borderWidth", "borderColor", "borderRadius", "overflow", "visibility", "fontWeight", "fontStyle", "textAlign", "textDecorationLine", "glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing"] as const) {
+    for (const key of ["translateX", "translateY", "scaleX", "scaleY", "rotate", "backgroundColor", "backgroundBlurRadius", "color", "dmBackgroundColor", "dmColor", "dmBorderColor", "shadowColor", "dmShadowColor", "shadowOpacity", "shadowRadius", "shadowOffsetX", "shadowOffsetY", "placeholderTextColor", "dmPlaceholderTextColor", "opacity", "fontSize", "lineHeight", "borderWidth", "borderColor", "borderRadius", "overflow", "visibility", "fontWeight", "fontStyle", "textAlign", "textDecorationLine", "glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing"] as const) {
       const value = style[key];
       if (value !== undefined) outputProps[key] = value;
     }

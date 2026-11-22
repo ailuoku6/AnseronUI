@@ -54,11 +54,15 @@ class AndroidHost(
         val schedule = synchronized(eventLock) {
             // Coalesce before JSON encoding and the owner queue, while retaining
             // discrete events as ordering barriers.
-            if (event.type == "NativeEvent" && event.event == "scroll") {
+            if (event.type == "NativeEvent" && (event.event == "scroll" || event.event == "touchMove")) {
                 for (index in pendingEvents.indices.reversed()) {
                     val previous = pendingEvents[index]
-                    if (previous.type != "NativeEvent" || previous.event != "scroll") break
-                    if (previous.nodeId == event.nodeId) { pendingEvents.removeAt(index); break }
+                    if (previous.type != "NativeEvent" || previous.event != event.event) break
+                    val sameStream = previous.nodeId == event.nodeId && when (event.event) {
+                        "touchMove" -> previous.targetId == event.targetId && previous.pointerId == event.pointerId
+                        else -> true
+                    }
+                    if (sameStream) { pendingEvents.removeAt(index); break }
                 }
             }
             pendingEvents.add(event)

@@ -1,4 +1,4 @@
-# 颜色、夜间模式与阴影
+# 颜色、夜间模式、背景模糊与阴影
 
 先在首页上改布局和颜色。夜间模式、阴影和主题监听在后面。
 
@@ -146,6 +146,43 @@ export default function Page() {
   ]}
 />
 ```
+
+## 背景模糊
+
+`View` 支持独立的 `style.backgroundBlurRadius`，无需启用 `glassEffect`。可以像背景色、圆角一样放进业务的样式对象，再通过 `style` 传入。数值为非负的逻辑布局单位；设为 `0` 或移除属性会关闭普通背景模糊。只模糊视图后方的内容，文字和子视图保持清晰。
+
+```tsx
+import { View, Text } from "anseronui/ui";
+import type { Style } from "anseronui/ui";
+
+const styles: { panel: Style } = {
+  panel: {
+    backgroundBlurRadius: 20,
+    backgroundColor: "#ffffff66",
+    dmBackgroundColor: "#20242b66",
+    borderRadius: 16,
+    padding: 16,
+  },
+};
+
+function FrostedPanel() {
+  return <View style={styles.panel}><Text>文字保持清晰</Text></View>;
+}
+```
+
+视图后方需要有可见内容，背景色应透明或半透明；不透明背景会遮住模糊。`backgroundColor` 的 alpha 只影响背景色，`opacity` 影响整个视图及其子内容，二者独立。普通背景模糊不会自动补背景色或透明度；只有 Liquid Glass 降级才会补未设置的默认值。
+
+| 平台 | 实现与半径语义 |
+| --- | --- |
+| iOS | 原生 `UIVisualEffectView` + `UIBlurEffect`，按数值映射系统材质，并非精确可调的高斯半径 |
+| macOS | 原生 `NSVisualEffectView`，按数值映射系统材质，并非精确可调的高斯半径 |
+| HarmonyOS | 原生 ArkUI `NODE_BACKGROUND_BLUR_STYLE`，将数值映射为背景模糊强度 |
+| Android | Android 12+（API 31+）硬件 Canvas 复用后方视图的 GPU 显示列表，在独立 `RenderNode` 上使用 `RenderEffect.createBlurEffect`，不生成背景位图、不做 CPU 像素采样；模糊层降低分辨率并换算半径。旧系统或软件 Canvas 的显式模糊仍使用背景位图和三轮盒式滤波。文字和子视图不参与滤镜 |
+| Web | 浏览器 CSS `backdrop-filter: blur(...)` |
+
+各端效果不保证逐像素一致。原生 Liquid Glass 可用且显式启用时，由系统玻璃控制模糊，不叠加普通背景模糊；需要独立控制时，只设置 `backgroundBlurRadius`。Liquid Glass 降级期间，显式 `backgroundBlurRadius: 0` 仍会关闭默认模糊。
+
+Android 8–11 的 Liquid Glass 默认降级仅保留背景色和透明度，避免可拖动表面默认启用 CPU 背景采样。业务显式设置 `backgroundBlurRadius > 0` 时仍可开启兼容模糊。Android 12+ 硬件路径保留默认模糊；`RenderEffect` 本身只处理输入内容，这里通过复用背景显示列表提供输入，不会对整棵前景视图树设置滤镜。
 
 ## 阴影
 

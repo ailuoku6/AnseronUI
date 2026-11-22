@@ -107,13 +107,36 @@ describe("reference Core", () => {
     h.runtime.dispose();
   });
   it("transports native Liquid Glass settings as view styles", () => {
-    const page = definePage("liquid-glass", () => <View style={{ glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: false, glassEffectSpacing: 10 }} />);
+    const page = definePage("liquid-glass", () => <View style={{ glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: false, glassEffectSpacing: 10, backgroundBlurRadius: 0, backgroundColor: "transparent", opacity: 0 }} />);
     const h = harness(page);
     h.send({ type: "CreateSurface", page: "liquid-glass", width: 320, height: 480 });
     const commit = h.drain().find(item => item.type === "Commit");
     if (!commit || commit.type !== "Commit") throw new Error("No commit");
     const props = commit.commands.find(command => command.type === "SetProps");
-    expect(props).toMatchObject({ props: { glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: false, glassEffectSpacing: 10 } });
+    expect(props).toMatchObject({ props: { glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: false, glassEffectSpacing: 10, backgroundBlurRadius: 0, backgroundColor: "transparent", opacity: 0 } });
+    h.runtime.dispose();
+  });
+  it("transports standalone backdrop styles and resets zero or removed blur without glass", () => {
+    const styles = { panel: { backgroundBlurRadius: 18, backgroundColor: "#ffffff66", opacity: 0.9 } };
+    let setMode = (_: number) => {};
+    const page = definePage("backdrop-styles", () => {
+      const [mode, update] = useState(0); setMode = update;
+      return <View style={mode === 0 ? styles.panel : mode === 1 ? { backgroundBlurRadius: 0 } : {}} />;
+    });
+    const h = harness(page);
+    const props = () => {
+      const commit = h.drain().find(item => item.type === "Commit");
+      if (!commit || commit.type !== "Commit") throw new Error("No commit");
+      const command = commit.commands.find(item => item.type === "SetProps");
+      if (!command || command.type !== "SetProps") throw new Error("No props");
+      return command.props;
+    };
+    h.send({ type: "CreateSurface", page: "backdrop-styles", width: 320, height: 480 });
+    const initial = props();
+    expect(initial).toMatchObject(styles.panel);
+    expect(initial.glassEffect).toBeUndefined();
+    setMode(1); expect(props()).toMatchObject({ backgroundBlurRadius: 0 });
+    setMode(2); expect(props().backgroundBlurRadius).toBeUndefined();
     h.runtime.dispose();
   });
   it("constrains a nested scroll viewport without shrinking its content", () => {
@@ -332,6 +355,72 @@ describe("reference Core", () => {
     h.send({ type: "NativeEvent", nodeId: viewIds[1]!, targetId: viewIds[1]!, revision: commit.revision, event: "touchDown", x: 1, y: 2, pageX: 3, pageY: 4, pointerId: 1, touches: [] });
     h.drain();
     expect(calls.slice(2)).toEqual([`capture:${viewIds[0]}:${viewIds[1]}`, "inner", "outer"]);
+    h.runtime.dispose();
+  });
+
+  it("collapses a drag burst behind an ACK and keeps release in the same update", () => {
+    const calls: string[] = [];
+    const h = harness(definePage("drag-burst", () => {
+      const [x, setX] = useState(0);
+      return <View style={{ width: 56, height: 56, left: x }}
+        onTouchDown={() => { calls.push("down"); setX(1); }}
+        onTouchMove={event => { calls.push("move:" + event.pageX); setX(event.pageX); }}
+        onTouchUp={event => { calls.push("up:" + event.pageX); setX(event.pageX); }} />;
+    }));
+    h.send({ type: "CreateSurface", page: "drag-burst", width: 1000, height: 480 });
+    const initial = h.drain().find(item => item.type === "Commit")!;
+    if (initial.type !== "Commit") throw new Error("No initial commit");
+    const id = createdNode(initial.commands, "View");
+    const touch = (event: "touchDown" | "touchMove" | "touchUp", x: number) => h.send({
+      type: "NativeEvent", nodeId: id, targetId: id, revision: initial.revision, event,
+      x, y: 0, pageX: x, pageY: 0, pointerId: 1, touches: [],
+    });
+    touch("touchDown", 0);
+    const pending = h.drain(false).find(item => item.type === "Commit")!;
+    if (pending.type !== "Commit") throw new Error("No drag commit");
+    for (let x = 2; x <= 1000; x++) { touch("touchMove", x); h.drain(false); }
+    touch("touchUp", 999); h.drain(false);
+    expect(calls).toEqual(["down"]);
+    h.send({ type: "CommitAck", revision: pending.revision });
+    const updates = h.drain().filter(item => item.type === "Commit");
+    expect(calls).toEqual(["down", "move:1000", "up:999"]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ commands: expect.arrayContaining([
+      expect.objectContaining({ type: "SetFrame", nodeId: id, frame: expect.objectContaining({ x: 999 }) }),
+    ]) });
+    h.runtime.dispose();
+  });
+
+  it("preserves touch boundaries, pointer identities and late release across revisions", () => {
+    const calls: string[] = [];
+    const h = harness(definePage("drag-order", () => {
+      const [x, setX] = useState(0);
+      return <View style={{ width: 56, height: 56, left: x }}
+        onTouchDown={event => { calls.push("down:" + event.pointerId); setX(1); }}
+        onTouchMove={event => { calls.push("move:" + event.pointerId + ":" + event.pageX); setX(event.pageX); }}
+        onTouchUp={() => { calls.push("up"); }} onTouchCancel={() => { calls.push("cancel"); }} />;
+    }));
+    h.send({ type: "CreateSurface", page: "drag-order", width: 1000, height: 480 });
+    const initial = h.drain().find(item => item.type === "Commit")!;
+    if (initial.type !== "Commit") throw new Error("No initial commit");
+    const id = createdNode(initial.commands, "View");
+    const touch = (event: "touchDown" | "touchMove" | "touchUp" | "touchCancel", x: number, pointerId = 1) => h.send({
+      type: "NativeEvent", nodeId: id, targetId: id, revision: initial.revision, event,
+      x, y: 0, pageX: x, pageY: 0, pointerId, touches: [],
+    });
+    touch("touchDown", 0);
+    const pending = h.drain(false).find(item => item.type === "Commit")!;
+    if (pending.type !== "Commit") throw new Error("No pending commit");
+    touch("touchMove", 10); touch("touchMove", 20, 2); touch("touchMove", 30);
+    touch("touchCancel", 30); touch("touchDown", 30); touch("touchMove", 40); h.drain(false);
+    h.send({ type: "CommitAck", revision: pending.revision }); h.drain();
+    expect(calls).toEqual(["down:1", "move:2:20", "move:1:30", "cancel", "down:1", "move:1:40"]);
+    // A release captured before the latest commit may arrive after its ACK.
+    touch("touchUp", 40); h.drain();
+    expect(calls.at(-1)).toBe("up");
+    h.send({ type: "DestroySurface" }); h.drain();
+    touch("touchMove", 50); h.drain();
+    expect(calls.at(-1)).toBe("up");
     h.runtime.dispose();
   });
 

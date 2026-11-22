@@ -40,7 +40,8 @@ public struct RenderProps: Decodable, Sendable {
     public let scaleX: Double?
     public let scaleY: Double?
     public let rotate: Double?
-    public let opacity: Double?
+    public var opacity: Double?
+    public var backgroundBlurRadius: Double?
     public let lineHeight: Double?
     public let fontSize: Double?
     public let fontWeight: String?
@@ -88,6 +89,16 @@ public struct RenderProps: Decodable, Sendable {
     public let playControl: String?
     public let touchAction: String?
     public let nativeProps: String?
+
+    func glassFallback(_ dark: Bool, nativeGlass: Bool) -> RenderProps {
+        var p = self
+        if !nativeGlass, glassEffect == true, glassEffectContainer != true {
+            p.backgroundColor = backgroundColor ?? (dark ? "#20242bcc" : "#f2f5facc")
+            p.opacity = opacity ?? 0.88
+            p.backgroundBlurRadius = backgroundBlurRadius ?? (glassEffectStyle == "clear" ? 12 : 20)
+        }
+        return p
+    }
 
     func themed(_ dark: Bool) -> RenderProps {
         guard dark else { return self }

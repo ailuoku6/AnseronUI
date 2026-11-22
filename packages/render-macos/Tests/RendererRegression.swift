@@ -49,6 +49,7 @@ import AVKit
         try accessibility()
         try darkStyles()
         try liquidGlass()
+        try dragWorker()
         try themeImagesAndLineHeight()
         try text()
         try images()
@@ -59,6 +60,107 @@ import AVKit
         try animation()
         try media()
         print("PASS: renderer regressions (text layout/hits, image scaling, IME, input, mouse cancellation, animations, video lifecycle)")
+    }
+    private final class MotionCore: MacOSCoreTransport {
+        let bundleBuildId = "motion-test"
+        let runtimeEpoch: UInt32 = 1
+        let lock = NSLock()
+        private var inputs: [[String: Any]] = []
+        private var sequences: [Int] = []
+        private var outputs: [Data] = []
+        private var sequence = 0
+        var messages: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return inputs }
+        var inputSequences: [Int] { lock.lock(); defer { lock.unlock() }; return sequences }
+        func post(_ input: Data) throws {
+            var envelope = try JSONSerialization.jsonObject(with: input) as! [String: Any]
+            let payload = envelope["payload"] as! [String: Any]
+            lock.lock(); defer { lock.unlock() }
+            inputs.append(payload); sequences.append(envelope["sequence"] as! Int)
+            let output: [String: Any]
+            switch payload["type"] as? String {
+            case "Handshake": output = ["type": "Ready", "supportedNodes": payload["requiredNodes"]!]
+            case "CreateSurface": output = ["type": "Commit", "revision": 1, "commands": []]
+            case "DestroySurface": output = ["type": "SurfaceDisposed"]
+            default: return
+            }
+            sequence += 1
+            envelope["ackSequence"] = envelope["sequence"]
+            envelope["sequence"] = sequence; envelope["payload"] = output
+            outputs.append(try JSONSerialization.data(withJSONObject: envelope))
+        }
+        func step(maxMessages: Int) throws -> [Data] { lock.lock(); defer { lock.unlock() }; let result = outputs; outputs = []; return result }
+        func hasPendingWork() -> Bool { false }
+        func dispose() {}
+    }
+    static func dragWorker() throws {
+        let core = MotionCore()
+        let entered = DispatchSemaphore(value: 0), gate = DispatchSemaphore(value: 0)
+        let host = MacOSHost(root: FlippedView(), createCore: {
+            entered.signal()
+            guard gate.wait(timeout: .now() + 10) == .success else { throw HostError.invalidOutput }
+            return core
+        })
+        defer { host.destroy() }
+        host.start(page: "test", width: 320, height: 480)
+        Integration.check(entered.wait(timeout: .now() + 5) == .success, "worker entered startup")
+        func emit(_ phase: String, _ x: Double, pointer: UInt32 = 1) {
+            host.renderer.onEvent?(RendererEvent(type: "NativeEvent", nodeId: 1, revision: 1,
+                event: phase, x: x, y: 0, pageX: x, pageY: 0, pointerId: pointer, touches: [], targetId: 1))
+        }
+        emit("touchDown", 0)
+        for x in 1...500 { emit("touchMove", Double(x)) }
+        emit("touchUp", 500); emit("touchDown", 500)
+        emit("touchMove", 40); emit("touchMove", 60, pointer: 2); emit("touchCancel", 60)
+        host.inspectRuntime(); gate.signal()
+        Integration.wait("gesture burst processed") { core.messages.contains { $0["type"] as? String == "InspectRuntime" } }
+        let events = core.messages.filter { $0["type"] as? String == "NativeEvent" }
+        Integration.check(events.compactMap { $0["event"] as? String } == ["touchDown", "touchMove", "touchUp", "touchDown", "touchMove", "touchMove", "touchCancel"], "motion preserves gesture and pointer boundaries")
+        Integration.check(events.compactMap { $0["pageX"] as? Double } == [0, 500, 500, 500, 40, 60, 60], "worker retains only the latest adjacent position")
+        let sequences = core.inputSequences
+        Integration.check(sequences == Array(1...sequences.count), "coalescing keeps protocol sequences contiguous")
+        print("PASS: 500 queued drag positions reduced to one; release, cancel and pointer ordering preserved")
+    }
+    static func dragAOT() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        let root = FlippedView(frame: window.contentView!.bounds)
+        window.contentView = root
+        let host = MacOSHost(root: root, createCore: { try NativeCore() })
+        defer { host.destroy(); window.orderOut(nil) }
+        var errors: [String] = [], stats: [String: Double] = [:], samples = 0
+        host.onFailure = { errors.append(String(describing: $0)) }
+        host.onDiagnostic = { code, message in errors.append(code + ": " + message) }
+        host.onRuntimeStats = { stats = $0; samples += 1 }
+        host.start(page: "components", width: 720, height: 640)
+        func ball() -> NSView? { Integration.descendants(root).first { $0.identifier?.rawValue == "floating-ball" } }
+        Integration.wait("AOT floating ball ready") { ball().map { $0.frame.width == 56 } == true || !errors.isEmpty }
+        Integration.check(errors.isEmpty, "AOT startup: \(errors)")
+        let view = ball()!
+        let before = view.convert(view.bounds, to: root)
+        host.inspectRuntime(enabled: true, reset: true)
+        Integration.wait("initial drag stats") { samples == 1 }
+        let start = NSPoint(x: before.midX, y: before.midY)
+        func mouse(_ type: NSEvent.EventType, _ point: NSPoint) {
+            host.renderer.receiveMouse(type: type, locationInWindow: root.convert(point, to: nil), window: window)
+        }
+        let began = ProcessInfo.processInfo.systemUptime
+        mouse(.leftMouseDown, start)
+        for index in 1...500 {
+            mouse(.leftMouseDragged, NSPoint(x: start.x + Double(index % 100), y: start.y + Double(index % 150)))
+        }
+        let end = NSPoint(x: start.x - 70, y: start.y + 130)
+        mouse(.leftMouseUp, end)
+        Integration.wait("burst reaches final AOT coordinates", timeout: 5) {
+            let frame = view.convert(view.bounds, to: root)
+            return abs(frame.minX - (before.minX - 70)) < 1 && abs(frame.minY - (before.minY + 130)) < 1
+                && Integration.descendants(view).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "拖动" }
+                || !errors.isEmpty
+        }
+        let elapsed = (ProcessInfo.processInfo.systemUptime - began) * 1000
+        host.inspectRuntime()
+        Integration.wait("final drag stats") { samples == 2 }
+        Integration.check(errors.isEmpty, "AOT drag: \(errors)")
+        Integration.check((stats["hostCommits"] ?? 1000) < 20, "motion burst must not require a commit per event: \(stats)")
+        print("PASS: native AOT drag burst, 500 moves, \(stats["hostCommits"] ?? -1) commits, final position and release in \(elapsed) ms")
     }
     static func accessibility() throws {
         let f = Fixture(); defer { f.close() }
@@ -136,6 +238,30 @@ import AVKit
         print("PASS: macOS dark colors, shadow geometry, span/placeholder fallback and retained input")
     }
     static func liquidGlass() throws {
+        func decoded(_ values: [String:Any]) throws -> RenderProps { try JSONDecoder().decode(RenderProps.self, from:JSONSerialization.data(withJSONObject:values)) }
+        let defaults = try decoded(["glassEffect":true]).glassFallback(false,nativeGlass:false)
+        Integration.check(defaults.backgroundColor == "#f2f5facc" && defaults.opacity == 0.88 && defaults.backgroundBlurRadius == 20,"fallback supplies each missing field")
+        let explicit = try decoded(["glassEffect":true,"backgroundColor":"transparent","opacity":0,"backgroundBlurRadius":0]).glassFallback(false,nativeGlass:false)
+        Integration.check(explicit.backgroundColor == "transparent" && explicit.opacity == 0 && explicit.backgroundBlurRadius == 0,"explicit transparency and zero blur/opacity win")
+        let dark = try decoded(["glassEffect":true,"dmBackgroundColor":"#123456"]).themed(true).glassFallback(true,nativeGlass:false)
+        Integration.check(dark.backgroundColor == "#123456","business dark background wins")
+        let native = try decoded(["glassEffect":true]).glassFallback(false,nativeGlass:true)
+        Integration.check(native.backgroundColor == nil && native.opacity == nil && native.backgroundBlurRadius == nil,"native glass gets no fallback")
+        let fallbackContainer = try decoded(["glassEffectContainer":true]).glassFallback(false,nativeGlass:false)
+        Integration.check(fallbackContainer.backgroundColor == nil,"grouping container stays transparent")
+        let materialFixture = Fixture(); defer { materialFixture.close() }
+        try materialFixture.create(1,"View",["backgroundBlurRadius":20,"borderRadius":12],NSRect(x:0,y:0,width:200,height:100))
+        try materialFixture.create(2,"Text",["text":"Sharp content","testID":"material-label"],NSRect(x:5,y:5,width:100,height:20),parent:1)
+        let materialChild = materialFixture.widget("material-label")
+        let materialRoot = materialFixture.root.subviews.first!
+        Integration.check(Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView },"background material is installed")
+        Integration.check(Integration.descendants(materialRoot).contains(materialChild),"material retains content in flipped coordinates")
+        try materialFixture.apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":0]]])
+        Integration.check(!Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView } && Integration.descendants(materialRoot).contains(materialChild),"zero blur removes material and retains child")
+        try materialFixture.apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":7]]])
+        Integration.check(Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView } && materialRoot.alphaValue == 1,"standalone blur re-enables without fallback opacity")
+        try materialFixture.apply([["type":"SetProps","nodeId":1,"props":[:]]])
+        Integration.check(!Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView } && Integration.descendants(materialRoot).contains(materialChild),"removing standalone blur removes material and retains child")
         guard #available(macOS 26.0, *) else { return }
         let f = Fixture(); defer { f.close() }
         try f.create(1,"View",["testID":"glass","glassEffect":true,"glassEffectStyle":"clear","glassEffectTintColor":"#5599cc","glassEffectInteractive":true,"borderRadius":28],NSRect(x:20,y:20,width:200,height:100))

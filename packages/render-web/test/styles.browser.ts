@@ -63,6 +63,32 @@ export async function verifyStyles(): Promise<void> {
     renderer.apply(3,[{type:'SetProps',nodeId:7,props:{src:'asset://fallback.png'}},{type:'SetProps',nodeId:8,props:{text:'reset'}}]);
     assert(image.getAttribute('src') === '/assets/fallback.png','missing dmSrc falls back to src');
     assert(renderer.getNode(8)!.style.lineHeight === 'normal','removed lineHeight resets');
+    dark = false;
+    renderer.apply(4,[{type:'SetProps',nodeId:1,props:{glassEffect:true}}]);
+    assert(card.style.backgroundColor === 'rgba(242, 245, 250, 0.8)','glass default translucent background: '+card.style.backgroundColor);
+    assert(card.style.opacity === '0.88' && card.style.backdropFilter === 'blur(20px)','glass default opacity and background blur');
+    dark = true; query.dispatchEvent(new Event('change'));
+    assert(card.style.backgroundColor === 'rgba(32, 36, 43, 0.8)','glass dark fallback');
+    renderer.apply(5,[{type:'SetProps',nodeId:1,props:{glassEffect:true,backgroundColor:'#123456',dmBackgroundColor:'#abcdef',opacity:0,backgroundBlurRadius:0}}]);
+    assert(card.style.backgroundColor === 'rgb(171, 205, 239)' && card.style.opacity === '0' && card.style.backdropFilter === 'none','explicit dark background and zero values win');
+    renderer.apply(6,[{type:'SetProps',nodeId:1,props:{glassEffect:true,backgroundColor:'transparent',opacity:1,backgroundBlurRadius:7}}]);
+    assert(card.style.backgroundColor === 'rgba(0, 0, 0, 0)' && card.style.opacity === '1' && card.style.backdropFilter === 'blur(7px)','transparent and custom blur win');
+    renderer.apply(7,[{type:'SetProps',nodeId:1,props:{glassEffect:true,glassEffectStyle:'clear',backgroundColor:'#123456'}}]);
+    assert(card.style.backgroundColor === 'rgb(18, 52, 86)' && card.style.opacity === '0.88' && card.style.backdropFilter === 'blur(12px)','fallback fields resolve independently');
+    renderer.apply(8,[{type:'SetProps',nodeId:1,props:{glassEffectContainer:true}}]);
+    assert(card.style.backgroundColor === 'rgba(0, 0, 0, 0)' && card.style.opacity === '1' && card.style.backdropFilter === 'none','containers do not add double frosting');
+    renderer.apply(9,[{type:'SetProps',nodeId:1,props:{}}]);
+    assert(card.style.opacity === '1' && card.style.backdropFilter === 'none','removing glass resets fallback');
+    renderer.apply(10,[{type:'SetProps',nodeId:1,props:{backgroundBlurRadius:18}}]);
+    assert(card.style.backdropFilter === 'blur(18px)' && card.style.getPropertyValue('-webkit-backdrop-filter') === 'blur(18px)','standalone background blur works without glass');
+    assert(card.style.opacity === '1' && card.style.backgroundColor === 'rgba(0, 0, 0, 0)','standalone blur adds no fallback color or opacity');
+    assert((text.style.filter === '' || text.style.filter === 'none') && (text.style.backdropFilter === '' || text.style.backdropFilter === 'none'),'foreground text stays unfiltered');
+    renderer.apply(11,[{type:'SetProps',nodeId:1,props:{backgroundBlurRadius:0}}]);
+    assert(card.style.backdropFilter === 'none','standalone zero closes blur');
+    renderer.apply(12,[{type:'SetProps',nodeId:1,props:{backgroundBlurRadius:7}}]);
+    assert(card.style.backdropFilter === 'blur(7px)','standalone blur can be re-enabled');
+    renderer.apply(13,[{type:'SetProps',nodeId:1,props:{}}]);
+    assert(card.style.backdropFilter === 'none' && card.style.getPropertyValue('-webkit-backdrop-filter') === 'none','removing standalone blur clears both CSS properties');
     renderer.dispose(); dark = true; query.dispatchEvent(new Event('change')); assert(root.children.length === 0,'disposed theme listener');
   } finally { renderer.dispose(); root.remove(); window.matchMedia = original; }
 }

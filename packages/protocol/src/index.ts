@@ -137,7 +137,7 @@ export function validProps(value: unknown): boolean {
     else if (strings.includes(key)) { if (!validString(item)) return false; }
     else if (booleans.includes(key)) { if (typeof item !== "boolean") return false; }
     else if (key === "opacity" || key === "shadowOpacity") { if (!validSize(item) || item > 1) return false; }
-    else if (["fontSize", "lineHeight", "borderWidth", "borderRadius", "shadowRadius", "glassEffectSpacing", "rate"].includes(key)) { if (!validSize(item) || (key === "rate" && item === 0)) return false; }
+    else if (["fontSize", "lineHeight", "borderWidth", "borderRadius", "shadowRadius", "backgroundBlurRadius", "glassEffectSpacing", "rate"].includes(key)) { if (!validSize(item) || (key === "rate" && item === 0)) return false; }
     else if (["inputRevision", "numberOfLines", "maxLength"].includes(key)) { if (!isU32(item, true)) return false; }
     else if (enums[key]) { if (typeof item !== "string" || !enums[key].includes(item)) return false; }
     else return false;

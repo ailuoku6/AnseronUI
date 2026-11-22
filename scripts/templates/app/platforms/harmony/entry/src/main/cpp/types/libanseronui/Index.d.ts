@@ -1,6 +1,6 @@
 export const version: () => number;
 export const open: (callback: (message: string) => void) => number;
-export const post: (worker: number, message: string) => void;
+export const post: (worker: number, message: string, motionKey: string, sequence: number) => number;
 export const close: (worker: number) => void;
 export const mount: (content: Object, callback: (event: Object) => void, media: Object, density: number) => number;
 export const commit: (surface: number, message: string) => void;

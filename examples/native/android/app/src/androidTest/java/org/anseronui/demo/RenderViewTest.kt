@@ -24,6 +24,190 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class RenderViewTest {
+    @Test fun glassFallbackDefaultsOverridesAndReset() {
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        try { ui {
+            val root = FrameLayout(activity)
+            activity.addContentView(root, android.view.ViewGroup.LayoutParams(400, 400))
+            val renderer = AndroidRenderer(root)
+            renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+                {"type":"CreateNode","nodeId":1,"kind":"View"},
+                {"type":"SetProps","nodeId":1,"props":{"glassEffect":true,"borderRadius":28}},
+                {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+                {"type":"SetFrame","nodeId":1,"frame":{"x":20,"y":20,"width":56,"height":56}}
+            ]}""")
+            val node = renderer.viewFor(1)!!
+            assertEquals(0.88f, node.alpha, 0.001f)
+            assertEquals(204, android.graphics.Color.alpha((node.background as android.graphics.drawable.GradientDrawable).color!!.defaultColor))
+            root.measure(View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY))
+            root.layout(0, 0, 400, 400)
+            val image = android.graphics.Bitmap.createBitmap(400,400,android.graphics.Bitmap.Config.ARGB_8888)
+            try { root.draw(android.graphics.Canvas(image)) } finally { image.recycle() }
+            renderer.applyJson("""{"type":"Commit","revision":2,"commands":[{"type":"SetProps","nodeId":1,"props":{"glassEffect":true,"backgroundColor":"transparent","opacity":0,"backgroundBlurRadius":0}}]}""")
+            assertEquals(0f,node.alpha,0.001f)
+            assertEquals(0,(node.background as android.graphics.drawable.GradientDrawable).color!!.defaultColor)
+            renderer.applyJson("""{"type":"Commit","revision":3,"commands":[{"type":"SetProps","nodeId":1,"props":{"glassEffect":true,"backgroundColor":"#123456","opacity":1,"backgroundBlurRadius":0}}]}""")
+            assertEquals(1f,node.alpha,0.001f)
+            assertEquals(android.graphics.Color.rgb(18,52,86),(node.background as android.graphics.drawable.GradientDrawable).color!!.defaultColor)
+            renderer.applyJson("""{"type":"Commit","revision":4,"commands":[{"type":"SetProps","nodeId":1,"props":{}}]}""")
+            assertEquals(1f,node.alpha,0.001f)
+            assertEquals(0,(node.background as android.graphics.drawable.GradientDrawable).color!!.defaultColor)
+            renderer.clear()
+        } } finally { ui { activity.finish() } }
+    }
+
+    @Test fun standaloneBackgroundBlurSamplesBackdropAndResets() {
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        try { ui {
+            val density = activity.resources.displayMetrics.density
+            val size = kotlin.math.ceil(80 * density).toInt()
+            val root = FrameLayout(activity)
+            activity.addContentView(root, android.view.ViewGroup.LayoutParams(size, size))
+            val renderer = AndroidRenderer(root)
+            try {
+                renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+                    {"type":"CreateNode","nodeId":1,"kind":"View"},
+                    {"type":"SetProps","nodeId":1,"props":{"backgroundColor":"#ff0000"}},
+                    {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+                    {"type":"SetFrame","nodeId":1,"frame":{"x":0,"y":0,"width":80,"height":80}},
+                    {"type":"CreateNode","nodeId":2,"kind":"View"},
+                    {"type":"SetProps","nodeId":2,"props":{"backgroundColor":"#0000ff"}},
+                    {"type":"InsertChild","nodeId":2,"parentId":1,"index":0},
+                    {"type":"SetFrame","nodeId":2,"frame":{"x":40,"y":0,"width":40,"height":80}},
+                    {"type":"CreateNode","nodeId":3,"kind":"View"},
+                    {"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":20}},
+                    {"type":"InsertChild","nodeId":3,"parentId":0,"index":1},
+                    {"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":0,"width":80,"height":80}}
+                ]}""")
+                root.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY))
+                root.layout(0, 0, size, size)
+                fun sample(): Int {
+                    val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                    return try { root.draw(android.graphics.Canvas(bitmap)); bitmap.getPixel(size / 2, size / 2) } finally { bitmap.recycle() }
+                }
+                val blurred = sample()
+                assertTrue("Backdrop edge mixes red and blue without glassEffect: $blurred", android.graphics.Color.red(blurred) > 20 && android.graphics.Color.blue(blurred) > 20)
+                assertEquals(1f, renderer.viewFor(3)!!.alpha, 0.001f)
+                renderer.applyJson("""{"type":"Commit","revision":2,"commands":[{"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":0}}]}""")
+                val sharp = sample()
+                assertTrue("Zero blur restores the sharp edge", android.graphics.Color.red(sharp) == 0 || android.graphics.Color.blue(sharp) == 0)
+                renderer.applyJson("""{"type":"Commit","revision":3,"commands":[{"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":12}}]}""")
+                val enabled = sample()
+                assertTrue(android.graphics.Color.red(enabled) > 20 && android.graphics.Color.blue(enabled) > 20)
+                renderer.applyJson("""{"type":"Commit","revision":4,"commands":[{"type":"SetProps","nodeId":3,"props":{}}]}""")
+                assertEquals("Removing the style restores sharp pixels", sharp, sample())
+                renderer.applyJson("""{"type":"Commit","revision":5,"commands":[{"type":"SetProps","nodeId":3,"props":{"glassEffect":true,"backgroundColor":"transparent","opacity":1}}]}""")
+                val defaultGlass = sample()
+                if (android.os.Build.VERSION.SDK_INT < 31) assertEquals("Old Android default glass skips backdrop sampling", sharp, defaultGlass)
+                else assertTrue(android.graphics.Color.red(defaultGlass) > 20 && android.graphics.Color.blue(defaultGlass) > 20)
+                renderer.applyJson("""{"type":"Commit","revision":6,"commands":[{"type":"SetProps","nodeId":3,"props":{"glassEffect":true,"backgroundColor":"transparent","opacity":1,"backgroundBlurRadius":12}}]}""")
+                val explicitGlass = sample()
+                assertTrue("Explicit business blur still works on every Android version", android.graphics.Color.red(explicitGlass) > 20 && android.graphics.Color.blue(explicitGlass) > 20)
+            } finally { renderer.clear() }
+        } } finally { ui { activity.finish() } }
+    }
+
+    @Test fun hardwareBackgroundBlurKeepsForegroundSharpAndResets() {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 31)
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        lateinit var root: FrameLayout
+        lateinit var renderer: AndroidRenderer
+        var rendererCreated = false
+        var softwareDraws = 0
+        var hardwareDraws = 0
+        try {
+            ui {
+                root = FrameLayout(activity)
+                activity.setContentView(root)
+                val factory: org.anseronui.render.NativeComponentFactory = { context, _ ->
+                    object : org.anseronui.render.AndroidNativeComponent {
+                        override val view = object : FrameLayout(context) {
+                            override fun dispatchDraw(canvas: android.graphics.Canvas) {
+                                if (canvas.isHardwareAccelerated) hardwareDraws++ else softwareDraws++
+                                super.dispatchDraw(canvas)
+                            }
+                        }
+                        override val contentView = view
+                        override fun setProps(props: JSONObject) {}
+                    }
+                }
+                renderer = AndroidRenderer(root, org.anseronui.render.AndroidPlatformExtensions(components = mapOf("BackdropProbe" to factory)))
+                rendererCreated = true
+                renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+                    {"type":"CreateNode","nodeId":6,"kind":"ScrollView"},
+                    {"type":"SetProps","nodeId":6,"props":{}},
+                    {"type":"InsertChild","nodeId":6,"parentId":0,"index":0},
+                    {"type":"SetFrame","nodeId":6,"frame":{"x":8,"y":8,"width":100,"height":100}},
+                    {"type":"CreateNode","nodeId":5,"kind":"View"},
+                    {"type":"SetProps","nodeId":5,"props":{"borderRadius":10,"overflow":"hidden"}},
+                    {"type":"InsertChild","nodeId":5,"parentId":6,"index":0},
+                    {"type":"SetFrame","nodeId":5,"frame":{"x":0,"y":0,"width":100,"height":180}},
+                    {"type":"CreateNode","nodeId":1,"kind":"Native","nativeName":"BackdropProbe"},
+                    {"type":"SetProps","nodeId":1,"props":{"backgroundColor":"#ff0000"}},
+                    {"type":"InsertChild","nodeId":1,"parentId":5,"index":0},
+                    {"type":"SetFrame","nodeId":1,"frame":{"x":16,"y":16,"width":80,"height":80}},
+                    {"type":"CreateNode","nodeId":2,"kind":"View"},
+                    {"type":"SetProps","nodeId":2,"props":{"backgroundColor":"#0000ff"}},
+                    {"type":"InsertChild","nodeId":2,"parentId":1,"index":0},
+                    {"type":"SetFrame","nodeId":2,"frame":{"x":40,"y":0,"width":40,"height":80}},
+                    {"type":"CreateNode","nodeId":3,"kind":"View"},
+                    {"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":20}},
+                    {"type":"InsertChild","nodeId":3,"parentId":5,"index":1},
+                    {"type":"SetFrame","nodeId":3,"frame":{"x":16,"y":16,"width":80,"height":80}},
+                    {"type":"CreateNode","nodeId":4,"kind":"View"},
+                    {"type":"SetProps","nodeId":4,"props":{"backgroundColor":"#00ff00"}},
+                    {"type":"InsertChild","nodeId":4,"parentId":3,"index":0},
+                    {"type":"SetFrame","nodeId":4,"frame":{"x":38,"y":38,"width":4,"height":4}}
+                ]}""")
+            }
+            fun pixels(): Pair<Int,Int> {
+                val frame = CountDownLatch(1)
+                ui {
+                    assertTrue("Test must exercise a hardware Canvas", root.isHardwareAccelerated)
+                    root.viewTreeObserver.registerFrameCommitCallback { frame.countDown() }
+                    root.invalidate()
+                }
+                assertTrue("Hardware frame committed", frame.await(10, TimeUnit.SECONDS))
+                val copied = CountDownLatch(1); var result = -1
+                lateinit var bitmap: android.graphics.Bitmap
+                val position = IntArray(2)
+                ui {
+                    root.getLocationInWindow(position)
+                    bitmap = android.graphics.Bitmap.createBitmap(activity.window.decorView.width, activity.window.decorView.height, android.graphics.Bitmap.Config.ARGB_8888)
+                    android.view.PixelCopy.request(activity.window, bitmap, { result = it; copied.countDown() }, android.os.Handler(android.os.Looper.getMainLooper()))
+                }
+                try {
+                    assertTrue("Window pixels copied", copied.await(10, TimeUnit.SECONDS))
+                    assertEquals(android.view.PixelCopy.SUCCESS, result)
+                    val density = activity.resources.displayMetrics.density
+                    val x = position[0] + (64 * density).toInt()
+                    return Pair(bitmap.getPixel(x + (6 * density).toInt(), position[1] + (49 * density).toInt()), bitmap.getPixel(x, position[1] + (64 * density).toInt()))
+                } finally { bitmap.recycle() }
+            }
+            val blurred = pixels()
+            assertTrue("RenderEffect mixes the backdrop edge", android.graphics.Color.red(blurred.first) > 20 && android.graphics.Color.blue(blurred.first) > 20)
+            assertEquals("Foreground remains sharp", android.graphics.Color.GREEN, blurred.second)
+            ui { renderer.applyJson("""{"type":"Commit","revision":2,"commands":[{"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":0}}]}""") }
+            val sharp = pixels()
+            assertTrue("Zero blur restores a sharp backdrop", android.graphics.Color.red(sharp.first) == 0 || android.graphics.Color.blue(sharp.first) == 0)
+            assertEquals(android.graphics.Color.GREEN, sharp.second)
+            ui { renderer.applyJson("""{"type":"Commit","revision":3,"commands":[{"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":12}}]}""") }
+            val restored = pixels()
+            assertTrue("RenderEffect re-enables", android.graphics.Color.red(restored.first) > 20 && android.graphics.Color.blue(restored.first) > 20)
+            ui { renderer.applyJson("""{"type":"Commit","revision":4,"commands":[{"type":"SetProps","nodeId":3,"props":{}}]}""") }
+            assertEquals("Removing blur restores original pixels", sharp, pixels())
+            val drawsBeforeMotion = hardwareDraws
+            ui { renderer.applyJson("""{"type":"Commit","revision":5,"commands":[{"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":20}},{"type":"SetFrame","nodeId":3,"frame":{"x":20,"y":16,"width":80,"height":80}}]}""") }
+            val moved = pixels()
+            assertTrue("Moving blur follows the backdrop", android.graphics.Color.red(moved.first) > 20 && android.graphics.Color.blue(moved.first) > 20)
+            ui {
+                assertEquals("Hardware backdrop never redraws content into a software bitmap", 0, softwareDraws)
+                assertTrue("Probe must actually be drawn", hardwareDraws > 0)
+                assertEquals("Moving only the blur panel reuses the background display list", drawsBeforeMotion, hardwareDraws)
+            }
+        } finally { ui { if (rendererCreated) renderer.clear(); activity.finish() } }
+    }
+
     @Test fun accessibilitySemanticsActionsAndReset() {
         val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
         try { ui {
@@ -533,13 +717,19 @@ class RenderViewTest {
         assertEquals(270.0, events.last().x!!, 1.0)
         events.clear()
         renderer.applyJson("""{"type":"Commit","revision":2,"commands":[{"type":"SetProps","nodeId":3,"props":{"touchAction":"none"}}]}""")
+        val scroll = renderer.viewFor(1) as ScrollView
+        scroll.scrollTo(0, (60*density).toInt())
+        val initialScroll = scroll.scrollY
+        assertTrue(initialScroll > 0)
         touch(MotionEvent.ACTION_DOWN, 40f, 60f)
+        touch(MotionEvent.ACTION_MOVE, 40f, 20f)
         touch(MotionEvent.ACTION_MOVE, 40f, 180f)
         touch(MotionEvent.ACTION_UP, 40f, 180f)
         assertFalse(events.any { it.event == "touchCancel" })
         assertEquals("touchUp", events.last().event)
-        assertEquals(0, (renderer.viewFor(1) as ScrollView).scrollY)
+        assertEquals(initialScroll, scroll.scrollY)
         events.clear()
+        scroll.scrollTo(0, 0)
         renderer.applyJson("""{"type":"Commit","revision":3,"commands":[{"type":"SetProps","nodeId":3,"props":{"touchAction":"pan-y"}}]}""")
         touch(MotionEvent.ACTION_DOWN, 40f, 60f)
         touch(MotionEvent.ACTION_MOVE, 40f, 20f)
@@ -547,7 +737,58 @@ class RenderViewTest {
         touch(MotionEvent.ACTION_UP, 40f, -40f)
         assertEquals(1, events.count { it.event == "touchCancel" })
         assertFalse(events.any { it.event == "touchUp" })
+        assertTrue("pan-y still hands vertical dragging to the ancestor ScrollView", scroll.scrollY > 0)
         renderer.clear()
+    }
+
+    @Test fun floatingTouchOverlayDoesNotLeakToSiblingScrollView() = ui {
+        val root = FrameLayout(instrumentation.targetContext)
+        val events = mutableListOf<RendererEvent>()
+        val renderer = AndroidRenderer(root, onEvent = { events.add(it) })
+        try {
+            renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+                {"type":"CreateNode","nodeId":1,"kind":"ScrollView"},
+                {"type":"CreateNode","nodeId":2,"kind":"View"},
+                {"type":"CreateNode","nodeId":3,"kind":"View"},
+                {"type":"CreateNode","nodeId":4,"kind":"Text"},
+                {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+                {"type":"InsertChild","nodeId":2,"parentId":1,"index":0},
+                {"type":"InsertChild","nodeId":3,"parentId":0,"index":1},
+                {"type":"InsertChild","nodeId":4,"parentId":3,"index":0},
+                {"type":"SetFrame","nodeId":1,"frame":{"x":0,"y":0,"width":320,"height":480}},
+                {"type":"SetFrame","nodeId":2,"frame":{"x":0,"y":0,"width":320,"height":1400}},
+                {"type":"SetFrame","nodeId":3,"frame":{"x":200,"y":100,"width":64,"height":64}},
+                {"type":"SetFrame","nodeId":4,"frame":{"x":0,"y":0,"width":64,"height":64}},
+                {"type":"SetProps","nodeId":3,"props":{"touchAction":"none"}},
+                {"type":"BindEvent","nodeId":3,"event":"touchMove","enabled":true}
+            ]}""")
+            val density = root.resources.displayMetrics.density
+            layout(root, (320*density).toInt(), (480*density).toInt())
+            val scroll = renderer.viewFor(1) as ScrollView
+            scroll.scrollTo(0, (200*density).toInt())
+            val initial = scroll.scrollY
+            assertTrue("Fixture has room to scroll in either direction", initial > 0)
+            var time = SystemClock.uptimeMillis(); var down = time
+            fun touch(action: Int, x: Float, y: Float) {
+                time += 25
+                if (action == MotionEvent.ACTION_DOWN) down = time
+                val e = MotionEvent.obtain(down, time, action, x*density, y*density, 0)
+                try { root.dispatchTouchEvent(e) } finally { e.recycle() }
+            }
+            touch(MotionEvent.ACTION_DOWN, 224f, 124f)
+            touch(MotionEvent.ACTION_MOVE, 224f, 60f)
+            touch(MotionEvent.ACTION_MOVE, 224f, 20f)
+            touch(MotionEvent.ACTION_UP, 224f, 20f)
+            assertEquals("Overlay drag never reaches the underlying sibling ScrollView", initial, scroll.scrollY)
+            assertEquals(listOf("touchDown","touchMove","touchMove","touchUp"),events.map { it.event })
+            assertTrue(events.all { it.nodeId == 3L && it.targetId == 4L })
+            events.clear()
+            touch(MotionEvent.ACTION_DOWN, 40f, 200f)
+            touch(MotionEvent.ACTION_MOVE, 40f, 120f)
+            touch(MotionEvent.ACTION_MOVE, 40f, 40f)
+            touch(MotionEvent.ACTION_UP, 40f, 40f)
+            assertTrue("Ordinary page swipes still scroll", scroll.scrollY > initial)
+        } finally { renderer.clear() }
     }
 
     @Test fun compiledVariableListMeasuresScrollsAndSuspendsVisibleWork() {

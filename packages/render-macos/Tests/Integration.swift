@@ -13,6 +13,11 @@ import AVKit
     static func descendants(_ view:NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
     static func main() throws {
         _ = NSApplication.shared
+        if CommandLine.arguments.contains("--drag-regression") {
+            try RendererRegression.dragWorker()
+            try RendererRegression.dragAOT()
+            return
+        }
         if CommandLine.arguments.contains("--liquid-glass-regression") {
             try RendererRegression.liquidGlass()
             return

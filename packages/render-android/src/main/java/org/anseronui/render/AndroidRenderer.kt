@@ -65,6 +65,7 @@ private class NodeRecord(val view: View, val content: ViewGroup?, val kind: Stri
     var shadowKey = ""
     var shadowBitmap: Bitmap? = null
     var shadowPadding = 0
+    var backdropBlur: BackdropBlur? = null
     var pageBackgroundColor = Color.TRANSPARENT
     val animation = NodeAnimation(view)
     val events = mutableSetOf<String>()
@@ -93,10 +94,91 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     private data class TouchSession(val target: Long, val owner: Long?, val startX: Float, val startY: Float,
         val allowX: Boolean, val allowY: Boolean, var x: Float, var y: Float, var axis: String? = null, var cancelled: Boolean = false)
     private val sessions = mutableMapOf<Int, TouchSession>()
+    private var backdropTarget: View? = null
+    private var backdropReached = false
+    private fun drawBackdrop(canvas: Canvas, record: NodeRecord, drawingTime: Long) {
+        val view = record.view
+        val radius = record.resolvedProps?.optDouble("backgroundBlurRadius", 0.0) ?: 0.0
+        if (radius <= 0 || view.width <= 0 || view.height <= 0 || view.alpha <= 0 || view.visibility != View.VISIBLE) return
+        if (android.os.Build.VERSION.SDK_INT >= 31 && canvas.isHardwareAccelerated) {
+            val blur = record.backdropBlur ?: BackdropBlur().also { record.backdropBlur = it }
+            val saved = canvas.save()
+            try {
+                canvas.translate((view.left - (view.parent as View).scrollX).toFloat(), (view.top - (view.parent as View).scrollY).toFloat())
+                canvas.concat(view.matrix)
+                if (canvas.quickReject(0f, 0f, view.width.toFloat(), view.height.toFloat(), Canvas.EdgeType.AA)) return
+                val corner = ((record.resolvedProps?.optDouble("borderRadius", 0.0) ?: 0.0) * density).toFloat()
+                canvas.clipPath(android.graphics.Path().apply { addRoundRect(RectF(0f, 0f, view.width.toFloat(), view.height.toFloat()), corner, corner, android.graphics.Path.Direction.CW) })
+                blur.drawHardware(canvas, (radius * density).toFloat(), view.width, view.height, view.alpha) { output ->
+                    recordBackdrop(output, view, drawingTime)
+                }
+            } finally { canvas.restoreToCount(saved) }
+            return
+        }
+        // Sample only pixels behind this node. Never include its own content or
+        // following siblings, and keep the temporary bitmap downsampled/bounded.
+        val sample = max(4f, max(view.width, view.height) / 256f)
+        val padding = min(32f, (radius * density / sample).toFloat() * 2).roundToInt()
+        val width = (view.width / sample).roundToInt().coerceAtLeast(1) + padding * 2
+        val height = (view.height / sample).roundToInt().coerceAtLeast(1) + padding * 2
+        val blur = record.backdropBlur ?: BackdropBlur().also { record.backdropBlur = it }
+        val capture = blur.beginCapture(width, height)
+        val targetPosition = IntArray(2); val origin = IntArray(2)
+        view.getLocationInWindow(targetPosition); surface.getLocationInWindow(origin)
+        capture.translate(padding.toFloat(), padding.toFloat())
+        capture.scale(1 / sample, 1 / sample)
+        capture.translate((origin[0] - targetPosition[0]).toFloat(), (origin[1] - targetPosition[1]).toFloat())
+        backdropTarget = view; backdropReached = false
+        try { surface.draw(capture) } finally { backdropTarget = null; backdropReached = false }
+        val saved = canvas.save()
+        canvas.translate((view.left - (view.parent as View).scrollX).toFloat(), (view.top - (view.parent as View).scrollY).toFloat())
+        canvas.concat(view.matrix)
+        val bounds = RectF(0f, 0f, view.width.toFloat(), view.height.toFloat())
+        val corner = ((record.resolvedProps?.optDouble("borderRadius", 0.0) ?: 0.0) * density).toFloat()
+        canvas.clipPath(android.graphics.Path().apply { addRoundRect(bounds, corner, corner, android.graphics.Path.Direction.CW) })
+        blur.draw(canvas, (radius * density / sample).toFloat().coerceIn(0.01f, 25f), RectF(-padding * sample, -padding * sample, (width - padding) * sample, (height - padding) * sample), view.alpha)
+        canvas.restoreToCount(saved)
+    }
+
+    /** Record only ancestor backgrounds and earlier siblings as cached GPU display lists.
+     * Never call surface.draw here: that rasterizes the whole tree once per glass node. */
+    private fun recordBackdrop(canvas: Canvas, target: View, drawingTime: Long) {
+        val path = mutableListOf<View>(target)
+        while (path.last() !== surface) {
+            val parent = path.last().parent as? View ?: return
+            path.add(parent)
+        }
+        path.reverse()
+        val matrix = android.graphics.Matrix()
+        surface.transformMatrixToGlobal(matrix)
+        target.transformMatrixToLocal(matrix)
+        canvas.concat(matrix)
+        for (i in 0 until path.lastIndex) {
+            val parent = path[i] as? ViewGroup ?: return
+            val next = path[i + 1]
+            parent.background?.draw(canvas)
+            if (parent.clipChildren) canvas.clipRect(0, 0, parent.width, parent.height)
+            canvas.translate(-parent.scrollX.toFloat(), -parent.scrollY.toFloat())
+            if (parent is ShadowLayout) parent.drawBefore(canvas, next, drawingTime)
+            canvas.translate(next.left.toFloat(), next.top.toFloat())
+            canvas.concat(next.matrix)
+        }
+    }
+
     private inner open class ShadowLayout : FrameLayout(root.context) {
         init { clipChildren = false; clipToPadding = false }
+        fun drawBefore(canvas: Canvas, target: View, drawingTime: Long) {
+            for (i in 0 until indexOfChild(target)) {
+                val child = getChildAt(i)
+                if (child.visibility != View.VISIBLE) continue
+                super.drawChild(canvas, child, drawingTime)
+            }
+        }
         override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
-            recordsByView[child]?.let { drawShadow(canvas, it) }
+            if (backdropTarget != null) {
+                if (child === backdropTarget) backdropReached = true
+                if (backdropReached) return false
+            } else recordsByView[child]?.let { drawBackdrop(canvas, it, drawingTime); drawShadow(canvas, it) }
             return super.drawChild(canvas, child, drawingTime)
         }
     }
@@ -540,6 +622,20 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             recordsByView[view] = record
             val sharedInteraction = kind in setOf("View", "Text", "RichText", "ScrollView", "Image")
             if (sharedInteraction) {
+                // A shared touch owner must also retain Android's native stream.
+                // Otherwise a non-clickable overlay rejects DOWN and ViewGroup
+                // tries the next sibling (possibly the page's ScrollView).
+                // Keep native click/long-press behavior and let ancestor scroll
+                // views arbitrate touchAction through onInterceptTouchEvent.
+                var retainsTouch = false
+                view.setOnTouchListener { target, event ->
+                    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                        retainsTouch = sessions.values.any { it.owner == id }
+                    }
+                    val retain = retainsTouch
+                    if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) retainsTouch = false
+                    if (retain) { target.onTouchEvent(event); true } else false
+                }
                 view.setOnClickListener {
                     if (view.isEnabled && "tap" in record.events) onEvent?.invoke(RendererEvent("Tap", id, revision))
                 }
@@ -738,8 +834,17 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
 
     private fun setProps(record: NodeRecord, raw: JSONObject, appearanceOnly: Boolean = false) {
         record.declaredProps = raw // Commit payloads are immutable after handoff to the UI thread.
-        val props = themed(raw)
+        var props = themed(raw)
+        if (record.kind == "View" && props.optBoolean("glassEffect") && !props.optBoolean("glassEffectContainer")) {
+            props = JSONObject(props.toString())
+            if (!props.has("backgroundColor")) props.put("backgroundColor", if (isDark()) "#20242bcc" else "#f2f5facc")
+            if (!props.has("opacity")) props.put("opacity", 0.88)
+            if (!props.has("backgroundBlurRadius")) props.put("backgroundBlurRadius", if (android.os.Build.VERSION.SDK_INT < 31) 0.0 else if (props.optString("glassEffectStyle") == "clear") 12.0 else 20.0)
+        }
         record.resolvedProps = props
+        if (props.optDouble("backgroundBlurRadius", 0.0) <= 0) {
+            record.backdropBlur?.clear(); record.backdropBlur = null
+        }
         if (!appearanceOnly) record.native?.setProps(JSONObject(props.optString("nativeProps", "{}")))
         record.touchAction = props.optString("touchAction", "auto")
         val view = record.view
@@ -960,6 +1065,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
 
     private fun releaseNode(record: NodeRecord) {
         record.shadowBitmap = null
+        record.backdropBlur?.clear(); record.backdropBlur = null
         cleanup { record.animation.cancel() }
         record.mediaGeneration.incrementAndGet()
         val loads = record.imageLoads.toList(); record.imageLoads.clear(); loads.forEach { cleanup(it) }
@@ -981,7 +1087,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         if (record.kind != "Text") return
         if (textPool.size >= 64) return
         (view.parent as? ViewGroup)?.removeView(view)
-        view.setOnClickListener(null); view.setOnLongClickListener(null)
+        view.setOnTouchListener(null); view.setOnClickListener(null); view.setOnLongClickListener(null)
         view.isClickable = false; view.isLongClickable = false
         view.isPressed = false; view.isSelected = false; view.clearFocus()
         view.text = ""; view.typeface = record.defaultTypeface
@@ -1099,6 +1205,10 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         }
     }
 
-    private fun parseColor(value: String, fallback: Int): Int =
-        if (Regex("^#[0-9a-fA-F]{6}$").matches(value)) Color.parseColor(value) else fallback
+    private fun parseColor(value: String, fallback: Int): Int = when {
+        value == "transparent" -> Color.TRANSPARENT
+        Regex("^#[0-9a-fA-F]{6}$").matches(value) -> Color.parseColor(value)
+        Regex("^#[0-9a-fA-F]{8}$").matches(value) -> value.substring(1).toLong(16).let { ((it ushr 8) or (it shl 24)).toInt() }
+        else -> fallback
+    }
 }

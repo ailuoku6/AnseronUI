@@ -11,15 +11,14 @@ function clamp(value: number, extent: number): number {
 export function FloatingBall(props: { width: number; height: number }): UIElement {
   const position = useRef({ x: 248, y: 150 });
   const gesture = useRef<{ pointer: number; pageX: number; pageY: number; x: number; y: number } | null>(null);
-  const [x, setX] = useState(248);
-  const [y, setY] = useState(150);
+  const [point, setPoint] = useState({ x: 248, y: 150 });
   const [dragging, setDragging] = useState(false);
   useEffect(() => {
     gesture.current = null;
     setDragging(false);
     const nextX = clamp(position.current.x, props.width);
     const nextY = clamp(position.current.y, props.height);
-    position.current = { x: nextX, y: nextY }; setX(nextX); setY(nextY);
+    position.current = { x: nextX, y: nextY }; setPoint(position.current);
   }, [props.width, props.height]);
   const move = (event: TouchEvent): void => {
     event.stopPropagation();
@@ -28,7 +27,8 @@ export function FloatingBall(props: { width: number; height: number }): UIElemen
     // page coordinates remain stable as the hit view moves underneath the finger.
     const nextX = clamp(start.x + event.pageX - start.pageX, props.width);
     const nextY = clamp(start.y + event.pageY - start.pageY, props.height);
-    position.current = { x: nextX, y: nextY }; setX(nextX); setY(nextY);
+    if (nextX === position.current.x && nextY === position.current.y) return;
+    position.current = { x: nextX, y: nextY }; setPoint(position.current);
   };
   const finish = (event: TouchEvent): void => {
     event.stopPropagation();
@@ -36,7 +36,7 @@ export function FloatingBall(props: { width: number; height: number }): UIElemen
     gesture.current = null; setDragging(false);
   };
   return <View testID="floating-ball" accessibilityLabel="可拖动悬浮球" touchAction="none"
-    style={{ position: "absolute", left: clamp(x, props.width), top: clamp(y, props.height), width: SIZE, height: SIZE,
+    style={{ position: "absolute", left: clamp(point.x, props.width), top: clamp(point.y, props.height), width: SIZE, height: SIZE,
       borderRadius: SIZE / 2, glassEffect: true, glassEffectStyle: "regular", glassEffectInteractive: true,
       alignItems: "center", justifyContent: "center" }}
     onTouchDown={(event: TouchEvent) => {

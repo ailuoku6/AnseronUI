@@ -9,6 +9,7 @@
 #include "anseronui_transport.h"
 #include "extensions.h"
 #include "touch_policy.h"
+#include "input_queue.h"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -57,7 +58,7 @@ std::vector<napi_value> arguments(napi_env e,napi_callback_info info,size_t n) {
 void floats(ArkUI_NodeHandle n,ArkUI_NodeAttributeType key,std::initializer_list<float> f) { std::vector<ArkUI_NumberValue> v; for(float x:f){ArkUI_NumberValue a{};a.f32=x;v.push_back(a);} ArkUI_AttributeItem item{v.data(),static_cast<int32_t>(v.size()),nullptr,nullptr};check(api->setAttribute(n,key,&item)==0,"ARKUI_ATTRIBUTE_FAILED"); }
 void ints(ArkUI_NodeHandle n,ArkUI_NodeAttributeType key,std::initializer_list<int32_t> f) { std::vector<ArkUI_NumberValue> v;for(int32_t x:f){ArkUI_NumberValue a{};a.i32=x;v.push_back(a);} ArkUI_AttributeItem item{v.data(),static_cast<int32_t>(v.size()),nullptr,nullptr};check(api->setAttribute(n,key,&item)==0,"ARKUI_ATTRIBUTE_FAILED"); }
 void text(ArkUI_NodeHandle n,ArkUI_NodeAttributeType key,const std::string &s) { ArkUI_AttributeItem item{nullptr,0,s.c_str(),nullptr};check(api->setAttribute(n,key,&item)==0,"ARKUI_TEXT_FAILED"); }
-uint32_t color(const std::string &s) { check(s.size()==7&&s[0]=='#'&&s.find_first_not_of("0123456789abcdefABCDEF",1)==std::string::npos,"INVALID_COLOR"); return 0xff000000u|static_cast<uint32_t>(std::stoul(s.substr(1),nullptr,16)); }
+uint32_t color(const std::string &s) { if(s=="transparent")return 0;check((s.size()==7||s.size()==9)&&s[0]=='#'&&s.find_first_not_of("0123456789abcdefABCDEF",1)==std::string::npos,"INVALID_COLOR"); auto packed=static_cast<uint32_t>(std::stoul(s.substr(1),nullptr,16));return s.size()==9?(packed>>8)|(packed<<24):0xff000000u|packed; }
 
 uint64_t monotonicNs(){return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();}
 struct WorkerMetrics {
@@ -68,7 +69,7 @@ struct WorkerOutput {std::string bytes;std::shared_ptr<WorkerMetrics> metrics;ui
 struct Worker {
   std::shared_ptr<WorkerMetrics> metrics=std::make_shared<WorkerMetrics>();
   napi_threadsafe_function callback=nullptr;
-  std::mutex lock; std::condition_variable wake; std::deque<std::string> inputs;
+  std::mutex lock; std::condition_variable wake; anseronui::InputQueue inputs{MAX_QUEUE};
   bool stopping=false; bool poisoned=false; std::atomic<bool> failed{false}; std::thread thread;
   explicit Worker(napi_env e,napi_value fn) {
     napi_value name=jsstr(e,"AnseronUICore");
@@ -83,7 +84,7 @@ struct Worker {
     if(!ctx||*anseronui_error(ctx)){fail();}
     while(ctx&&!failed) {
       std::string input;
-      { std::unique_lock<std::mutex> guard(lock); wake.wait(guard,[&]{return stopping||!inputs.empty();}); if(stopping&&inputs.empty())break; input=std::move(inputs.front());inputs.pop_front(); }
+      { std::unique_lock<std::mutex> guard(lock); wake.wait(guard,[&]{return stopping||!inputs.empty();}); if(stopping&&inputs.empty())break; input=inputs.pop(); }
       if(!anseronui_post(ctx,reinterpret_cast<const uint8_t*>(input.data()),input.size())) {fail();break;}
       for(int budget=0;;++budget){
         uint8_t *bytes=nullptr;size_t length=0;
@@ -104,7 +105,12 @@ struct Worker {
     if(ctx&&!poisoned&&!anseronui_close(ctx))emit(std::string("!CORE_CLOSE_FAILURE ")+anseronui_error(ctx));
     napi_release_threadsafe_function(callback,napi_tsfn_release);
   }
-  void post(std::string s) {std::lock_guard<std::mutex> guard(lock);check(!stopping&&!failed,"CORE_CLOSED");check(inputs.size()<MAX_QUEUE,"CORE_QUEUE_LIMIT");inputs.push_back(std::move(s));wake.notify_one();}
+  template<class EncodeReplacement>
+  uint32_t post(std::string s,std::string key,uint32_t sequence,EncodeReplacement encode) {
+    std::lock_guard<std::mutex> guard(lock);check(!stopping&&!failed,"CORE_CLOSED");
+    const auto accepted=inputs.push(std::move(s),std::move(key),sequence,encode);
+    wake.notify_one();return accepted;
+  }
   void stop(){ {std::lock_guard<std::mutex> guard(lock);stopping=true;}wake.notify_one();if(thread.joinable())thread.join(); }
   ~Worker(){stop();}
 };
@@ -251,7 +257,15 @@ void visual(Node &n) {
   // platform padding) that differ from the shared renderer baseline. Apply
   // every baseline value on each snapshot so removed props cannot reintroduce
   // an ArkUI default.
-  ints(n.handle,NODE_BACKGROUND_COLOR,{static_cast<int32_t>(col("backgroundColor","dmBackgroundColor",0))});
+  const bool glass=n.kind=="View"&&number("glassEffect")!=0&&number("glassEffectContainer")==0;
+  ints(n.handle,NODE_BACKGROUND_COLOR,{static_cast<int32_t>(col("backgroundColor","dmBackgroundColor",glass?(n.surface->dark?0xcc20242bu:0xccf2f5fau):0))});
+  const auto blur=number("backgroundBlurRadius",glass?(n.strings["glassEffectStyle"]=="clear"?12:20):0);
+  if(blur>0){
+    ArkUI_NumberValue values[4]{};values[0].i32=ARKUI_BLUR_STYLE_COMPONENT_ULTRA_THICK;
+    values[1].i32=ARKUI_COLOR_MODE_SYSTEM;values[2].i32=ARKUI_ADAPTIVE_COLOR_DEFAULT;
+    values[3].f32=std::clamp(blur/40.0f,0.0f,1.0f);
+    ArkUI_AttributeItem item{values,4,nullptr,nullptr};check(api->setAttribute(n.handle,NODE_BACKGROUND_BLUR_STYLE,&item)==0,"BACKGROUND_BLUR_FAILED");
+  }else api->resetAttribute(n.handle,NODE_BACKGROUND_BLUR_STYLE);
   ints(n.handle,NODE_BORDER_COLOR,{static_cast<int32_t>(col("borderColor","dmBorderColor",0))});
   if(n.kind=="Text"||n.kind=="TextInput"||n.kind=="RichText") {
     uint32_t fallback=n.surface->dark?DEFAULT_DARK_TEXT_COLOR:DEFAULT_LIGHT_TEXT_COLOR;
@@ -286,7 +300,7 @@ void visual(Node &n) {
   if(n.kind=="Image"&&!n.declared.count("resizeMode"))ints(n.handle,NODE_IMAGE_OBJECT_FIT,{1});
   for(size_t index=0;index<n.spans.size();++index){const auto &colors=n.spanColors[index];const auto &value=n.surface->dark&&!colors.second.empty()?colors.second:colors.first;if(!value.empty())ints(n.spans[index],NODE_FONT_COLOR,{static_cast<int32_t>(color(value))});else api->resetAttribute(n.spans[index],NODE_FONT_COLOR);}
   floats(n.handle,NODE_TRANSLATE,{number("translateX"),number("translateY"),0});floats(n.handle,NODE_SCALE,{number("scaleX",1),number("scaleY",1)});floats(n.handle,NODE_ROTATE,{0,0,1,number("rotate"),0});
-  floats(n.handle,NODE_OPACITY,{number("opacity",1)});floats(n.handle,NODE_BORDER_RADIUS,{number("borderRadius")});floats(n.handle,NODE_BORDER_WIDTH,{number("borderWidth")});
+  floats(n.handle,NODE_OPACITY,{number("opacity",glass?0.88:1)});floats(n.handle,NODE_BORDER_RADIUS,{number("borderRadius")});floats(n.handle,NODE_BORDER_WIDTH,{number("borderWidth")});
   // ArkUI's native shadow path forwards radius/offsets to Rosen in physical
   // pixels (unlike NODE_WIDTH/BORDER_RADIUS). Convert shared layout units once.
   const float shadowOpacity=std::clamp(number("shadowOpacity"),0.0f,1.0f);
@@ -340,12 +354,13 @@ void props(napi_env e,Node &n,napi_value p){
   struct Reset {Node &n;~Reset(){n.updating=false;}} reset{n};
   if(n.kind=="Video"){napi_value args[2];napi_create_uint32(e,n.id,&args[0]);args[1]=jsstr(e,stringify(e,p));n.surface->mediaCall("update",2,args);}
   if(n.kind=="Native"&&has(e,p,"nativeProps")&&n.custom.setProps)n.custom.setProps(str(e,property(e,p,"nativeProps")));
-  const std::set<std::string> visualNumbers={"fontSize","lineHeight","translateX","translateY","scaleX","scaleY","rotate","opacity","borderRadius","borderWidth","shadowOpacity","shadowRadius","shadowOffsetX","shadowOffsetY"};
-  const std::set<std::string> visualStrings={"backgroundColor","color","borderColor","placeholderTextColor","shadowColor","dmBackgroundColor","dmColor","dmBorderColor","dmPlaceholderTextColor","dmShadowColor","src","dmSrc"};
+  const std::set<std::string> visualNumbers={"fontSize","lineHeight","translateX","translateY","scaleX","scaleY","rotate","opacity","borderRadius","borderWidth","shadowOpacity","shadowRadius","shadowOffsetX","shadowOffsetY","backgroundBlurRadius"};
+  const std::set<std::string> visualStrings={"backgroundColor","color","borderColor","placeholderTextColor","shadowColor","dmBackgroundColor","dmColor","dmBorderColor","dmPlaceholderTextColor","dmShadowColor","src","dmSrc","glassEffectStyle"};
   n.numbers.clear();n.strings.clear();
   napi_value keys;napi_get_property_names(e,p,&keys);uint32_t count;napi_get_array_length(e,keys,&count);check(count<=128,"PROPS_LIMIT");
   for(uint32_t i=0;i<count;i++){
     napi_value key;napi_get_element(e,keys,i,&key);std::string k=str(e,key);auto v=property(e,p,k.c_str());auto h=n.handle;
+    if(k=="glassEffect"||k=="glassEffectContainer"){n.numbers[k]=boolean(e,v)?1:0;continue;}
     if(visualNumbers.count(k)){n.numbers[k]=number(e,v);continue;}
     if(visualStrings.count(k)){n.strings[k]=str(e,v);continue;}
     if(k=="text"||k=="value") {if(n.kind=="TextInput"&&k=="value"){uint32_t rev=has(e,p,"inputRevision")?integer(e,property(e,p,"inputRevision"),true):0;if(rev<n.inputRevision)continue;auto existing=api->getAttribute(h,NODE_TEXT_INPUT_TEXT);if(existing&&existing->string&&str(e,v)==existing->string)continue;}text(h,n.kind=="TextInput"?NODE_TEXT_INPUT_TEXT:NODE_TEXT_CONTENT,str(e,v));}
@@ -461,7 +476,15 @@ void apply(napi_env e,Surface &s,napi_value p){
 
 template<napi_value(*F)(napi_env,napi_callback_info)> napi_value safe(napi_env e,napi_callback_info i){try{return F(e,i);}catch(const std::exception &ex){bool pending=false;napi_is_exception_pending(e,&pending);if(!pending)napi_throw_error(e,nullptr,ex.what());return undefined(e);}}
 napi_value open(napi_env e,napi_callback_info i){auto a=arguments(e,i,1);auto &s=state(e);check(s.nextWorker!=0,"WORKER_ID_EXHAUSTED");uint32_t id=s.nextWorker++;auto w=std::make_shared<Worker>(e,a[0]);s.workers[id]=w;napi_value v;napi_create_uint32(e,id,&v);return v;}
-napi_value post(napi_env e,napi_callback_info i){auto a=arguments(e,i,2);auto id=integer(e,a[0]);auto &workers=state(e).workers;check(workers.count(id),"WORKER_NOT_FOUND");workers.at(id)->post(str(e,a[1]));return undefined(e);}
+napi_value post(napi_env e,napi_callback_info i){
+  auto a=arguments(e,i,4);auto id=integer(e,a[0]);auto &workers=state(e).workers;check(workers.count(id),"WORKER_NOT_FOUND");
+  const auto sequence=workers.at(id)->post(str(e,a[1]),str(e,a[2]),integer(e,a[3]),[&](uint32_t retained){
+    auto envelope=parse(e,a[1]);putnum(e,envelope,"sequence",retained);
+    napi_value global,json,fn,bytes;napi_get_global(e,&global);json=property(e,global,"JSON");fn=property(e,json,"stringify");
+    check(napi_call_function(e,json,fn,1,&envelope,&bytes)==napi_ok,"INVALID_JSON");return str(e,bytes);
+  });
+  napi_value result;napi_create_uint32(e,sequence,&result);return result;
+}
 napi_value profile(napi_env e,napi_callback_info i){auto a=arguments(e,i,3);auto &workers=state(e).workers;auto id=integer(e,a[0]);check(workers.count(id),"WORKER_NOT_FOUND");auto m=workers.at(id)->metrics;const bool enabled=boolean(e,a[1]);if(boolean(e,a[2])){m->generation++;m->stepNs=0;m->queueNs=0;}m->enabled=enabled;return undefined(e);}
 napi_value performance(napi_env e,napi_callback_info i){auto a=arguments(e,i,1);auto &workers=state(e).workers;auto id=integer(e,a[0]);check(workers.count(id),"WORKER_NOT_FOUND");auto m=workers.at(id)->metrics;napi_value result;napi_create_object(e,&result);putnum(e,result,"adapterStepMs",m->stepNs.load()/1000000.);putnum(e,result,"uiQueueMs",m->queueNs.load()/1000000.);return result;}
 napi_value close(napi_env e,napi_callback_info i){auto a=arguments(e,i,1);auto &workers=state(e).workers;auto it=workers.find(integer(e,a[0]));if(it!=workers.end()){it->second->stop();workers.erase(it);}return undefined(e);}

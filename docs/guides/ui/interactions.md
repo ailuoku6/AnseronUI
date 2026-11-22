@@ -31,6 +31,8 @@ UI 事件按页面节点树分发。点击和长按适合普通控件。触摸�
 
 在任何 `await` 之前同步调用 `stopPropagation()`。它会停止事件继续传到其他节点。它不会阻止原生滚动。
 
+高频拖动时，同一节点和 pointer 尚未处理的连续 `onTouchMove` 会合并为最新坐标；不要依赖每个硬件采样点都触发一次回调。`onTouchDown`、`onTouchUp`、`onTouchCancel` 和其他离散事件保留顺序。拖拽位置应使用 `pageX/pageY` 相对按下点计算，并在 `onTouchUp` 应用最终坐标，避免累加移动回调次数。
+
 ## 滚动交接
 
 通过 `touchAction` 声明子节点如何与最近的 `ScrollView` 共享手势：

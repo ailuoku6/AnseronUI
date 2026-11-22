@@ -56,7 +56,9 @@ export interface Style extends AnimationStyle {
   /** Outer box shadow, in layout units. Defaults: black, opacity 0, radius 0, offset 0/0. */
   shadowColor?: string; dmShadowColor?: string; shadowOpacity?: number;
   shadowRadius?: number; shadowOffsetX?: number; shadowOffsetY?: number;
-  /** Apply the native Liquid Glass effect on iOS 26+ and macOS 26+. */
+  /** View backdrop blur, independent of glassEffect. Layout units; omitted/0 disables it outside glass fallback. Native materials approximate the radius. */
+  backgroundBlurRadius?: number;
+  /** Native Liquid Glass on iOS 26+/macOS 26+; other hosts use a translucent fallback. */
   glassEffect?: boolean;
   glassEffectStyle?: "regular" | "clear";
   glassEffectTintColor?: string;

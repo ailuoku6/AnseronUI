@@ -90,6 +90,10 @@ export function colorValues(color: string): Values {
   if (/^#[0-9a-fA-F]{6}$/.test(color)) {
     const rgb = parseInt(color.slice(1),16); return {r:(rgb>>16)&255,g:(rgb>>8)&255,b:rgb&255,a:1};
   }
+  if (/^#[0-9a-fA-F]{8}$/.test(color)) {
+    const rgba = parseInt(color.slice(1),16);
+    return {r:(rgba>>>24)&255,g:(rgba>>>16)&255,b:(rgba>>>8)&255,a:(rgba&255)/255};
+  }
   // CSS parser handles static named/rgb colors; animation targets use #RRGGBB.
   const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
   const context = canvas.getContext('2d')!; context.clearRect(0,0,1,1); context.fillStyle = color || 'transparent'; context.fillRect(0,0,1,1);

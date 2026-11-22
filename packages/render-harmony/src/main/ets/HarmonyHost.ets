@@ -31,6 +31,9 @@ export interface Payload {
   revision?: number;
   requestId?: number;
   nodeId?: number;
+  event?: string;
+  targetId?: number;
+  pointerId?: number;
   kind?: string;
   text?: string;
   fontSize?: number;
@@ -158,14 +161,23 @@ export class HarmonyHost {
     if (this.closed || this.worker === 0) return;
     if (this.sequence >= 0xffffffff) { this.fail('INPUT_SEQUENCE_EXHAUSTED'); return; }
     const envelope: Envelope = { protocolMajor: 1, protocolMinor: 5, bundleBuildId: this.buildId,
-      runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: 1, sequence: ++this.sequence,
+      runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: 1, sequence: this.sequence + 1,
       ackSequence: this.outputSequence, payload: payload as Payload };
     const encodeStart = this.clock();
     const bytes = JSON.stringify(envelope);
     this.metric('bridgeEncodeMs', this.clock() - encodeStart);
     if (this.profiling) this.metric('bridgeInputBytes', this.encoder.encodeInto(bytes).byteLength);
     if (bytes.length > 1048576) { this.fail('INPUT_MESSAGE_LIMIT'); return; }
-    try { const started = this.clock(); native.post(this.worker, bytes); this.metric('adapterPostMs', this.clock() - started); } catch (error) { this.fail(String(error)); }
+    const event = payload as Payload;
+    // Native replaces only the queued tail, atomically with the worker taking
+    // inputs. Reuse that slot's sequence; never drop an already numbered input.
+    const motionKey = event.type === 'NativeEvent' && event.event === 'touchMove' ?
+      'touchMove:' + event.nodeId + ':' + event.targetId + ':' + event.pointerId : '';
+    try {
+      const started = this.clock();
+      this.sequence = native.post(this.worker, bytes, motionKey, envelope.sequence);
+      this.metric('adapterPostMs', this.clock() - started);
+    } catch (error) { this.fail(String(error)); }
   }
   private receive(bytes: string): void {
     if (this.closed) return;

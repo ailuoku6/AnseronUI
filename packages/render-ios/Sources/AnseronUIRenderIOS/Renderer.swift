@@ -40,7 +40,8 @@ public struct RenderProps: Decodable {
     public let scaleX: Double?
     public let scaleY: Double?
     public let rotate: Double?
-    public let opacity: Double?
+    public var opacity: Double?
+    public var backgroundBlurRadius: Double?
     public let lineHeight: Double?
     public let fontSize: Double?
     public let fontWeight: String?
@@ -88,6 +89,16 @@ public struct RenderProps: Decodable {
     public let playControl: String?
     public let touchAction: String?
     public let nativeProps: String?
+
+    func glassFallback(_ dark: Bool, nativeGlass: Bool) -> RenderProps {
+        var p = self
+        if !nativeGlass, glassEffect == true, glassEffectContainer != true {
+            p.backgroundColor = backgroundColor ?? (dark ? "#20242bcc" : "#f2f5facc")
+            p.opacity = opacity ?? 0.88
+            p.backgroundBlurRadius = backgroundBlurRadius ?? (glassEffectStyle == "clear" ? 12 : 20)
+        }
+        return p
+    }
 
     func themed(_ dark: Bool) -> RenderProps {
         guard dark else { return self }
@@ -164,6 +175,7 @@ public enum RenderError: Error {
 }
 
 private final class TSPrimitiveView: UIVisualEffectView {
+    var fallbackBlurRadius: Double = 0
     var activate: (() -> Bool)?
     override func accessibilityActivate() -> Bool { activate?() ?? false }
 }
@@ -376,7 +388,10 @@ private final class TouchSession {
         if #available(iOS 18.0, *) { root.updateTraitsIfNeeded() }
         for record in nodes.values {
             guard let raw = record.declaredProps else { continue }
-            let p = raw.themed(root.traitCollection.userInterfaceStyle == .dark)
+            let dark = root.traitCollection.userInterfaceStyle == .dark
+            let nativeGlass: Bool
+            if #available(iOS 26.0, *) { nativeGlass = true } else { nativeGlass = false }
+            let p = raw.themed(dark).glassFallback(dark, nativeGlass: nativeGlass)
             let color = parseColor(p.backgroundColor) ?? .clear
             record.pageBackgroundColor = color
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
@@ -572,7 +587,10 @@ private final class TouchSession {
     private func setProps(_ record: NodeRecord, _ raw: RenderProps) throws {
         let previous = record.declaredProps
         record.declaredProps = raw
-        let props = raw.themed(root.traitCollection.userInterfaceStyle == .dark)
+        let dark = root.traitCollection.userInterfaceStyle == .dark
+        let nativeGlass: Bool
+        if #available(iOS 26.0, *) { nativeGlass = true } else { nativeGlass = false }
+        let props = raw.themed(dark).glassFallback(dark, nativeGlass: nativeGlass)
         let view = record.view
         // Missing backgrounds are transparent, including when a prior color is removed.
         // An opaque UILabel with a nil background can draw a black backing surface.
@@ -586,6 +604,7 @@ private final class TouchSession {
             || previous?.glassEffectInteractive != props.glassEffectInteractive
             || previous?.glassEffectSpacing != props.glassEffectSpacing
             || previous?.disabled != props.disabled
+            || previous?.backgroundBlurRadius != raw.backgroundBlurRadius
         if glassChanged, let effectView = view as? UIVisualEffectView, #available(iOS 26.0, *) {
             if props.glassEffectContainer == true {
                 let effect = UIGlassContainerEffect()
@@ -600,6 +619,13 @@ private final class TouchSession {
             } else {
                 effectView.effect = nil
             }
+        }
+        if let effectView = view as? TSPrimitiveView, !nativeGlass || (props.glassEffect != true && props.glassEffectContainer != true) {
+            let radius = props.backgroundBlurRadius ?? 0
+            if radius > 0 {
+                if effectView.effect == nil || effectView.fallbackBlurRadius != radius { effectView.effect = UIBlurEffect(style: radius <= 12 ? .systemUltraThinMaterial : .systemMaterial) }
+            } else { effectView.effect = nil }
+            effectView.fallbackBlurRadius = radius
         }
         record.pageBackgroundColor = backgroundColor
         if let json = props.animation {
@@ -1058,8 +1084,12 @@ private func resizeGravity(_ value: String?) -> AVLayerVideoGravity {
 }
 
 private func parseColor(_ value: String?) -> UIColor? {
-    guard let value, value.hasPrefix("#") else { return nil }
+    guard let value else { return nil }
+    if value == "transparent" { return .clear }
+    guard value.hasPrefix("#") else { return nil }
     let hex = String(value.dropFirst())
-    guard hex.count == 6, let rgb = UInt32(hex, radix: 16) else { return nil }
-    return UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
+    guard hex.count == 6 || hex.count == 8, let packed = UInt64(hex, radix: 16) else { return nil }
+    let rgb = hex.count == 8 ? packed >> 8 : packed
+    let alpha = hex.count == 8 ? CGFloat(packed & 255) / 255 : 1
+    return UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: alpha)
 }

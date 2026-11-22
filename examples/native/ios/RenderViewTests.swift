@@ -87,6 +87,88 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
 }
 
 @MainActor final class RenderViewTests: XCTestCase {
+    func testWorkerCoalescesPendingMotionWithoutCrossingGestureBoundaries() async throws {
+        let entered = expectation(description: "worker blocked before startup")
+        let processed = expectation(description: "all gesture input processed")
+        let committed = expectation(description: "initial commit"), disposed = expectation(description: "worker disposed")
+        let gate = DispatchSemaphore(value: 0)
+        let core = RecordingCore(disposed: disposed, committed: committed)
+        core.onInput = { input in if input["type"] as? String == "InspectRuntime" { processed.fulfill() } }
+        let host = IOSHost(root: UIView(), createCore: {
+            entered.fulfill()
+            guard gate.wait(timeout: .now() + 10) == .success else { throw HostError.invalidOutput }
+            return core
+        })
+        host.start(page: "test", width: 320, height: 480)
+        await fulfillment(of: [entered], timeout: 5)
+        func emit(_ phase: String, _ x: Double, pointer: UInt32 = 1) {
+            host.renderer.onEvent?(RendererEvent(type: "NativeEvent", nodeId: 1, revision: 1,
+                event: phase, x: x, y: 0, pageX: x, pageY: 0, pointerId: pointer, touches: [], targetId: 1))
+        }
+        emit("touchDown", 0)
+        for x in 1...500 { emit("touchMove", Double(x)) }
+        emit("touchUp", 500)
+        emit("touchDown", 500)
+        emit("touchMove", 40)
+        emit("touchMove", 60, pointer: 2)
+        emit("touchCancel", 60)
+        host.inspectRuntime()
+        gate.signal()
+        await fulfillment(of: [processed, committed], timeout: 10)
+        let events = core.messages.filter { $0["type"] as? String == "NativeEvent" }
+        XCTAssertEqual(events.compactMap { $0["event"] as? String },
+            ["touchDown", "touchMove", "touchUp", "touchDown", "touchMove", "touchMove", "touchCancel"])
+        XCTAssertEqual(events.compactMap { $0["pageX"] as? Double }, [0, 500, 500, 500, 40, 60, 60])
+        host.destroy()
+        await fulfillment(of: [disposed], timeout: 5)
+    }
+
+    func testGlassFallbackDefaultsRespectExplicitZeroAndDarkColors() throws {
+        func decoded(_ values: [String:Any]) throws -> RenderProps { try JSONDecoder().decode(RenderProps.self, from:JSONSerialization.data(withJSONObject:values)) }
+        let defaults = try decoded(["glassEffect":true]).glassFallback(false,nativeGlass:false)
+        XCTAssertEqual(defaults.backgroundColor, "#f2f5facc"); XCTAssertEqual(defaults.opacity, 0.88); XCTAssertEqual(defaults.backgroundBlurRadius, 20)
+        let custom = try decoded(["glassEffect":true,"backgroundColor":"transparent","opacity":0,"backgroundBlurRadius":0]).glassFallback(false,nativeGlass:false)
+        XCTAssertEqual(custom.backgroundColor, "transparent"); XCTAssertEqual(custom.opacity, 0); XCTAssertEqual(custom.backgroundBlurRadius, 0)
+        let dark = try decoded(["glassEffect":true,"dmBackgroundColor":"#123456"]).themed(true).glassFallback(true,nativeGlass:false)
+        XCTAssertEqual(dark.backgroundColor, "#123456")
+        let native = try decoded(["glassEffect":true]).glassFallback(false,nativeGlass:true)
+        XCTAssertNil(native.backgroundColor); XCTAssertNil(native.opacity); XCTAssertNil(native.backgroundBlurRadius)
+    }
+
+    func testBackgroundMaterialChangesAndResetsWithoutBlurringContent() throws {
+        let renderer = IOSRenderer(root:UIView())
+        defer { renderer.clear() }
+        var revision = 0
+        func apply(_ commands:[[String:Any]]) throws {
+            revision += 1
+            try renderer.applyJSON(JSONSerialization.data(withJSONObject:["type":"Commit","revision":revision,"commands":commands]))
+        }
+        try apply([
+            ["type":"CreateNode","nodeId":1,"kind":"View"],
+            ["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":20,"backgroundColor":"#12345680"]],
+            ["type":"InsertChild","nodeId":1,"parentId":0,"index":0],
+            ["type":"CreateNode","nodeId":2,"kind":"Text"],
+            ["type":"SetProps","nodeId":2,"props":["text":"Sharp content"]],
+            ["type":"InsertChild","nodeId":2,"parentId":1,"index":0],
+        ])
+        let view = try XCTUnwrap(renderer.view(for:1) as? UIVisualEffectView)
+        let child = try XCTUnwrap(renderer.view(for:2))
+        let firstEffect = try XCTUnwrap(view.effect as? UIBlurEffect)
+        XCTAssertTrue(child.superview === view.contentView)
+        try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":7]]])
+        XCTAssertNotNil(view.effect as? UIBlurEffect)
+        XCTAssertFalse(view.effect === firstEffect)
+        try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":0]]])
+        XCTAssertNil(view.effect)
+        XCTAssertTrue(child.superview === view.contentView)
+        try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":20]]])
+        XCTAssertNotNil(view.effect as? UIBlurEffect)
+        XCTAssertEqual(view.alpha, 1)
+        try apply([["type":"SetProps","nodeId":1,"props":[:]]])
+        XCTAssertNil(view.effect)
+        XCTAssertTrue(child.superview === view.contentView)
+    }
+
     func testInteractiveGlassSurvivesUnrelatedCommits() throws {
         guard #available(iOS 26.0, *) else { throw XCTSkip("Liquid Glass requires iOS 26") }
         let renderer = IOSRenderer(root: UIView())

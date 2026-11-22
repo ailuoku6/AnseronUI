@@ -1,10 +1,15 @@
 import { AccessibilityShowcase } from './accessibility-showcase.js';
 import { View, Text, RichText, Button, TextInput, ScrollView, Image, Video, definePage, useState } from "@anseronui/ui";
 import { CompositionShowcase } from './composition-showcase.js';
-import type { UIElement, ScrollEvent, TouchEvent, LayoutEvent } from "@anseronui/ui";
+import type { UIElement, ScrollEvent, TouchEvent, LayoutEvent, Style } from "@anseronui/ui";
 import { LayoutShowcase } from "./layout-showcase.js";
 import { AnimationShowcase } from "./animation-showcase.js";
 import { FloatingBall } from "./floating-ball.js";
+
+const backgroundBlurStyles: { panel: Style; clear: Style } = {
+  panel: { width: 220, height: 56, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#ffffff33", backgroundBlurRadius: 20 },
+  clear: { width: 220, height: 56, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#ffffff33", backgroundBlurRadius: 0 },
+};
 
 export function Components(): UIElement {
   const [showAnimation, setShowAnimation] = useState(false);
@@ -24,6 +29,7 @@ export function Components(): UIElement {
   const [touchAction, setTouchAction] = useState<"none" | "pan-y">("pan-y");
   const [stopBubble, setStopBubble] = useState(true);
   const [offset, setOffset] = useState(0);
+  const [backgroundBlurEnabled, setBackgroundBlurEnabled] = useState(true);
   return (
     <View testID="components-root" onLayout={(size: LayoutEvent) => setViewport({ width: size.width, height: size.height })}
       style={{ flexDirection: "column", flexGrow: 1, backgroundColor: "#f3f5fa", overflow: "hidden" }}>
@@ -68,6 +74,18 @@ export function Components(): UIElement {
                 </View>
               </View>
             </View>
+          </View>
+          <View style={{ flexDirection: "column", padding: 14, gap: 10, borderRadius: 12, backgroundColor: "#ffffff", flexShrink: 0 }}>
+            <Text style={{ fontSize: 18, fontWeight: "bold" }}>背景模糊 · 独立样式</Text>
+            <View style={{ height: 80, alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: 10, backgroundColor: "#314c83" }}>
+              <View style={{ position: "absolute", left: 0, top: 0, width: 90, height: 80, backgroundColor: "#c83f66" }} />
+              <View style={{ position: "absolute", left: 90, top: 0, width: 90, height: 80, backgroundColor: "#cf873a" }} />
+              <View style={{ position: "absolute", left: 180, top: 0, width: 90, height: 80, backgroundColor: "#327e70" }} />
+              <View testID="background-blur-panel" style={backgroundBlurEnabled ? backgroundBlurStyles.panel : backgroundBlurStyles.clear}>
+                <Text style={{ color: "#ffffff", fontSize: 14, fontWeight: "bold" }}>文字保持清晰 · 无 glassEffect</Text>
+              </View>
+            </View>
+            <Button testID="background-blur-toggle" title={backgroundBlurEnabled ? "关闭背景模糊" : "开启背景模糊"} onClick={() => setBackgroundBlurEnabled(previous => !previous)} />
           </View>
           <View style={{ flexDirection: "column", padding: 14, gap: 10, borderRadius: 12, backgroundColor: "#ffffff", flexShrink: 0 }}>
             <Text style={{ fontSize: 18, fontWeight: "bold" }}>02 · Button / TextInput</Text>

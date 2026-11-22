@@ -19,7 +19,7 @@ test('host teardown continues after cancellation, plugin and system listener fai
 });
 function fixture(measureText = () => ({ width: 40, height: 32 })) {
   const sent = [], scopes = [], accessibilityEvents = []; let inScope = false;
-  const native = { profile() {}, performance: () => ({ adapterStepMs: 2, uiQueueMs: 1 }), post(worker, message) { sent.push(JSON.parse(message)); }, supportsModule: () => false, invokeView() { assert.equal(inScope, true); return { focused: true }; } };
+  const native = { profile() {}, performance: () => ({ adapterStepMs: 2, uiQueueMs: 1 }), post(worker, message, motionKey, sequence) { sent.push(JSON.parse(message)); return sequence; }, supportsModule: () => false, invokeView() { assert.equal(inScope, true); return { focused: true }; } };
   const { HarmonyHost } = loadETS('HarmonyHost', {
     './HarmonyMedia': {}, './HarmonyAnimation': {}, './HarmonyServices': {}, './HarmonyRadioServices': {}, './HarmonyApplicationServices': {},
     '@kit.ArkUI': { NodeContent: class {}, FontStyle: { Italic: 1, Normal: 0 }, window: { AvoidAreaType: { TYPE_SYSTEM: 0, TYPE_CUTOUT: 1, TYPE_NAVIGATION_INDICATOR: 4 } } },
@@ -33,6 +33,35 @@ function fixture(measureText = () => ({ width: 40, height: 32 })) {
   const host = new HarmonyHost({ abilityInfo: { bundleName: 'org.anseronui.demo' } }, ui, 'test', 'home'); host.worker = 1; host.renderer = 1;
   return { host, native, sent, scopes, measures, accessibilityEvents };
 }
+test('touch bursts retain latest coordinates and contiguous sequences before the worker drains', () => {
+  const { host, native } = fixture(), queued = [];
+  native.post = (_worker, bytes, key, sequence) => {
+    const envelope = JSON.parse(bytes);
+    assert.equal(envelope.sequence, sequence);
+    if (key && queued.at(-1)?.key === key) {
+      envelope.sequence = queued.pop().envelope.sequence;
+    }
+    queued.push({ key, envelope });
+    return envelope.sequence;
+  };
+  const touch = (event, pageX = 0, pointerId = 1, nodeId = 7, targetId = 8) =>
+    host.send({ type: 'NativeEvent', event, nodeId, targetId, pointerId, revision: 1, pageX, touches: [{ pointerId, pageX }] });
+  touch('touchDown');
+  for (let i = 0; i < 500; i++) touch('touchMove', i);
+  touch('touchUp', 499);
+  touch('touchDown'); touch('touchMove', 600);
+  touch('touchMove', 700, 2); touch('touchMove', 800, 2);
+  touch('touchMove', 900, 2, 9); touch('touchMove', 1000, 2, 9, 10);
+  touch('touchCancel', 1000, 2, 9, 10);
+  host.send({ type: 'DestroySurface' });
+  assert.deepEqual(queued.map(item => item.envelope.sequence), Array.from({ length: 10 }, (_, i) => i + 1));
+  assert.deepEqual(queued.map(item => item.envelope.payload.event ?? item.envelope.payload.type),
+    ['touchDown', 'touchMove', 'touchUp', 'touchDown', 'touchMove', 'touchMove', 'touchMove', 'touchMove', 'touchCancel', 'DestroySurface']);
+  assert.equal(queued[1].envelope.payload.pageX, 499);
+  assert.equal(queued[1].envelope.payload.touches[0].pageX, 499);
+  assert.equal(queued[5].envelope.payload.pageX, 800);
+  assert.equal(host.sequence, queued.at(-1).envelope.sequence);
+});
 test('worker-origin ref commands enter the ArkUI instance scope', async () => {
   const f = fixture();
   f.host.invoke({ requestId: 1, module: '__view', method: 'focus', argument: JSON.stringify({ nodeId: 7 }) });
