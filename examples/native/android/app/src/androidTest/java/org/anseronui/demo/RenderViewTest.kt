@@ -81,9 +81,9 @@ class RenderViewTest {
                 ]}""")
                 root.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY))
                 root.layout(0, 0, size, size)
-                fun sample(): Int {
+                fun sample(x:Float = 40f, y:Float = 40f): Int {
                     val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-                    return try { root.draw(android.graphics.Canvas(bitmap)); bitmap.getPixel(size / 2, size / 2) } finally { bitmap.recycle() }
+                    return try { root.draw(android.graphics.Canvas(bitmap)); bitmap.getPixel((x*density).toInt(), (y*density).toInt()) } finally { bitmap.recycle() }
                 }
                 val blurred = sample()
                 assertTrue("Backdrop edge mixes red and blue without glassEffect: $blurred", android.graphics.Color.red(blurred) > 20 && android.graphics.Color.blue(blurred) > 20)
@@ -103,6 +103,10 @@ class RenderViewTest {
                 renderer.applyJson("""{"type":"Commit","revision":6,"commands":[{"type":"SetProps","nodeId":3,"props":{"glassEffect":true,"backgroundColor":"transparent","opacity":1,"backgroundBlurRadius":12}}]}""")
                 val explicitGlass = sample()
                 assertTrue("Explicit business blur still works on every Android version", android.graphics.Color.red(explicitGlass) > 20 && android.graphics.Color.blue(explicitGlass) > 20)
+                renderer.applyJson("""{"type":"Commit","revision":7,"commands":[{"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":20,"borderRadius":40}}]}""")
+                assertEquals("Rounded software blur leaves corners untouched", android.graphics.Color.RED, sample(25f,1f))
+                renderer.applyJson("""{"type":"Commit","revision":8,"commands":[{"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":20}}]}""")
+                assertTrue("Removing radius restores blur at the same corner", android.graphics.Color.blue(sample(25f,1f)) > 0)
             } finally { renderer.clear() }
         } } finally { ui { activity.finish() } }
     }
@@ -160,7 +164,7 @@ class RenderViewTest {
                     {"type":"SetFrame","nodeId":4,"frame":{"x":38,"y":38,"width":4,"height":4}}
                 ]}""")
             }
-            fun pixels(): Pair<Int,Int> {
+            fun pixels(): Triple<Int,Int,Int> {
                 val frame = CountDownLatch(1)
                 ui {
                     assertTrue("Test must exercise a hardware Canvas", root.isHardwareAccelerated)
@@ -181,7 +185,8 @@ class RenderViewTest {
                     assertEquals(android.view.PixelCopy.SUCCESS, result)
                     val density = activity.resources.displayMetrics.density
                     val x = position[0] + (64 * density).toInt()
-                    return Pair(bitmap.getPixel(x + (6 * density).toInt(), position[1] + (49 * density).toInt()), bitmap.getPixel(x, position[1] + (64 * density).toInt()))
+                    return Triple(bitmap.getPixel(x + (6 * density).toInt(), position[1] + (49 * density).toInt()), bitmap.getPixel(x, position[1] + (64 * density).toInt()),
+                        bitmap.getPixel(position[0] + (49*density).toInt(),position[1] + (25*density).toInt()))
                 } finally { bitmap.recycle() }
             }
             val blurred = pixels()
@@ -205,6 +210,17 @@ class RenderViewTest {
                 assertTrue("Probe must actually be drawn", hardwareDraws > 0)
                 assertEquals("Moving only the blur panel reuses the background display list", drawsBeforeMotion, hardwareDraws)
             }
+            ui { renderer.applyJson("""{"type":"Commit","revision":6,"commands":[{"type":"SetProps","nodeId":3,"props":{"backgroundBlurRadius":20,"borderRadius":40}},{"type":"SetFrame","nodeId":3,"frame":{"x":16,"y":16,"width":80,"height":80}}]}""") }
+            assertEquals("GPU blur leaves rounded corners untouched",android.graphics.Color.RED,pixels().third)
+            fun animateRadius(radius:Int) {
+                val finished = CountDownLatch(1)
+                ui { renderer.invoke(3,"animate",JSONObject().put("style",JSONObject().put("borderRadius",radius)).put("options",JSONObject().put("duration",30))) { finished.countDown() } }
+                assertTrue("Corner animation finishes",finished.await(5,TimeUnit.SECONDS))
+            }
+            animateRadius(0)
+            assertTrue("GPU blur uses animated radius instead of declared radius",android.graphics.Color.blue(pixels().third) > 0)
+            animateRadius(40)
+            assertEquals("GPU blur rounds again after animation",android.graphics.Color.RED,pixels().third)
         } finally { ui { if (rendererCreated) renderer.clear(); activity.finish() } }
     }
 

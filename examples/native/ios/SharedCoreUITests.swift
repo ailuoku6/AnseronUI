@@ -18,6 +18,28 @@ final class SharedCoreUITests: XCTestCase {
         XCTAssertTrue(layout.label.contains("90×45"))
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "appearance-source-layout"; shot.lifetime = .keepAlways; add(shot)
     }
+    func testStandaloneBlurRoundedCornersAndToggle() {
+        let app = XCUIApplication(); app.launchArguments += ["--page", "components", "-AppleInterfaceStyle", "Light"]; launch(app)
+        let scroll = app.scrollViews["component-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout:20))
+        let panel = app.descendants(matching:.any)["background-blur-panel"].firstMatch
+        for _ in 0..<6 {
+            if panel.exists && panel.frame.minY >= scroll.frame.minY && panel.frame.maxY <= scroll.frame.maxY { break }
+            scroll.coordinate(withNormalizedOffset:CGVector(dx:0.95,dy:0.8)).press(forDuration:0.05,thenDragTo:scroll.coordinate(withNormalizedOffset:CGVector(dx:0.95,dy:0.4)))
+        }
+        XCTAssertTrue(panel.isHittable)
+        XCTAssertEqual(panel.frame.width,220,accuracy:1)
+        XCTAssertEqual(panel.frame.height,56,accuracy:1)
+        let rounded = XCTAttachment(screenshot:panel.screenshot()); rounded.name = "rounded-background-blur-panel"; rounded.lifetime = .keepAlways; add(rounded)
+        let full = XCTAttachment(screenshot:app.screenshot()); full.name = "rounded-background-blur-page"; full.lifetime = .keepAlways; add(full)
+        let toggle = app.buttons["background-blur-toggle"]
+        toggle.tap()
+        XCTAssertEqual(toggle.label,"开启背景模糊")
+        let clear = XCTAttachment(screenshot:panel.screenshot()); clear.name = "rounded-background-blur-disabled"; clear.lifetime = .keepAlways; add(clear)
+        toggle.tap()
+        XCTAssertEqual(toggle.label,"关闭背景模糊")
+    }
+
     func testSharedPrimitiveButtons() {
         let app = XCUIApplication(); app.launchArguments += ["--page", "components"]; launch(app)
         let toggle = app.buttons["animation-mode-toggle"]

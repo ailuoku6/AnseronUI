@@ -149,6 +149,9 @@ final class AnseronUINodeAnimation: NSObject {
         view.alphaValue = max(0,min(1,v["opacity"]!))
         view.layer?.cornerRadius = max(0,v["borderRadius"]!)
         let radius = CGFloat(max(0,v["borderRadius"]!))
+        MainActor.assumeIsolated {
+            for background in view.subviews.compactMap({ $0 as? DesktopBackgroundBlurView }) { background.updateCornerRadius(radius) }
+        }
         if #available(macOS 26.0, *) {
             for glass in view.subviews.compactMap({ $0 as? NSGlassEffectView }) { glass.cornerRadius = radius }
         }

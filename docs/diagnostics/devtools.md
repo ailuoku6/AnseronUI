@@ -1,112 +1,96 @@
 # AnseronUI DevTools
 
-The panel reuses the React components and original stylesheet of kuikly-devtools 1.0.7.
-The session bar, five tabs, three-column inspector, virtualized trees/logs, request tables,
-property details, search highlighting and copy actions retain the upstream visual implementation.
-See `packages/devtools/ui/UPSTREAM.md` for provenance and adaptations.
+在电脑的浏览器里查看正在运行的 Debug 应用。业务代码不用导入或注册 DevTools。
 
-## Start
+面板是本机的 Node 服务，默认地址是 `http://127.0.0.1:8091/__anseronui_devtools`。Debug 应用大约每秒把页面、组件、日志、网络和原生调用发到 `http://127.0.0.1:8091/__anseronui_devtools/ingest`。服务没开时，应用照常运行，面板里没有会话。
 
-Generated applications need no business-code imports or registration:
+`npm run ios` 和 `npm run android` 是 Debug 构建，会带上检查器。带 `--release` 的构建，以及 `build:ios:release`、`build:android:release`，不会上报。改过上报地址后要重新构建，地址在编译 Core 时写入。
+
+## 调试 iOS 模拟器或 Android
+
+在应用目录开两个终端。
+
+先启动面板，并保持这个命令运行：
 
 ```sh
-anseronui dev web
+npm run dev:web
 ```
 
-Open `http://127.0.0.1:8091/__anseronui_devtools` in a desktop-width browser window.
-The CLI installs the Vite development plugin automatically. For a custom Vite config:
+终端会打印面板地址。在桌面宽度的浏览器打开：
+
+```text
+http://127.0.0.1:8091/__anseronui_devtools
+```
+
+再启动要调试的平台：
+
+```sh
+npm run ios
+npm run android
+```
+
+iOS 模拟器和这台 Mac 共用 `127.0.0.1`，所以模拟器能直接连上面的面板。`npm run android` 会执行 `adb reverse tcp:8091 tcp:8091`。模拟器或 USB 连接的设备访问自己的 `127.0.0.1:8091` 时，转到电脑上的面板。
+
+应用打开后，面板的页面列表里出现该会话。点选会话，再看元素、组件、控制台、网络和原生调用。
+
+Android 指定设备：
+
+```sh
+npm run android -- --device <adb序列号>
+```
+
+`npm run ios` 只启动模拟器。iOS 真机见下一节。
+
+## 调试真机
+
+Android 用 USB 连接时，仍用上一节的 `npm run android`。`adb reverse` 对已连接的设备生效。
+
+iOS 真机访问不到电脑的 `127.0.0.1`。在 Debug 构建前指定电脑的局域网地址，并用能从局域网访问的方式启动面板。生成应用的 `npm run dev:web` 只监听 `127.0.0.1`。自定义 Vite 配置：
 
 ```ts
 import { anseronuiDevtools } from 'anseronui/devtools/vite';
-export default defineConfig({ plugins: [anseronuiDevtools()] });
+export default defineConfig({ plugins: [anseronuiDevtools({ host: '0.0.0.0' })] });
 ```
 
-In this repository, run `npm run dev:devtools`. It builds the panel and starts the test app
-at `http://127.0.0.1:5173/` plus the panel at port 8091. Open `?page=counter` and
-`?page=network` in separate tabs to exercise the page selector. The app has buttons for state
-updates, four log levels, a real local HTTP POST, XHR and the device module. Its business
-source does not import DevTools.
+然后重新构建并安装：
 
-The panel reconnects to the SSE stream with exponential backoff (250 ms to 5 s) after a server
-restart or proxy interruption. The service sends a keepalive event every five seconds and drops
-closed sockets safely. The default Vite plugin bind is `127.0.0.1`; set `host: '0.0.0.0'` only
-when a simulator or physical device must reach the service over the local network.
+```sh
+ANSERONUI_DEVTOOLS_ENDPOINT=http://<电脑局域网IP>:8091/__anseronui_devtools/ingest npm run build:ios-device
+```
 
-## Implemented inspection
+真机安装和签名见[构建与运行](../reference/build.md)。没有 adb 的 Android 设备用同样的环境变量执行 `npm run android`。地址必须是 `http://` 或 `https://`。
 
-- **Pages:** live host sessions, selection, independent archives, reconnect/history bootstrap,
-  automatic removal on destruction or expiry, full refresh and configurable sampling.
-- **Elements:** renderer node kinds, parent/child hierarchy, bounds, attributes, computed styles
-  and render props; search retains matching ancestors; expand/collapse and property copying.
-- **Components:** JS runtime component names, hierarchy, props and committed state/reducer/memo
-  hooks. Component identities remain stable across updates. Debug AOT and Wasm builds preserve
-  component names during TSX lowering and report the same Page/component/logical-node hierarchy.
-- **Console:** info/debug/error/print levels, tag and keyword filters, match navigation,
-  follow mode and clearing the displayed records. Debug builds rewrite `console.log/info/debug/warn/error`
-  in business TSX and route them through the shared Core sink, so the same records are available on
-  Web, Wasm, iOS, Android, macOS and HarmonyOS. `console.warn` is shown in the error-level category
-  with its `warn` tag. Logs emitted before the first inspector sample are held in a bounded startup
-  buffer and included in that first snapshot.
-- **Network:** fetch and XHR, method/URL/status/duration, request and response headers/bodies,
-  text/channel filtering, copying payloads and replayable curl. Bodies are capped at 64 KiB;
-  binary fetch responses are labelled. Pending requests update in place.
-- **Native calls:** Web host `InvokeModule` / `ModuleResult` interception, module/method,
-  arguments, result/error and duration, module and keyword filters. HTTP remains in Network.
+## 调试 Web
 
-Screenshots, picking from a screenshot and remote property editing are not implemented yet.
-Their upstream layout is retained with disabled controls and explicit capability messages.
-The Web module bridge is verified with `device.getInfo`. Debug Core builds for Web, iOS, Android,
-macOS and HarmonyOS automatically include the inspector at the shared BusinessRuntime boundary;
-the platform hosts only provide their existing HTTP and timer modules. No business-code import or
-reporter registration is needed. The inspector reads committed Page, component, logical-node,
-props and Hook-state records, then reports network and native-module calls through the same
-transport. Periodic snapshots keep the session alive (one second by default). Surface disposal
-cancels pending inspector requests; native sessions disappear after the server expiry timeout. The files under `packages/devtools/native` remain portable serializers for
-host integrations that do not use the generated AnseronUI Core.
+`npm run dev:web` 同时启动 Web 应用和面板。修改 TSX 后重新 `npm run build:web`，再刷新 Web 页面。面板进程保持运行。
 
-Browser fetch/XHR hooks still belong to a browser realm. Multiple Web hosts in the same window share
-those browser logs/requests since each host mounted; separate tabs have independent realms. Native
-platform logs come from the instrumented Core and are attributed to the active surface. Module calls
-are attributed to the actual host. This limitation does not affect page-specific element trees.
+浏览器里的 fetch 和 XHR 属于该浏览器页面。同一窗口里的多个 Web 宿主共享这些浏览器日志和请求。不同标签页互不影响。这不影响各页面自己的元素树。
 
-## Distribution and production boundary
+## 面板内容
 
-`packages/devtools/ui` is the build-time React source. `npm run build:devtools` produces the
-static panel under `packages/devtools/src/panel`; npm prepack builds it before copying the SDK.
-The assets ship inside the **development SDK**, served by the local Node service. React is a
-repository devDependency; applications do not import it.
+- **页面：** 当前宿主会话。可以选择、刷新，销毁或过期后移除。
+- **元素：** 渲染节点的层级、边界、属性和计算样式。
+- **组件：** 组件名、层级、props，以及已提交的 state、reducer 和 memo。
+- **控制台：** 业务代码里的 `console.log`、`info`、`debug`、`warn` 和 `error`。`console.warn` 出现在 error 分类里，并带有 `warn` 标签。
+- **网络：** 通过框架 HTTP 发出的请求。正文上限 64 KiB。
+- **原生调用：** 模块名、方法、参数、结果或错误、耗时。HTTP 仍在网络页。
 
-The Vite plugin uses `apply: 'serve'`. Production application builds do not inject its virtual
-entry, traverse the client inspector, or copy the panel assets. The Node server is a separate
-`anseronui/devtools/server` export. Normal platform builds and direct `build-core` commands automatically instrument staged Core;
-`anseronui build <platform> --release` (or `ANSERONUI_RELEASE_BUILD=1` for direct Core builds) disables it.
-The Debug/Release mode and endpoint participate in cache identity;
-Release staging sets it to false and reuses no Debug artifact. The generated platform hosts do not
-contain manual reporter code. Native renderer packages have no runtime dependency on the optional
-reporters in production. No inspector traversal is linked into a Release Core.
+面板不提供截图、从截图点选元素，也不能远程改属性。这些控件是禁用的。
 
-For iOS Simulator, Android Emulator, macOS and the HarmonyOS emulator, the inspector posts to
-`http://127.0.0.1:8091/__anseronui_devtools/ingest` by default; the build/run scripts set up the
-appropriate reverse port where the platform requires it. For a physical device, set
-`ANSERONUI_DEVTOOLS_ENDPOINT=http://<host>:8091/__anseronui_devtools/ingest` before the Debug
-build and start the DevTools server with `host: '0.0.0.0'` for LAN access.
-Do not manually import `anseronui/devtools/client` from a production business entry.
+iOS、Android 上的日志来自已插桩的 Core，归到当前页面。原生模块调用归到实际宿主。
 
-## Checks
+## 生产构建
 
-- `npm run build:devtools`: strict panel typecheck and asset build.
-- `npm run typecheck:framework`: framework/client typecheck.
-- `npm run test:devtools`: snapshot ordering, destruction races, clear persistence, component
-  ancestry, curl/header mapping, real HTTP/SSE bootstrap and commands, plus a production build
-  with the plugin configured that rejects debug/client/panel/React modules and signatures.
-- `node --test scripts/npm-package.test.mjs`: actual npm archive, portable SDK and bundled panel.
+Release 构建不包含检查器，也不复用 Debug 产物。不要在生产入口导入 `anseronui/devtools/client`。
 
-The Core log sink is covered by the staged runtime test: a page-level `console.warn` emitted during
-initial render and a `console.info` emitted from a tap both arrive in the snapshot. Native and Wasm
-Core replays, plus Debug builds for iOS Simulator, iOS device, Android, macOS and HarmonyOS, are
-compiled after the same injection is applied.
+服务中断后，面板会重连。只有模拟器或真机需要走局域网时，才把服务绑到 `0.0.0.0`。
 
-The 2026-11-14 browser acceptance covered two real Web pages, component state updates,
-log keyword/level filtering across samples, clear, HTTP/XHR, headers/bodies/curl, device module
-results, 200 ms sampling and panel refresh with archive restoration. The panel had no browser
-console errors; the fixture intentionally emits an error-level log to test filtering.
+## 在本仓库里看面板
+
+```sh
+npm run dev:devtools
+```
+
+测试应用在 `http://127.0.0.1:5173/`，面板仍在 8091。可用 `?page=counter` 和 `?page=network` 切换示例页。
+
+面板界面来自 kuikly-devtools 1.0.7。来源和适配见 `packages/devtools/ui/UPSTREAM.md`。

@@ -107,7 +107,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 canvas.translate((view.left - (view.parent as View).scrollX).toFloat(), (view.top - (view.parent as View).scrollY).toFloat())
                 canvas.concat(view.matrix)
                 if (canvas.quickReject(0f, 0f, view.width.toFloat(), view.height.toFloat(), Canvas.EdgeType.AA)) return
-                val corner = ((record.resolvedProps?.optDouble("borderRadius", 0.0) ?: 0.0) * density).toFloat()
+                val corner = ((record.animation.current["borderRadius"] ?: 0.0).coerceAtLeast(0.0) * density).toFloat()
                 canvas.clipPath(android.graphics.Path().apply { addRoundRect(RectF(0f, 0f, view.width.toFloat(), view.height.toFloat()), corner, corner, android.graphics.Path.Direction.CW) })
                 blur.drawHardware(canvas, (radius * density).toFloat(), view.width, view.height, view.alpha) { output ->
                     recordBackdrop(output, view, drawingTime)
@@ -134,7 +134,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         canvas.translate((view.left - (view.parent as View).scrollX).toFloat(), (view.top - (view.parent as View).scrollY).toFloat())
         canvas.concat(view.matrix)
         val bounds = RectF(0f, 0f, view.width.toFloat(), view.height.toFloat())
-        val corner = ((record.resolvedProps?.optDouble("borderRadius", 0.0) ?: 0.0) * density).toFloat()
+        val corner = ((record.animation.current["borderRadius"] ?: 0.0).coerceAtLeast(0.0) * density).toFloat()
         canvas.clipPath(android.graphics.Path().apply { addRoundRect(bounds, corner, corner, android.graphics.Path.Direction.CW) })
         blur.draw(canvas, (radius * density / sample).toFloat().coerceIn(0.01f, 25f), RectF(-padding * sample, -padding * sample, (width - padding) * sample, (height - padding) * sample), view.alpha)
         canvas.restoreToCount(saved)

@@ -174,10 +174,53 @@ public enum RenderError: Error {
     case wrongThread, invalidRevision, invalidCommit, invalidCommand
 }
 
-private final class TSPrimitiveView: UIVisualEffectView {
-    var fallbackBlurRadius: Double = 0
+final class TSPrimitiveView: UIVisualEffectView {
+    let nodeContent = UIView()
+    private var fallbackBlurRadius: Double = 0
+    private var backgroundBlurView: UIVisualEffectView?
     var activate: (() -> Bool)?
     override func accessibilityActivate() -> Bool { activate?() ?? false }
+    override init(effect:UIVisualEffect?) {
+        super.init(effect:effect)
+        contentView.addSubview(nodeContent)
+    }
+    required init?(coder:NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func setBackgroundBlur(radius: Double) {
+        guard radius > 0 else {
+            backgroundBlurView?.effect = nil
+            backgroundBlurView?.removeFromSuperview()
+            backgroundBlurView = nil; fallbackBlurRadius = 0
+            return
+        }
+        let blur: UIVisualEffectView
+        if let existing = backgroundBlurView { blur = existing }
+        else {
+            blur = UIVisualEffectView(effect:nil)
+            blur.isUserInteractionEnabled = false
+            blur.clipsToBounds = true
+            contentView.insertSubview(blur, belowSubview:nodeContent)
+            backgroundBlurView = blur
+        }
+        if blur.effect == nil || fallbackBlurRadius != radius {
+            blur.effect = UIBlurEffect(style:radius <= 12 ? .systemUltraThinMaterial : .systemMaterial)
+        }
+        fallbackBlurRadius = radius
+        updateBackgroundBlurGeometry()
+    }
+
+    // Round only the background, preserving content overflow and outer shadows.
+    // The animation driver calls this for each presented frame as well as layout.
+    func updateBackgroundBlurGeometry() {
+        nodeContent.frame = bounds
+        backgroundBlurView?.frame = bounds
+        backgroundBlurView?.layer.cornerRadius = layer.cornerRadius
+        backgroundBlurView?.layer.cornerCurve = layer.cornerCurve
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateBackgroundBlurGeometry()
+    }
 }
 
 private final class TSAccessibleLabel: UILabel {
@@ -466,7 +509,7 @@ private final class TouchSession {
             switch command.kind {
             case "View":
                 let effectView = TSPrimitiveView(effect: nil)
-                view = effectView; content = effectView.contentView
+                view = effectView; content = effectView.nodeContent
             case "Text":
                 let label = TSAccessibleLabel(); label.numberOfLines = 0
                 view = label; content = label
@@ -620,12 +663,10 @@ private final class TouchSession {
                 effectView.effect = nil
             }
         }
-        if let effectView = view as? TSPrimitiveView, !nativeGlass || (props.glassEffect != true && props.glassEffectContainer != true) {
-            let radius = props.backgroundBlurRadius ?? 0
-            if radius > 0 {
-                if effectView.effect == nil || effectView.fallbackBlurRadius != radius { effectView.effect = UIBlurEffect(style: radius <= 12 ? .systemUltraThinMaterial : .systemMaterial) }
-            } else { effectView.effect = nil }
-            effectView.fallbackBlurRadius = radius
+        if let effectView = view as? TSPrimitiveView {
+            let usesFallback = !nativeGlass || (props.glassEffect != true && props.glassEffectContainer != true)
+            if usesFallback { effectView.effect = nil }
+            effectView.setBackgroundBlur(radius:usesFallback ? (props.backgroundBlurRadius ?? 0) : 0)
         }
         record.pageBackgroundColor = backgroundColor
         if let json = props.animation {

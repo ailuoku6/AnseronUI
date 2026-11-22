@@ -79,9 +79,13 @@ export async function verifyStyles(): Promise<void> {
     assert(card.style.backgroundColor === 'rgba(0, 0, 0, 0)' && card.style.opacity === '1' && card.style.backdropFilter === 'none','containers do not add double frosting');
     renderer.apply(9,[{type:'SetProps',nodeId:1,props:{}}]);
     assert(card.style.opacity === '1' && card.style.backdropFilter === 'none','removing glass resets fallback');
-    renderer.apply(10,[{type:'SetProps',nodeId:1,props:{backgroundBlurRadius:18}}]);
+    renderer.apply(10,[{type:'SetProps',nodeId:1,props:{backgroundBlurRadius:18,borderRadius:16,shadowOpacity:0.4,shadowRadius:8}}]);
     assert(card.style.backdropFilter === 'blur(18px)' && card.style.getPropertyValue('-webkit-backdrop-filter') === 'blur(18px)','standalone background blur works without glass');
     assert(card.style.opacity === '1' && card.style.backgroundColor === 'rgba(0, 0, 0, 0)','standalone blur adds no fallback color or opacity');
+    assert(getComputedStyle(card).borderRadius === '16px' && getComputedStyle(card).overflow === 'visible','rounded backdrop preserves business content overflow');
+    assert(card.style.boxShadow !== 'none','rounded blur preserves outer shadow');
+    await renderer.invoke(1,'animate',{style:{borderRadius:28},options:{duration:30}});
+    assert(getComputedStyle(card).borderRadius === '28px' && card.style.backdropFilter === 'blur(18px)','background blur and corner animation share the same element');
     assert((text.style.filter === '' || text.style.filter === 'none') && (text.style.backdropFilter === '' || text.style.backdropFilter === 'none'),'foreground text stays unfiltered');
     renderer.apply(11,[{type:'SetProps',nodeId:1,props:{backgroundBlurRadius:0}}]);
     assert(card.style.backdropFilter === 'none','standalone zero closes blur');

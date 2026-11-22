@@ -130,6 +130,12 @@ internal class NodeAnimation(private val view: View) : Choreographer.FrameCallba
         view.scaleX = v.getValue("scaleX").toFloat(); view.scaleY = v.getValue("scaleY").toFloat(); view.rotation = v.getValue("rotate").toFloat()
         val color = Color.argb((v.getValue("a")*255).roundToInt().coerceIn(0,255),v.getValue("r").roundToInt().coerceIn(0,255),v.getValue("g").roundToInt().coerceIn(0,255),v.getValue("b").roundToInt().coerceIn(0,255))
         val background = view.background as? GradientDrawable ?: GradientDrawable().also { view.background = it }
-        background.setColor(color); background.cornerRadius = (max(0.0,v.getValue("borderRadius"))*density).toFloat()
+        background.setColor(color)
+        val corner = (max(0.0,v.getValue("borderRadius"))*density).toFloat()
+        if (background.cornerRadius != corner) {
+            background.cornerRadius = corner
+            // Backdrop clipping is drawn by the parent, outside this display list.
+            (view.parent as? View)?.invalidate()
+        }
     }
 }

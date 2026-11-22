@@ -1,5 +1,9 @@
 # 变更与验证
 
+## 2026-11-22
+
+- `docs/diagnostics/devtools.md` 改为中文，并把 iOS 模拟器、Android 和真机的调试步骤写在前面。
+
 ## 2026-11-20 入门
 
 - 删除 `docs/getting-started/app-development.md`。新增快速开始和编写页面。

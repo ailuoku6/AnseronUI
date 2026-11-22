@@ -11,6 +11,29 @@ import AVKit
     public required init?(coder:NSCoder) { super.init(coder:coder); autoresizesSubviews = false }
 }
 
+// Keep material clipping independent of business content overflow and shadows.
+@MainActor final class DesktopBackgroundBlurView: FlippedView {
+    let effectView = NSVisualEffectView()
+    let contentView = FlippedView()
+    override init(frame:NSRect) {
+        super.init(frame:frame)
+        clipsToBounds = false; contentView.clipsToBounds = false
+        effectView.blendingMode = .withinWindow; effectView.state = .active
+        effectView.wantsLayer = true
+        effectView.clipsToBounds = true; effectView.layer?.masksToBounds = true
+        for child in [effectView,contentView] {
+            child.frame = bounds; child.autoresizingMask = [.width,.height]
+            addSubview(child)
+        }
+        autoresizesSubviews = true
+    }
+    required init?(coder:NSCoder) { fatalError("init(coder:) is unavailable") }
+    func updateCornerRadius(_ radius:CGFloat) {
+        effectView.layer?.cornerRadius = radius
+        effectView.clipsToBounds = true; effectView.layer?.masksToBounds = true
+    }
+}
+
 private final class DesktopScrollView: NSScrollView {
     var allowsScroll = true
     override func scrollWheel(with event: NSEvent) { if allowsScroll { super.scrollWheel(with:event) } }
@@ -405,25 +428,20 @@ private final class DesktopScrollView: NSScrollView {
             return
         }
         if !nativeGlass || (props.glassEffect != true && props.glassEffectContainer != true) {
-            if let effect = r.glassHost as? NSVisualEffectView {
-                effect.material = (props.backgroundBlurRadius ?? 0) <= 12 ? .underWindowBackground : .contentBackground
-                effect.layer?.cornerRadius = props.borderRadius ?? 0
+            if let host = r.glassHost as? DesktopBackgroundBlurView {
+                host.effectView.material = (props.backgroundBlurRadius ?? 0) <= 12 ? .underWindowBackground : .contentBackground
                 return
             }
-            let effect = NSVisualEffectView(frame: r.view.bounds)
-            effect.blendingMode = .withinWindow; effect.state = .active
-            effect.material = (props.backgroundBlurRadius ?? 0) <= 12 ? .underWindowBackground : .contentBackground
-            effect.autoresizingMask = [.width, .height]
-            effect.wantsLayer = true; effect.layer?.cornerRadius = props.borderRadius ?? 0
-            let contentView = FlippedView(frame:r.view.bounds)
-            contentView.autoresizingMask = [.width, .height]
-            effect.addSubview(contentView)
+            let host = DesktopBackgroundBlurView(frame:r.view.bounds)
+            host.effectView.material = (props.backgroundBlurRadius ?? 0) <= 12 ? .underWindowBackground : .contentBackground
+            host.autoresizingMask = [.width,.height]
+            let contentView = host.contentView
             let old = r.glassHost
             let children = r.glassContent?.subviews ?? r.view.subviews.filter { $0 !== old }
-            r.view.addSubview(effect)
+            r.view.addSubview(host)
             for child in children { contentView.addSubview(child) }
             old?.removeFromSuperview()
-            r.glassHost = effect; r.glassContent = contentView; r.content = contentView
+            r.glassHost = host; r.glassContent = contentView; r.content = contentView
             return
         }
         guard #available(macOS 26.0, *) else { return }

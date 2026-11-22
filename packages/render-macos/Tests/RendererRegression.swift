@@ -256,6 +256,17 @@ import AVKit
         let materialRoot = materialFixture.root.subviews.first!
         Integration.check(Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView },"background material is installed")
         Integration.check(Integration.descendants(materialRoot).contains(materialChild),"material retains content in flipped coordinates")
+        let backdrop = materialRoot.subviews.compactMap { $0 as? DesktopBackgroundBlurView }.first!
+        Integration.check(backdrop.effectView.layer?.cornerRadius == 12 && backdrop.effectView.layer?.masksToBounds == true,"material clips its own rounded background")
+        Integration.check(!backdrop.clipsToBounds && !backdrop.contentView.clipsToBounds && Integration.descendants(backdrop.contentView).contains(materialChild),"material does not clip business overflow")
+        var rounded = false
+        _ = try materialFixture.renderer.invoke(nodeId:1,method:"animate",args:["style":["borderRadius":28],"options":["duration":30]]) { _ in rounded = true }
+        Integration.wait("material corner animation finishes") { rounded }
+        Integration.check(backdrop.effectView.layer?.cornerRadius == 28,"material tracks the presented radius after imperative animation")
+        try materialFixture.apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":20,"borderRadius":20,"shadowOpacity":0.4]],
+            ["type":"SetFrame","nodeId":1,"frame":["x":0,"y":0,"width":220,"height":56]]])
+        Integration.check(backdrop.effectView.layer?.cornerRadius == 20 && backdrop.effectView.frame.size == materialRoot.bounds.size,"material follows changed radius and dimensions")
+        Integration.check(materialRoot.layer?.masksToBounds == false && materialRoot.layer?.shadowOpacity == 0.4,"rounded blur keeps outer shadows")
         try materialFixture.apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":0]]])
         Integration.check(!Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView } && Integration.descendants(materialRoot).contains(materialChild),"zero blur removes material and retains child")
         try materialFixture.apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":7]]])

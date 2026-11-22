@@ -151,22 +151,74 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
             ["type":"SetProps","nodeId":2,"props":["text":"Sharp content"]],
             ["type":"InsertChild","nodeId":2,"parentId":1,"index":0],
         ])
-        let view = try XCTUnwrap(renderer.view(for:1) as? UIVisualEffectView)
+        let view = try XCTUnwrap(renderer.view(for:1) as? TSPrimitiveView)
         let child = try XCTUnwrap(renderer.view(for:2))
-        let firstEffect = try XCTUnwrap(view.effect as? UIBlurEffect)
-        XCTAssertTrue(child.superview === view.contentView)
+        let blur = try XCTUnwrap(view.contentView.subviews.compactMap { $0 as? UIVisualEffectView }.first)
+        let firstEffect = try XCTUnwrap(blur.effect as? UIBlurEffect)
+        XCTAssertTrue(child.superview === view.nodeContent)
         try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":7]]])
-        XCTAssertNotNil(view.effect as? UIBlurEffect)
-        XCTAssertFalse(view.effect === firstEffect)
+        XCTAssertNotNil(blur.effect as? UIBlurEffect)
+        XCTAssertFalse(blur.effect === firstEffect)
         try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":0]]])
-        XCTAssertNil(view.effect)
-        XCTAssertTrue(child.superview === view.contentView)
+        XCTAssertNil(blur.effect)
+        XCTAssertTrue(child.superview === view.nodeContent)
         try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":20]]])
-        XCTAssertNotNil(view.effect as? UIBlurEffect)
+        let reenabled = try XCTUnwrap(view.contentView.subviews.compactMap { $0 as? UIVisualEffectView }.first)
+        XCTAssertNotNil(reenabled.effect as? UIBlurEffect)
         XCTAssertEqual(view.alpha, 1)
         try apply([["type":"SetProps","nodeId":1,"props":[:]]])
-        XCTAssertNil(view.effect)
-        XCTAssertTrue(child.superview === view.contentView)
+        XCTAssertNil(reenabled.effect)
+        XCTAssertTrue(child.superview === view.nodeContent)
+    }
+
+    func testBackgroundBlurClipsItsOwnCornersWithoutClippingOverflowOrShadow() async throws {
+        let renderer = IOSRenderer(root:UIView())
+        defer { renderer.clear() }
+        var revision = 0
+        func apply(_ commands:[[String:Any]]) throws {
+            revision += 1
+            try renderer.applyJSON(JSONSerialization.data(withJSONObject:["type":"Commit","revision":revision,"commands":commands]))
+        }
+        try apply([
+            ["type":"CreateNode","nodeId":1,"kind":"View"],
+            ["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":20,"borderRadius":16,"backgroundColor":"#ffffff33","shadowOpacity":0.4]],
+            ["type":"SetFrame","nodeId":1,"frame":["x":20,"y":20,"width":220,"height":56]],
+            ["type":"InsertChild","nodeId":1,"parentId":0,"index":0],
+            ["type":"CreateNode","nodeId":2,"kind":"View"],
+            ["type":"SetFrame","nodeId":2,"frame":["x":-10,"y":0,"width":30,"height":30]],
+            ["type":"InsertChild","nodeId":2,"parentId":1,"index":0],
+        ])
+        let view = try XCTUnwrap(renderer.view(for:1) as? TSPrimitiveView)
+        let blur = try XCTUnwrap(view.contentView.subviews.compactMap { $0 as? UIVisualEffectView }.first)
+        let child = try XCTUnwrap(renderer.view(for:2))
+        XCTAssertTrue(blur.effect is UIBlurEffect)
+        XCTAssertTrue(blur.clipsToBounds)
+        XCTAssertEqual(blur.layer.cornerRadius,16)
+        XCTAssertEqual(blur.frame,view.bounds)
+        XCTAssertFalse(view.clipsToBounds,"Background rounding must preserve overflow and outer shadows")
+        XCTAssertEqual(view.layer.shadowOpacity,0.4)
+        XCTAssertTrue(child.superview === view.nodeContent)
+        XCTAssertTrue(view.contentView.subviews.first === blur)
+        try apply([
+            ["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":20,"borderRadius":24]],
+            ["type":"SetFrame","nodeId":1,"frame":["x":20,"y":20,"width":180,"height":72]],
+        ])
+        XCTAssertEqual(blur.layer.cornerRadius,24)
+        XCTAssertEqual(blur.frame,view.bounds)
+        let animated = expectation(description:"Background corner animation completes")
+        try renderer.invoke(nodeId:1,method:"animate",args:["style":["borderRadius":8],"options":["duration":20]]) { _ in animated.fulfill() }
+        await fulfillment(of:[animated],timeout:2)
+        XCTAssertEqual(blur.layer.cornerRadius,8)
+        // Immediate style updates must also remove a previously declared radius.
+        try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":20]]])
+        XCTAssertEqual(blur.layer.cornerRadius,0)
+        try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":0,"borderRadius":16]]])
+        XCTAssertNil(blur.effect)
+        XCTAssertFalse(view.clipsToBounds)
+        try apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":20,"borderRadius":16,"overflow":"hidden"]]])
+        XCTAssertTrue(view.clipsToBounds)
+        let reenabled = try XCTUnwrap(view.contentView.subviews.compactMap { $0 as? UIVisualEffectView }.first)
+        XCTAssertEqual(reenabled.layer.cornerRadius,16)
     }
 
     func testInteractiveGlassSurvivesUnrelatedCommits() throws {
