@@ -46,8 +46,8 @@ test('staged Core reports committed Page/component/host hierarchy, stable IDs an
   try {
     mkdirSync(join(dir,'pages'));
     writeFileSync(join(dir,'pages/page.tsx'), `import {View,Text,Button,definePage,useState} from '@anseronui/ui';
-function Card(){ const [count,setCount]=useState(0); return <View><Text testID="count">{count}</Text><Button testID="increment" title="increment" onClick={()=>{console.info('count changed',count+1);setCount(count+1)}} /></View>; }
-function Home(){console.warn('page opened');return <View><Card /></View>;}
+function Card({label}:{label:string}){ const [count,setCount]=useState(0); return <View><Text testID="count">{count}</Text><Button testID="increment" title="increment" onClick={()=>{console.info('count changed',count+1);setCount(count+1)}} /></View>; }
+function Home(){console.warn('page opened');return <View><Card label="before" /></View>;}
 export const page=definePage('home',Home);`);
     const config=join(dir,'config.json');
     writeFileSync(config,JSON.stringify({buildId:'debug-test',sourceDirs:[relative(process.cwd(),join(dir,'pages'))],pages:[{name:'home',source:relative(process.cwd(),join(dir,'pages/page.tsx')),export:'page'}]}));
@@ -99,6 +99,68 @@ export const page=definePage('home',Home);`);
     send({type:'ModuleResult',requestId:timer.requestId,ok:true,value:''});await settle();
     const next=snapshot.nodes.find((n:any)=>n.component==='Card');assert.equal(next.id,card.id);assert.equal(next.state['state[0]'],1);
     assert.ok(snapshot.logs.some((log:any)=>log.level==='info'&&log.args.join(' ')==='count changed 1'));
+    const surface=(runtime as any).surfaces.get(1);
+    const execute=(command:any)=>(runtime as any).devtoolsCommand(surface,{...command,expiresAt:Date.now()+9000});
+    const buttonComponent=snapshot.nodes.find((n:any)=>n.component==='Button');assert.ok(buttonComponent);
+    const schema=await execute({type:'inspectProps',id:buttonComponent.id});
+    assert.ok((await execute({type:'inspectProps',id:button.id})).properties.some((p:any)=>p.key==='width'));
+    assert.ok(schema.properties.some((p:any)=>p.key==='title'));
+    const edit=execute({type:'set',id:buttonComponent.id,target:'p',key:'title',value:'remote title',schemaToken:schema.schemaToken});
+    await settle();assert.equal((await edit).value,'remote title');
+    assert.ok((runtime as any).devtoolsNodes(surface).some((n:any)=>n.id>0&&n.props.text==='remote title'),'component receives edited props during render');
+    const style=execute({type:'set',id:button.id,target:'p',key:'width',value:180});
+    await settle();assert.equal((await style).value,180);
+    const props=execute({type:'set',id:card.id,target:'p',key:'label',value:'after'});
+    await settle();assert.equal((await props).value,'after');
+    const state=execute({type:'set',id:card.id,target:'s',key:'state[0]',value:8});
+    await settle();assert.equal((await state).value,8);
+    await assert.rejects(execute({type:'set',id:button.id,target:'p',key:'onClick',value:'bad'}),/INVALID_PROPERTY_VALUE/);
+    await assert.rejects(execute({type:'set',id:button.id,target:'p',key:'width',value:-10}),/INVALID_PROPERTY_VALUE/);
+    await assert.rejects(execute({type:'set',id:button.id,target:'p',key:'width',value:'wrong'}),/INVALID_PROPERTY_VALUE/);
+    await assert.rejects(execute({type:'set',id:buttonComponent.id,target:'p',key:'title',value:'stale',schemaToken:'old'}),/STALE_SCHEMA/);
+    await assert.rejects(execute({type:'set',id:999,target:'p',key:'title',value:'gone'}),/UNKNOWN_NODE/);
+    await assert.rejects((runtime as any).devtoolsCommand(surface,{type:'set',id:button.id,expiresAt:Date.now()-1}),/COMMAND_EXPIRED/);
+    // A failed render rejects and removes the temporary override, then the
+    // original component can render again instead of remaining poisoned.
+    const failed=execute({type:'set',id:buttonComponent.id,target:'p',key:'title',value:'must roll back'});
+    (runtime as any).devtoolsDiagnostic(1,'RENDER_ERROR','fixture render failure');
+    await assert.rejects(failed,/RENDER_ERROR/);
+    await settle();
+    assert.equal((runtime as any).devtoolsNodes(surface).find((n:any)=>n.id===buttonComponent.id).props.title,'remote title');
+    const invoke=(runtime as any).invokeModule;
+    const image='data:image/png;base64,'+'A'.repeat(70000);
+    const offsets:number[]=[];
+    (runtime as any).invokeModule=async (_s:any,_o:any,module:string,method:string,arg:string)=>{
+      assert.equal(module,'__devtools');assert.equal(method,'capture');
+      const {offset}=JSON.parse(arg);offsets.push(offset);
+      return JSON.stringify({chunk:image.slice(offset,offset+24000),next:offset+24000<image.length?offset+24000:0,ox:0,oy:0,ow:320,oh:480});
+    };
+    await execute({type:'shot',id:0,sample:2});
+    const captured=(runtime as any).devtoolsSessions.get(1).screenshot;
+    assert.equal(captured.data,image);assert.equal(captured.ow,320);assert.equal(captured.sample,2);
+    assert.deepEqual(offsets,[0,24000,48000]);
+    // Hosts that crop the page (Harmony) need visual page coordinates rather
+    // than the layout rectangle of a child inside scrolled content.
+    const captureNode=(runtime as any).devtoolsNodes(surface).find((n:any)=>n.id===button.id);
+    const captureParent=(runtime as any).devtoolsNodes(surface).find((n:any)=>n.id===captureNode.parentId);
+    (runtime as any).devtoolsScroll.set(1,new Map([[captureParent.id,[0,120]]]));
+    (runtime as any).invokeModule=async (_s:any,_o:any,_m:string,_method:string,arg:string)=>{
+      const {rect}=JSON.parse(arg);assert.equal(rect.y,captureNode.rect.y-120);
+      return JSON.stringify({chunk:image.slice(0,20),next:0,ox:rect.x,oy:rect.y,ow:rect.width,oh:rect.height});
+    };
+    await execute({type:'shot',id:button.id});
+    (runtime as any).devtoolsScroll.clear();
+    (runtime as any).invokeModule=async()=>{throw new Error('CAPTURE_FAILED');};
+    await assert.rejects(execute({type:'shot',id:0}),/CAPTURE_FAILED/);
+    assert.match((runtime as any).devtoolsSessions.get(1).screenshot.err,/CAPTURE_FAILED/);
+    (runtime as any).invokeModule=invoke;
+    // Re-rendering after a real Hook event retains the scoped prop/style overrides.
+    send({type:'Tap',nodeId:button.id,revision});await settle();
+    const live=(runtime as any).devtoolsNodes(surface);
+    assert.equal(live.find((n:any)=>n.id===card.id).state['state[0]'],9);
+    assert.equal(live.find((n:any)=>n.id===buttonComponent.id).props.title,'remote title');
+    assert.equal(live.find((n:any)=>n.id===button.id).rect.width,180);
+
     send({type:'DestroySurface'});await settle();assert.equal((runtime as any).devtoolsSessions.size,0);
     assert.equal((runtime as any).devtoolsCalls.size,0);runtime.dispose();
   } finally {rmSync(dir,{recursive:true,force:true});}

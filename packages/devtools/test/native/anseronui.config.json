@@ -1,0 +1,6 @@
+{
+  "buildId": "anseronui-demo",
+  "sourceDirs": ["packages/devtools/test/native"],
+  "pages": [{"name":"devtools-native","source":"packages/devtools/test/native/page.tsx","export":"nativeCapturePage"}],
+  "harmony": {"initialPage":"devtools-native","showPageTabs":false}
+}

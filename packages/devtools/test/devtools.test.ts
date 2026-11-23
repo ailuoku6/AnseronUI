@@ -50,7 +50,8 @@ test('server serves bundled UI, hydrates SSE history, validates and delivers com
   assert.equal((await post('/api/command',{pagerId:'page-a',command:{type:'sample',value:10}})).status,400);
   assert.equal((await post('/api/command',{pagerId:'page-a',command:{type:'shot'}})).status,400);
   assert.equal((await post('/api/command',{pagerId:'page-a',command:{type:'sample',value:200}})).status,200);
-  assert.deepEqual((await (await post('/ingest',snapshot({seq:2}))).json()).commands,[{type:'sample',value:200}]);
+  const [queued] = (await (await post('/ingest',snapshot({seq:2}))).json()).commands;
+  assert.equal(queued.type,'sample'); assert.equal(queued.value,200); assert.ok(queued.requestId); assert.ok(queued.expiresAt > Date.now());
   assert.deepEqual((await (await post('/ingest',snapshot({seq:3}))).json()).commands,[]);
  }finally{await server.close();}
 });

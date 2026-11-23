@@ -26,6 +26,9 @@ import AVKit
             try RendererRegression.run()
             return
         }
+        #if DEBUG
+        if CommandLine.arguments.contains("--devtools-regression") { try RendererRegression.devtoolsCapture(); return }
+        #endif
         let window = NSWindow(contentRect:NSRect(x:0,y:0,width:640,height:600),styleMask:[.titled,.resizable],backing:.buffered,defer:false)
         let view = AnseronUIRenderView(frame:window.contentView!.bounds,baseURL:URL(string:"http://127.0.0.1:5174"),extensions:demoExtensions())
         view.autoresizingMask = [.width,.height]; window.contentView!.addSubview(view)

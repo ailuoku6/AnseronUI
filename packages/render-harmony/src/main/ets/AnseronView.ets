@@ -89,6 +89,9 @@ export struct AnseronView {
       Stack({ alignContent: Alignment.TopStart }) {
         ForEach(this.routes.filter(route => route.host !== null), (route: HarmonyRoute) => {
           Stack({ alignContent: Alignment.TopStart }) { ContentSlot((route.host as HarmonyHost).content) }
+            // ANSERONUI_DEVTOOLS_BEGIN
+            .id((route.host as HarmonyHost).devtoolsRootId)
+            // ANSERONUI_DEVTOOLS_END
             .width('100%').height('100%')
             .visibility(route.id === this.routes[this.routes.length - 1]?.id ? Visibility.Visible : Visibility.Hidden)
         }, (route: HarmonyRoute) => route.id)

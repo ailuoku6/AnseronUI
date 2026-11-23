@@ -363,6 +363,12 @@ class AndroidHost(
         try {
             val module = payload.getString("module"); val method = payload.getString("method")
             val args = decodeNativeJSON(payload.getString("argument"))
+            // ANSERONUI_DEVTOOLS_BEGIN
+            if (module == "__devtools" && method == "capture") {
+                completion(runCatching { renderer.devtoolsCapture(args as JSONObject) })
+                return
+            }
+            // ANSERONUI_DEVTOOLS_END
             val cancel = if (module == "__view") {
                 val request = args as JSONObject
                 renderer.invoke(request.getLong("nodeId"), method, request.opt("args"), completion)

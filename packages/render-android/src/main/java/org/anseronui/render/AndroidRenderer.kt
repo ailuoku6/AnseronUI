@@ -81,6 +81,36 @@ private class NodeRecord(val view: View, val content: ViewGroup?, val kind: Stri
 
 /** Main-thread renderer for the shared protocol's Commit payload. */
 class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlatformExtensions = AndroidPlatformExtensions(), var onEvent: ((RendererEvent) -> Unit)? = null) {
+    // ANSERONUI_DEVTOOLS_BEGIN
+    private var devtoolsImage = ""
+    private var devtoolsImageRect = android.graphics.RectF()
+    fun devtoolsCapture(args: JSONObject): JSONObject {
+        val offset = args.optInt("offset", 0)
+        if (offset == 0) {
+            val id = args.optLong("id", 0)
+            val view = if (id == 0L) root else nodes[id]?.view ?: error("UNKNOWN_NODE")
+            require(view.width > 0 && view.height > 0) { "EMPTY_CAPTURE" }
+            val sample = args.optInt("sample", 1).coerceIn(1, 2)
+            val scale = minOf(1f / sample, 2048f / view.width, 2048f / view.height)
+            val bitmap = android.graphics.Bitmap.createBitmap((view.width * scale).toInt().coerceAtLeast(1), (view.height * scale).toInt().coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = android.graphics.Canvas(bitmap); canvas.scale(scale, scale); view.draw(canvas)
+                val bytes = java.io.ByteArrayOutputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bytes)
+                require(bytes.size() < 1_500_000) { "CAPTURE_TOO_LARGE" }
+                devtoolsImage = "data:image/png;base64," + android.util.Base64.encodeToString(bytes.toByteArray(), android.util.Base64.NO_WRAP)
+                val origin = IntArray(2); root.getLocationInWindow(origin)
+                val point = IntArray(2); view.getLocationInWindow(point)
+                devtoolsImageRect = android.graphics.RectF((point[0]-origin[0])/density, (point[1]-origin[1])/density, view.width/density, view.height/density)
+            } finally { bitmap.recycle() }
+        }
+        require(offset >= 0 && offset < devtoolsImage.length) { "INVALID_CAPTURE_OFFSET" }
+        val end = minOf(offset + 24000, devtoolsImage.length)
+        return JSONObject().put("chunk", devtoolsImage.substring(offset,end)).put("next", if (end < devtoolsImage.length) end else 0)
+            .put("ox", devtoolsImageRect.left).put("oy", devtoolsImageRect.top).put("ow", devtoolsImageRect.right).put("oh", devtoolsImageRect.bottom)
+    }
+    // ANSERONUI_DEVTOOLS_END
+
     /** The first surface child's target background, after a successful commit. */
     var onPageBackgroundColor: ((Int) -> Unit)? = null
     private val nodes = mutableMapOf<Long, NodeRecord>()

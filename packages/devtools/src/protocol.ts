@@ -13,6 +13,8 @@ export type DevtoolsNode = {
   component?: string;
   state?: Record<string, unknown>;
   children: number[];
+  editable?: { p?: Record<string, string>; s?: Record<string, string> };
+  scrollOffset?: [number, number];
 };
 
 export type DevtoolsLog = { seq: number; level: "log" | "info" | "debug" | "warn" | "error"; args: unknown[]; tag?: string; ts: number };
@@ -31,6 +33,8 @@ export type DevtoolsSnapshot = {
   network?: DevtoolsNetwork[];
   native?: DevtoolsNativeCall[];
   droppedLogs?: number;
+  screenshot?: DevtoolsScreenshot;
+  commandResults?: DevtoolsCommandResult[];
   platform?: "web" | "ios" | "android" | "macos" | "harmony";
   seq?: number;
   destroyed?: boolean;
@@ -50,3 +54,7 @@ export type DevtoolsSessionSummary = {
   lastSeenAt: number;
   stale: boolean;
 };
+
+export type DevtoolsScreenshot = { id: number; ts: number; sample: number; data?: string; err?: string; ox?: number; oy?: number; ow?: number; oh?: number; live?: boolean };
+export type DevtoolsCommand = { type: string; requestId?: string; expiresAt?: number; id?: number; value?: unknown; target?: string; key?: string; schemaToken?: string; sample?: number; on?: boolean; interval?: number };
+export type DevtoolsCommandResult = { requestId: string; ok: boolean; error?: string; [key: string]: unknown };

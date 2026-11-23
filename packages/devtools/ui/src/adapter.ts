@@ -5,13 +5,13 @@ export function adaptSnapshot(s: DevtoolsSnapshot): FullSessionState {
   const nodes: NodeDto[] = (s.nodes ?? []).map((n, ci) => ({
     id: n.id, pid: n.parentId === 0 ? -1 : n.parentId, ci,
     n: n.component || n.tag, c: n.component || n.tag, r: !n.component, cv: !!n.component,
-    f: [n.rect.x, n.rect.y, n.rect.width, n.rect.height],
+    e:n.editable, so:n.scrollOffset, f: [n.rect.x, n.rect.y, n.rect.width, n.rect.height],
     p: { ...n.styles, ...n.attributes, ...n.props, ...(n.text === undefined ? {} : { text: n.text }) },
     hs: !!n.state && Object.keys(n.state).length > 0, s: n.state,
   }));
   const levels: Record<string, LogLevel> = { log: 'p', info: 'i', debug: 'd', warn: 'e', error: 'e' };
   return {
-    pagerId: s.pagerId, page: s.page ?? '', className: '', platform: s.platform ?? '',
+    screenshot:s.screenshot, pagerId: s.pagerId, page: s.page ?? '', className: '', platform: s.platform ?? '',
     nodeCount: nodes.length, logCount: s.logs?.length ?? 0, networkCount: s.network?.length ?? 0,
     nativeCount: s.native?.length ?? 0, droppedLogs: s.droppedLogs ?? 0,
     sampleMs: s.sampleMs ?? 1000, lastSeenAt: s.ts, firstSeenAt: s.ts,

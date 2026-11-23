@@ -1,3 +1,6 @@
+// ANSERONUI_DEVTOOLS_BEGIN
+import { image } from '@kit.ImageKit';
+// ANSERONUI_DEVTOOLS_END
 import accessibility from '@ohos.accessibility';
 import { cleanup } from './Cleanup';
 import { HarmonyMedia } from './HarmonyMedia';
@@ -25,6 +28,14 @@ import { HarmonyRadioServices, RadioArgs } from './HarmonyRadioServices';
 import { serviceError } from './HarmonyErrors';
 import { systemDateTime } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
+
+// ANSERONUI_DEVTOOLS_BEGIN
+interface DevtoolsCaptureRect { x:number; y:number; width:number; height:number; }
+interface DevtoolsCaptureArgs { id: number; offset: number; sample: number; rect?: DevtoolsCaptureRect; }
+class DevtoolsCaptureResult {
+  chunk: string = ''; next: number = 0; ox: number = 0; oy: number = 0; ow: number = 0; oh: number = 0;
+}
+// ANSERONUI_DEVTOOLS_END
 
 export interface Payload {
   type: string;
@@ -102,6 +113,37 @@ export class HarmonyHost {
   private configListener: (configuration: Configuration) => void = (configuration: Configuration) => { this.setAppearance(configuration.colorMode === 0); };
 
   private transitions: Map<number, AnimationOptions> = new Map();
+  // ANSERONUI_DEVTOOLS_BEGIN
+  readonly devtoolsRootId: string = 'anseronui-shot-' + Date.now() + '-' + Math.random();
+  private devtoolsImage: string = '';
+  private devtoolsRect: DevtoolsCaptureResult = new DevtoolsCaptureResult();
+  private async devtoolsCapture(args: DevtoolsCaptureArgs): Promise<DevtoolsCaptureResult> {
+    const offset = args.offset ?? 0;
+    if (offset === 0) {
+      const pixelMap = await this.ui.getComponentSnapshot().get(this.devtoolsRootId);
+      const packer = image.createImagePacker();
+      try {
+        const info = await pixelMap.getImageInfo();
+        const ratio = info.size.width / this.width;
+        const r = args.id > 0 ? args.rect : undefined;
+        if (r) await pixelMap.crop({x:Math.max(0,Math.round(r.x*ratio)), y:Math.max(0,Math.round(r.y*ratio)), size:{width:Math.min(info.size.width,Math.round(r.width*ratio)),height:Math.min(info.size.height,Math.round(r.height*ratio))}});
+        const scale = Math.min(1 / (args.sample ?? 1), 2048 / info.size.width, 2048 / info.size.height);
+        await pixelMap.scale(scale, scale);
+        const bytes = await packer.packing(pixelMap, {format:'image/png', quality:100});
+        if (bytes.byteLength > 1500000) throw new Error('CAPTURE_TOO_LARGE');
+        this.devtoolsImage = 'data:image/png;base64,' + new util.Base64Helper().encodeToStringSync(new Uint8Array(bytes));
+        this.devtoolsRect.ox = r?.x ?? 0; this.devtoolsRect.oy = r?.y ?? 0;
+        this.devtoolsRect.ow = r?.width ?? this.width; this.devtoolsRect.oh = r?.height ?? this.height;
+      } finally { await pixelMap.release(); await packer.release(); }
+    }
+    if (offset < 0 || offset >= this.devtoolsImage.length) throw new Error('INVALID_CAPTURE_OFFSET');
+    const result = new DevtoolsCaptureResult();
+    result.ox=this.devtoolsRect.ox; result.oy=this.devtoolsRect.oy; result.ow=this.devtoolsRect.ow; result.oh=this.devtoolsRect.oh;
+    result.chunk = this.devtoolsImage.slice(offset,offset+24000);
+    result.next = offset+24000<this.devtoolsImage.length ? offset+24000 : 0;
+    return result;
+  }
+  // ANSERONUI_DEVTOOLS_END
   private renderer: number = 0;
   private sequence: number = 0;
   private outputSequence: number = 0;
@@ -292,6 +334,12 @@ export class HarmonyHost {
       this.send(result);
     };
     try {
+      // ANSERONUI_DEVTOOLS_BEGIN
+      if (p.module === '__devtools' && p.method === 'capture') {
+        this.devtoolsCapture(JSON.parse(p.argument ?? '{}') as DevtoolsCaptureArgs).then(value => complete(true,value)).catch((error: Error) => complete(false,String(error)));
+        return;
+      }
+      // ANSERONUI_DEVTOOLS_END
       if (p.module !== 'events' && p.module !== '__view' && !this.supports(p.module!, p.method!)) throw new Error('UNSUPPORTED: ' + p.module + '.' + p.method);
       const args: ServiceArgs = p.module === 'timer' ? { milliseconds: Number(p.argument) } : p.module === 'http' && p.method === 'getText' ? { url: p.argument } : (JSON.parse(p.argument ?? '{}') ?? {}) as ServiceArgs;
       if (p.module === 'events' && p.method === 'next') {

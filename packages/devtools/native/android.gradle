@@ -1,0 +1,42 @@
+// Generate independent Debug and Release Kotlin inputs. Release does not even
+// compile the capture handler, method names or image buffers (no R8 required).
+afterEvaluate {
+    def sourceRoots = android.sourceSets.main.java.srcDirs.toList()
+    android.sourceSets.main.java.setSrcDirs([])
+    kotlin.sourceSets.getByName("main").kotlin.setSrcDirs([])
+    android.sourceSets.main.kotlin.setSrcDirs([])
+    ['debug', 'release'].each { variant ->
+        def destination = layout.buildDirectory.dir("generated/anseronui/${variant}/java")
+        android.sourceSets.getByName(variant).java.srcDir(destination)
+        kotlin.sourceSets.getByName(variant).kotlin.setSrcDirs([destination])
+        def stage = tasks.register("stageAnseronui${variant.capitalize()}Sources") {
+            inputs.files(sourceRoots.collect { fileTree(it) })
+            inputs.property('variant', variant)
+            outputs.dir(destination)
+            doLast {
+                delete(destination)
+                sourceRoots.each { sourceRoot ->
+                    copy {
+                        from sourceRoot
+                        into destination
+                        if (variant == 'release') {
+                            def inside = false
+                            filter { String line ->
+                                if (line.contains('ANSERONUI_DEVTOOLS_BEGIN')) { inside = true; return null }
+                                if (line.contains('ANSERONUI_DEVTOOLS_END')) { inside = false; return null }
+                                return inside ? null : line
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        tasks.named("pre${variant.capitalize()}Build").configure { dependsOn(stage) }
+        tasks.named("compile${variant.capitalize()}Kotlin").configure {
+            dependsOn(stage)
+            // Kotlin's Android integration retains Java roots when it creates
+            // the compile task. Exclude those captured inputs explicitly.
+            exclude { entry -> sourceRoots.any { original -> entry.file.absolutePath.startsWith(original.absolutePath + File.separator) } }
+        }
+    }
+}

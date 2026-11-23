@@ -419,6 +419,12 @@ private final class CoreWorker {
         }
         do {
             let args = try decodeNativeJSON(argument)
+            #if DEBUG
+            if module == "__devtools", method == "capture" {
+                completion(.success(try renderer.devtoolsCapture(args)))
+                return
+            }
+            #endif
             let cancel: (() -> Void)?
             if module == "__view" {
                 guard let request = args as? [String: Any], let node = request["nodeId"] as? UInt32 else { throw NativeExtensionError.invalidArguments }

@@ -47,7 +47,7 @@ export function buildMacOS({ framework, app, config, core, standalone = false, r
   const frameworks = [...new Set(['AppKit','AVFoundation','AVKit','QuartzCore',...plugins.frameworks])];
   try {
     const icon = generateAppIcons(app, config, 'macos');
-    run('xcrun', ['swiftc','-swift-version','5',...(release ? ['-O'] : ['-Onone']),'-target','arm64-apple-macosx14.0','-sdk',sdk,'-module-cache-path',cache,
+    run('xcrun', ['swiftc','-swift-version','5',...(release ? ['-O'] : ['-Onone','-D','DEBUG']),'-target','arm64-apple-macosx14.0','-sdk',sdk,'-module-cache-path',cache,
       '-I',join(framework,'packages/render-macos/Sources/AnseronUICoreC'),'-parse-as-library',...sources,...plugins.sources,...registry,...hostSources,
       object,join(core,'entry.lib.a'),...frameworks.flatMap(name => ['-framework',name]),...(release ? ['-Xlinker','-S'] : []),'-o',executable]);
     const info = {

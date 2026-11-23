@@ -1,5 +1,5 @@
 import type { DevtoolsSnapshot } from '../../src/protocol';
-import type { DeviceCommand, EditTarget, FullSessionState, PropSchemaResult, NodeDto } from './protocol';
+import type { DeviceCommand, EditTarget, FullSessionState, PropSchemaResult, NodeDto, ScreenshotDto } from './protocol';
 import { adaptSnapshot } from './adapter';
 export type ConnectionState = 'connecting' | 'open' | 'closed';
 export interface SessionView {
@@ -9,14 +9,14 @@ export interface SessionView {
   logs: FullSessionState['logs'];
   network: FullSessionState['network'];
   native: NonNullable<FullSessionState['native']>;
-  screenshot: null;
+  screenshot: ScreenshotDto | null;
 }
 export class DevtoolsStore {
   readonly sessions = new Map<string, SessionView>();
   activePagerId: string | null = null;
   connection: ConnectionState = 'connecting';
   lastError: string | null = null;
-  serverCapabilities: string[] = [];
+  serverCapabilities: string[] = ['propSchemaV1'];
   private version = 0;
   private source?: EventSource;
   private reconnectTimer?: number;
@@ -43,7 +43,7 @@ export class DevtoolsStore {
     const hidden = this.hidden.get(state.pagerId);
     this.sessions.set(state.pagerId, { summary: state, device: state.device, nodes: new Map(state.nodes.map(n => [n.id, n])),
       logs: state.logs.filter(l => !hidden?.logs.has(l.seq)), network: state.network.filter(n => !hidden?.network.has(n.id)),
-      native: (state.native ?? []).filter(n => !hidden?.native.has(n.id)), screenshot: null });
+      native: (state.native ?? []).filter(n => !hidden?.native.has(n.id)), screenshot: state.screenshot ?? null });
   }
   connect() {
     this.disposed = false;
@@ -97,12 +97,20 @@ export class DevtoolsStore {
     if (kind === 'native') state.native?.forEach(l => hidden.native.add(l.id));
     this.hidden.set(id, hidden); this.present(state); this.notify();
   }
-  sendCommand(command: DeviceCommand) {
-    if (!this.activePagerId || !['full', 'sample'].includes(command.type)) return;
-    void fetch('/__anseronui_devtools/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pagerId: this.activePagerId, command }) })
-      .then(async r => { if (!r.ok) throw new Error((await r.json()).error); this.lastError = null; this.notify(); })
-      .catch(error => { this.lastError = String(error); this.notify(); });
+  private async command(command: unknown, pagerId = this.activePagerId): Promise<any> {
+    if (!pagerId) throw new Error('未选择页面');
+    const response = await fetch('/__anseronui_devtools/api/command', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pagerId,command}),signal:AbortSignal.timeout(12000)});
+    const result = await response.json();
+    if (!response.ok || result.ok === false) throw new Error(result.error ?? `HTTP ${response.status}`);
+    return result;
   }
-  queryProps(_id: number, _pagerId?: string): Promise<PropSchemaResult> { return Promise.reject(new Error('此页面暂不支持远程编辑')); }
-  editNode(_id: number, _target: EditTarget, _key: string, _value: unknown, _token?: string, _pagerId?: string): Promise<void> { return Promise.reject(new Error('此页面暂不支持远程编辑')); }
+  sendCommand(command: DeviceCommand) {
+    // Hook state is included in every committed snapshot.
+    if (command.type === 'state') return;
+    void this.command(command).then(() => {this.lastError=null;this.notify();}).catch(error => {this.lastError=String(error);this.notify();});
+  }
+  queryProps(id: number, pagerId?: string): Promise<PropSchemaResult> { return this.command({type:'inspectProps',id},pagerId); }
+  async editNode(id: number, target: EditTarget, key: string, value: unknown, token?: string, pagerId?: string): Promise<void> {
+    await this.command({type:'set',id,target,key,value,schemaToken:token},pagerId);
+  }
 }

@@ -96,6 +96,44 @@ private final class DesktopScrollView: NSScrollView {
 
 /// AppKit is confined to MainActor. All callbacks enqueue protocol values in MacOSHost.
 @MainActor public final class MacOSRenderer: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
+    #if DEBUG
+    private var devtoolsImage = ""
+    private var devtoolsImageRect = CGRect.zero
+    func devtoolsCapture(_ argument: Any) throws -> [String: Any] {
+        guard let args = argument as? [String: Any] else { throw RenderError.invalidCommand }
+        let offset = args["offset"] as? Int ?? 0
+        if offset == 0 {
+            let id = (args["id"] as? NSNumber)?.uint32Value ?? 0
+            let sample = max(1, args["sample"] as? Int ?? 1)
+            guard let view = id == 0 ? root : nodes[id]?.view, view.bounds.width > 0, view.bounds.height > 0 else { throw RenderError.invalidCommand }
+            devtoolsImageRect = view.convert(view.bounds, to: root)
+            let scale = min(1 / CGFloat(sample), min(2048 / view.bounds.width, 2048 / view.bounds.height))
+            let width = max(1, Int(view.bounds.width * scale)), height = max(1, Int(view.bounds.height * scale))
+            view.layoutSubtreeIfNeeded(); view.displayIfNeeded()
+            let data: Data?
+            if let layer = view.layer,
+               let space = CGColorSpace(name: CGColorSpace.sRGB),
+               let context = CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue) {
+                // AppKit's flipped layers use a top-left origin; bitmap contexts
+                // use a bottom-left origin. Preserve screen orientation in PNG.
+                context.translateBy(x:0,y:CGFloat(height))
+                context.scaleBy(x:scale,y:-scale)
+                layer.render(in:context)
+                guard let image = context.makeImage() else { throw RenderError.invalidCommand }
+                data = NSBitmapImageRep(cgImage:image).representation(using:.png,properties:[:])
+            } else if let bitmap = view.bitmapImageRepForCachingDisplay(in:view.bounds) {
+                view.cacheDisplay(in:view.bounds,to:bitmap)
+                data = bitmap.representation(using:.png,properties:[:])
+            } else { throw RenderError.invalidCommand }
+            guard let data, data.count < 1_500_000 else { throw RenderError.invalidCommand }
+            devtoolsImage = "data:image/png;base64," + data.base64EncodedString()
+        }
+        guard offset >= 0, offset < devtoolsImage.count else { throw RenderError.invalidCommand }
+        let end = min(offset + 24000, devtoolsImage.count)
+        return ["chunk": String(devtoolsImage.dropFirst(offset).prefix(end - offset)), "next": end < devtoolsImage.count ? end : 0,
+                "ox": devtoolsImageRect.minX, "oy": devtoolsImageRect.minY, "ow": devtoolsImageRect.width, "oh": devtoolsImageRect.height]
+    }
+    #endif
     public let root: NSView
     public var onEvent: ((RendererEvent) -> Void)?
     public var onPageBackgroundColor: ((NSColor) -> Void)?

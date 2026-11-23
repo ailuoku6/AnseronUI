@@ -106,6 +106,7 @@ export function App({ store }: { store: DevtoolsStore }) {
           stateNodeIds={dumpedStateIds(nodes)}
           onRequestState={requestState}
           onRequestFull={requestFull}
+          canCapture={!!session.summary.capabilities?.includes("shot")}
           screenshot={session.screenshot}
           canSetSupported={store.serverCapabilities.includes('propSchemaV1') && !!session.summary.capabilities?.includes('propSchemaV1')}
           onQueryProps={(id) => store.queryProps(id, session.summary.pagerId)}

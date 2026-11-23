@@ -14,6 +14,7 @@ interface Props extends SupportedPropHandlers {
   onRequestState: (ids: number[]) => void;
   onRequestFull: () => void;
   screenshot: ScreenshotDto | null;
+  canCapture: boolean;
   onCapture: (id: number, sample: number) => void;
   onLive: (on: boolean, sample: number) => void;
 }
@@ -27,6 +28,7 @@ export function ElementsPanel({
   onRequestState,
   onRequestFull,
   screenshot,
+  canCapture,
   onCapture,
   onLive,
   onEdit,
@@ -44,6 +46,11 @@ export function ElementsPanel({
   const selected = selectedId !== null ? nodes.get(selectedId) ?? null : null;
 
   const pickNode = (id: number) => {
+    if (composeOnly) {
+      let component = nodes.get(id);
+      while (component && !component.cv && component.pid !== -1) component = nodes.get(component.pid);
+      if (component?.cv) id = component.id;
+    }
     onSelectedIdChange(id);
     setScrollToId(id);
     setCollapsed((previous) => {
@@ -69,7 +76,7 @@ export function ElementsPanel({
 
   return (
     <div className="panel-body">
-      <ScreenshotPane
+      <ScreenshotPane canCapture={canCapture}
         node={selected}
         nodes={nodes}
         screenshot={screenshot}

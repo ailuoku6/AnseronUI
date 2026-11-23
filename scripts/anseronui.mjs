@@ -14,6 +14,11 @@ const frameworkRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const requestedCommand = process.argv[2] ?? "help";
 const command = ["--help", "-h"].includes(requestedCommand) ? "help" : ["--version", "-v"].includes(requestedCommand) ? "version" : requestedCommand;
 const args = process.argv.slice(3);
+// Component IDs and editable numeric values can be negative. parseArgs treats
+// a separate negative argument as an option, so bind these numeric values.
+if (command === 'inspect') for (let i = 0; i < args.length - 1; i++) {
+  if (['--id', '--value'].includes(args[i]) && /^-(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(args[i + 1])) args.splice(i, 2, args[i] + '=' + args[i + 1]);
+}
 let parsed;
 
 function fail(message) { console.error(`AnseronUI: ${message}`); process.exitCode = 1; }
@@ -105,10 +110,19 @@ function buildApp() {
 try {
   parsed = parseArgs({ args, allowPositionals: true, options: {
     name: { type: 'string' }, 'application-id': { type: 'string' }, config: { type: 'string' },
+    pager: { type: 'string' }, query: { type: 'string' }, q: { type: 'string' }, id: { type: 'string' }, server: { type: 'string' }, port: { type: 'string' }, host: { type: 'string' }, limit: { type: 'string' }, offset: { type: 'string' }, status: { type: 'string' }, level: { type: 'string' }, tag: { type: 'string' }, target: { type: 'string' }, key: { type: 'string' }, value: { type: 'string' },
     device: { type: 'string' }, avd: { type: 'string' },
     package: { type: 'string' }, 'local-framework': { type: 'boolean' }, force: { type: 'boolean' }, 'no-build': { type: 'boolean' }, 'dry-run': { type: 'boolean' }, release: { type: 'boolean' }, signed: { type: 'boolean' },
   } });
   if (command === "version") console.log(json(join(frameworkRoot, "package.json")).version);
+  else if (command === 'inspect') console.log(JSON.stringify(await (await import('./devtools-cli.mjs')).devtoolsCLI(parsed.positionals[0], parsed.values), null, 2));
+  else if (command === 'devtools') {
+    await import('tsx/esm/api').then(({register}) => register());
+    const {startDevtoolsServer} = await import('../packages/devtools/src/server.ts');
+    const service = await startDevtoolsServer({port:Number(parsed.values.port ?? 8091),host:parsed.values.host});
+    console.log(`AnseronUI DevTools: http://127.0.0.1:${service.port}/__anseronui_devtools`);
+    for (const signal of ['SIGINT','SIGTERM']) process.once(signal, () => { void service.close().then(() => process.exit()); });
+  }
   else if (command === "create") createApp();
   else if (command === "integrate") integrateApp();
   else if (command === "check") checkApp();
@@ -129,6 +143,8 @@ try {
   run harmony [--device hdc-target] [--no-build] [--dry-run] [--config path]
   run macos [--no-build] [--dry-run] [--config path]
   dev web [--config path]
+  devtools [--port 8091] [--host 127.0.0.1]
+  inspect <sessions|logs|network|native|nodes|log-detail|network-detail|native-detail|node-detail|props|state|edit|shot> [--pager id] [--query text] [--id id] [--server URL]
   integrate <existing-project> [--name app-name] [--force]
 
 From a generated app: npm run ios / npm run android / npm run macos.

@@ -18,3 +18,5 @@ android {
     }
     kotlinOptions { jvmTarget = '17' }
 }
+
+apply from: file('../devtools/native/android.gradle')

@@ -16,6 +16,7 @@ interface InspectorProps extends SupportedPropHandlers {
 }
 
 interface ScreenshotProps {
+  canCapture: boolean;
   node: NodeDto | null;
   nodes: Map<number, NodeDto>;
   screenshot: ScreenshotDto | null;
@@ -63,10 +64,11 @@ export function ScreenshotPane({
   onSelect,
   onCapture,
   onLive,
+  canCapture,
 }: ScreenshotProps) {
   const [sample, setSample] = useState(LIVE_SHOT_SAMPLE);
   const [live, setLive] = useState(false);
-  const canCapture = false;
+
   const [waiting, setWaiting] = useState(false);
   const [hoverId, setHoverId] = useState<number | null>(null);
   const [tabVisible, setTabVisible] = useState(
@@ -103,9 +105,9 @@ export function ScreenshotPane({
   const liveArmed = live && tabVisible && previewVisible;
 
   useEffect(() => {
-    onLive(liveArmed, sample);
-    return () => onLive(false, sample);
-  }, [liveArmed, sample, onLive]);
+    if (canCapture) onLive(liveArmed, sample);
+    return () => { if (canCapture) onLive(false, sample); };
+  }, [liveArmed, sample, onLive, canCapture]);
 
   useEffect(() => {
     if (!waiting) return undefined;
@@ -148,7 +150,7 @@ export function ScreenshotPane({
 
   const waitingHint = live
     ? liveArmed
-      ? `树变化时更新，最快每 ${LIVE_SHOT_INTERVAL_MS / 1000}s 一次。正在等待首帧…`
+      ? `可见时更新，最快每 ${LIVE_SHOT_INTERVAL_MS / 1000}s 一次。正在等待首帧…`
       : '实时截图已暂停（标签页或预览不可见）。'
     : '开启实时，或手动截取一次。';
 
@@ -158,14 +160,14 @@ export function ScreenshotPane({
         <button
           disabled={!canCapture}
           className={live ? 'active' : ''}
-          title={`树发生变化时截取，最快每 ${LIVE_SHOT_INTERVAL_MS}ms 一次。标签页或预览不可见时会暂停。`}
+          title={`可见时截取，最快每 ${LIVE_SHOT_INTERVAL_MS}ms 一次。标签页或预览不可见时会暂停。`}
           onClick={() => setLive((value) => !value)}
         >
           {live ? `实时 ${LIVE_SHOT_INTERVAL_MS / 1000}s` : '关闭实时'}
         </button>
         <button
           disabled={!canCapture || waiting}
-          title="当前页面未提供截图能力"
+          title="截取当前页面"
           onClick={() => {
             setWaiting(true);
             onCapture(0, sample);
@@ -339,7 +341,7 @@ function NodeInspector({
             该节点没有可调试的状态。
             <br />
             <span style={{ fontSize: 11 }}>
-              成员变量仅对插桩编译的模块中的类可用。
+              组件的 state、reducer 和 memo 来自已提交的 Hooks。
             </span>
           </div>
         ) : !node.s && !node.as ? (
@@ -834,7 +836,7 @@ function AddProperty({ definitions, reason, onCancel, onApply }: {
         dirty.current = false; setKey(e.target.value); setDraft(''); setError('');
       }}>
         <option value="">选择属性…</option>
-        {['基础外观', '布局', '文本'].map((group) => <optgroup key={group} label={group}>
+        {['基础外观', '布局', '文本', '组件'].map((group) => <optgroup key={group} label={group}>
           {definitions.filter((item) => item.group === group && item.key.toLowerCase().includes(query.toLowerCase()))
             .map((item) => <option key={item.key} value={item.key}>{item.key}</option>)}
         </optgroup>)}

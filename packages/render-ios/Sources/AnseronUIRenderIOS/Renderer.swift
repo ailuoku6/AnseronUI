@@ -327,6 +327,32 @@ private final class TouchSession {
 }
 
 @MainActor public final class IOSRenderer: NSObject, UIScrollViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate {
+    #if DEBUG
+    private var devtoolsImage = ""
+    private var devtoolsImageRect = CGRect.zero
+    func devtoolsCapture(_ argument: Any) throws -> [String: Any] {
+        guard let args = argument as? [String: Any] else { throw RenderError.invalidCommand }
+        let offset = args["offset"] as? Int ?? 0
+        if offset == 0 {
+            let id = (args["id"] as? NSNumber)?.uint32Value ?? 0
+            let sample = max(1, args["sample"] as? Int ?? 1)
+            guard let view = id == 0 ? root : nodes[id]?.view, view.bounds.width > 0, view.bounds.height > 0 else { throw RenderError.invalidCommand }
+            devtoolsImageRect = view.convert(view.bounds, to: root)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = min(UIScreen.main.scale / CGFloat(sample), min(2048 / view.bounds.width, 2048 / view.bounds.height))
+            let image = UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { _ in
+                view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
+            }
+            let data = image.pngData()
+            guard let data, data.count < 1_500_000 else { throw RenderError.invalidCommand }
+            devtoolsImage = "data:image/png;base64," + data.base64EncodedString()
+        }
+        guard offset >= 0, offset < devtoolsImage.count else { throw RenderError.invalidCommand }
+        let end = min(offset + 24000, devtoolsImage.count)
+        return ["chunk": String(devtoolsImage.dropFirst(offset).prefix(end - offset)), "next": end < devtoolsImage.count ? end : 0,
+                "ox": devtoolsImageRect.minX, "oy": devtoolsImageRect.minY, "ow": devtoolsImageRect.width, "oh": devtoolsImageRect.height]
+    }
+    #endif
     public let root: UIView
     public var onEvent: ((RendererEvent) -> Void)?
     /// The first surface child's target background, after a successful commit.

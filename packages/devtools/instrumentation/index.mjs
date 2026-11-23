@@ -39,16 +39,30 @@ export function instrumentSource(path, source, options) {
   if (path.endsWith('packages/core/src/business-runtime.ts')) {
     source = rewrite(source, /^/, 'import { __anseronuiDevtoolsClearLogSink, __anseronuiDevtoolsLog, __anseronuiDevtoolsSetActiveSurface, __anseronuiDevtoolsSetLogSink } from "./devtools-log.js";\n');
     source = patch(source, 'private handle(input: Envelope<InputPayload>): void {', 'private handle(input: Envelope<InputPayload>): void {\n    __anseronuiDevtoolsSetActiveSurface(input.surfaceId);');
+    source = patch(source, 'const payload = input.payload;', `const payload = input.payload;
+    if (payload.type === "NativeEvent" && payload.event === "scroll") {
+      let offsets = this.devtoolsScroll.get(input.surfaceId);
+      if (!offsets) { offsets = new Map(); this.devtoolsScroll.set(input.surfaceId, offsets); }
+      offsets.set(payload.nodeId, [payload.x ?? 0, payload.y ?? 0]);
+    }`);
+    source = patch(source, 'private hasEvent(node: HostNode, event: EventKind): boolean {', 'private hasEvent(node: HostNode, event: EventKind): boolean {\n    if (node.kind === "ScrollView" && event === "scroll") return true;');
     source = patch(source, 'type ComponentFrame = {', 'type ComponentFrame = { devtoolsName?: string;');
     source = patch(source, 'type DraftFrame = {', 'type DraftFrame = { devtoolsName?: string;');
     source = rewrite(source, 'path: framePath, component: element.component', 'path: framePath, devtoolsName: element.devtoolsName, component: element.component', true);
     source = patch(source, 'path: frame.path, component: frame.component, props: frame.props,', 'path: frame.path, devtoolsName: frame.devtoolsName, component: frame.component, props: frame.props,');
     source = patch(source, 'surface.revision = revision;', 'surface.revision = revision;\n    this.devtoolsStart(surface);');
+    source = patch(source, 'this.countMetric("commits");', 'this.devtoolsDidCommit(surface);\n    this.countMetric("commits");');
+    source = patch(source, 'const props = element.props;', 'const props = this.devtoolsOverlay(surface, framePath, element.props);');
+    source = patch(source, '() => element.component(element.props)', '() => element.component(props)');
+    source = patch(source, 'const props = element.props as Record<string, unknown>;', 'const props = this.devtoolsOverlay(surface, hostPath, element.props);');
+    source = patch(source, 'if (element.tag === "RichText") {', 'if (element.tag === "Text" && typeof props.text === "string") outputProps.text = props.text;\n    if (element.tag === "RichText") {');
+
     source = patch(source, 'private disposeSurface(surface: Surface): void {', 'private disposeSurface(surface: Surface): void {\n    this.devtoolsStop(surface);');
     source = patch(source, 'this.emit(surface, { type: "InvokeModule", requestId, module, method, argument });', 'this.devtoolsTrace(surface, requestId, module, method, argument, owner);\n    this.emit(surface, { type: "InvokeModule", requestId, module, method, argument });');
     source = patch(source, 'const timer = surface.timers.get(payload.requestId);', 'this.devtoolsResult(surface, payload.requestId, payload.ok, payload.value);\n      const timer = surface.timers.get(payload.requestId);');
     source = patch(source, 'payload: OutputPayload): void {', 'payload: OutputPayload): void {\n    if (payload.type === "Diagnostic") this.devtoolsDiagnostic(surface.id, payload.code, payload.message, payload.stack);');
-    let methods = readFileSync(new URL('./runtime.inc', import.meta.url), 'utf8');
+    let methods = readFileSync(new URL('./runtime.inc', import.meta.url), 'utf8') + readFileSync(new URL('./editing.inc', import.meta.url), 'utf8');
+    methods = methods.replaceAll('__STYLE_NUMBERS__', 'width,height,minWidth,minHeight,maxWidth,maxHeight,flexGrow,flexShrink,flexBasis,gap,rowGap,columnGap,margin,marginTop,marginRight,marginBottom,marginLeft,padding,paddingTop,paddingRight,paddingBottom,paddingLeft,top,right,bottom,left,opacity,fontSize,lineHeight,borderWidth,borderRadius,translateX,translateY,scaleX,scaleY,rotate').replaceAll('__STYLE_STRINGS__', 'backgroundColor,color,borderColor,flexDirection,justifyContent,alignItems,alignSelf,position,visibility,overflow,fontWeight,fontStyle,textAlign,flexWrap');
     methods = methods.replaceAll("'__PLATFORM__'", JSON.stringify(options.platform)).replaceAll("'__PLATFORM__-'", JSON.stringify(options.platform + '-')).replaceAll("'__ENDPOINT__'", JSON.stringify(options.endpoint));
     source = patch(source, 'export class BusinessRuntime {', 'export class BusinessRuntime {\n' + methods);
   }

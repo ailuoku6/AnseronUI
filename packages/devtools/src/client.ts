@@ -1,6 +1,7 @@
 import { BrowserHost } from '@anseronui/render-web';
 import { inspectNodes, safeValue, type InspectableHost } from './inspect.js';
 import type { DevtoolsLog, DevtoolsNativeCall, DevtoolsNetwork, DevtoolsSnapshot } from './protocol.js';
+import { captureDOM } from './screenshot.js';
 import { SnapshotAssembler } from './chunks.js';
 type ClientOptions = {endpoint?: string; pagerId?: string; intervalMs?: number; page?: string};
 const sessions = new WeakMap<object,BrowserDevtoolsSession>();
@@ -74,14 +75,23 @@ export class BrowserDevtoolsSession {
   private pending=new Map<number,DevtoolsNativeCall>();
   private assembler=new SnapshotAssembler();
   private coreSnapshot?:DevtoolsSnapshot;
-  captureCore(argument:string):boolean {
+  private coreCommands: unknown[] = [];
+  private shot?: Awaited<ReturnType<typeof captureDOM>>;
+  async captureShot(argument:string) {
+    const {id=0,sample=1,offset=0} = JSON.parse(argument);
+    if (!offset) this.shot = await captureDOM(this.host.renderer.root,id,sample);
+    if (!this.shot) throw new Error('NO_CAPTURE');
+    const {data,...rect} = this.shot;
+    return {...rect, chunk:data.slice(offset,offset+24000), next:offset+24000<data.length?offset+24000:0};
+  }
+  captureCore(argument:string):string | undefined {
     try {
       const request=JSON.parse(argument);
-      if(!internal(request.url??''))return false;
+      if(!internal(request.url??''))return undefined;
       const snapshot=this.assembler.accept(JSON.parse(request.body));
       if(snapshot)this.coreSnapshot=snapshot;
-      return true;
-    }catch{return false;}
+      return JSON.stringify({status:200,body:JSON.stringify({commands:snapshot?this.coreCommands.splice(0):[]})});
+    }catch{return undefined;}
   }
   private unload=()=>this.dispose();
   constructor(private host:InspectableHost,private options:ClientOptions={}) {
@@ -90,7 +100,7 @@ export class BrowserDevtoolsSession {
   }
   start(){void this.flush();this.timer=window.setInterval(()=>void this.flush(),this.interval);}
   capture(payload: {type:string;requestId?:number;module?:string;method?:string;argument?:string;ok?:boolean;value?:string}) {
-    if(payload.type==='InvokeModule' && payload.module!=='http') {
+    if(payload.type==='InvokeModule' && !['http','timer','events','__devtools'].includes(payload.module??'')) {
       const r:DevtoolsNativeCall={id:this.pagerId+':'+payload.requestId,module:payload.module??'',method:payload.method??'',args:payload.argument,ts:Date.now()};
       this.pending.set(payload.requestId!,r);keep(this.native,r);
     } else if(payload.type==='ModuleResult' || payload.type==='CancelRequest') {
@@ -103,14 +113,20 @@ export class BrowserDevtoolsSession {
     if(this.disposed||this.inFlight)return;this.inFlight=true;
     try {
       const root=this.host.renderer.root;
-      const snapshot:DevtoolsSnapshot={protocol:1,type:'snapshot',pagerId:this.pagerId,page:this.options.page,platform:'web',seq:++this.seq,ts:Date.now(),sampleMs:this.interval,capabilities:['full','sample'],
+      const snapshot:DevtoolsSnapshot={protocol:1,type:'snapshot',pagerId:this.pagerId,page:this.options.page,platform:'web',seq:++this.seq,ts:Date.now(),sampleMs:this.interval,capabilities:this.coreSnapshot?.capabilities??['full','sample'], commandResults:this.coreSnapshot?.commandResults, screenshot:this.coreSnapshot?.screenshot,
         device:{platform:'Web',density:devicePixelRatio,pageWidth:root.clientWidth,pageHeight:root.clientHeight},
-        nodes:this.coreSnapshot?.nodes??inspectNodes(this.host,this.componentIds),logs:logs.filter(l=>l.seq>this.logStart),network:network.filter(n=>n.ts>=this.started),native:this.native,
+        nodes:this.coreSnapshot?.nodes??inspectNodes(this.host,this.componentIds),logs:[...logs.filter(l=>l.seq>this.logStart), ...((this.host.runtime as unknown as {surfaces?: unknown}).surfaces ? [] : (this.coreSnapshot?.logs??[]).map(l=>({...l,seq:-l.seq})))],network:network.filter(n=>n.ts>=this.started),native:this.native,
         stats:{...this.host.runtime.getStats?.(),...this.host.getPerformanceStats?.()}};
+      const bounds=root.getBoundingClientRect();
+      for (const node of snapshot.nodes ?? []) if (node.id > 0) {
+        const element=root.querySelector<HTMLElement>(`[data-tsn-node="${node.id}"]`);
+        if (element) { const box=element.getBoundingClientRect(); node.rect={x:box.left-bounds.left,y:box.top-bounds.top,width:box.width,height:box.height}; node.scrollOffset=undefined; }
+      }
       const response=await transport(this.endpoint(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(snapshot),signal:AbortSignal.timeout(5000)});
       if(!response.ok)return;
       const {commands=[]}=await response.json();
       if (this.disposed) return;
+      this.coreCommands.push(...commands.filter((c: {type:string}) => !['sample','full'].includes(c.type)));
       for(const command of commands) {
         if(command.type==='sample'&&Number.isInteger(command.value)&&command.value>=100&&command.value<=5000){this.interval=command.value;window.clearInterval(this.timer);this.timer=window.setInterval(()=>void this.flush(),this.interval);}
         if(command.type==='full')window.setTimeout(()=>void this.flush(),0);
@@ -134,8 +150,12 @@ export function installBrowserDevtools(options:ClientOptions={}) {
     const session=sessions.get(this);
     // Wasm uses the same injected Core snapshot. Merge it into the browser host
     // session, retaining browser logs/network and avoiding a duplicate page.
-    if(payload.type==='InvokeModule' && payload.module==='http' && session?.captureCore(payload.argument)){
-      this.send({type:'ModuleResult',requestId:payload.requestId,ok:true,value:JSON.stringify({status:200,body:'{"commands":[]}'})});return;
+    if(payload.type==='InvokeModule' && payload.module==='http') {
+      const value = session?.captureCore(payload.argument);
+      if (value) { this.send({type:'ModuleResult',requestId:payload.requestId,ok:true,value}); return; }
+    }
+    if(payload.type==='InvokeModule' && payload.module==='__devtools' && session) {
+      void session.captureShot(payload.argument).then(value => { if(sessions.get(this)===session){this.send({type:'ModuleResult',requestId:payload.requestId,ok:true,value:JSON.stringify(value)});void this.flush();} }, error => {if(sessions.get(this)===session){this.send({type:'ModuleResult',requestId:payload.requestId,ok:false,value:String(error)});void this.flush();}}); return;
     }
     session?.capture(payload);return handle.call(this,payload);
   };

@@ -9,7 +9,7 @@ export const coreSourceDirs = config => [
 
 const buildInputs = [
   "packages/ui-compiler/src/",
-  'packages/devtools/instrumentation/index.mjs', 'packages/devtools/instrumentation/runtime.inc',
+  'packages/devtools/instrumentation/index.mjs', 'packages/devtools/instrumentation/runtime.inc', 'packages/devtools/instrumentation/editing.inc',
   'scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs',
   'scripts/prepare-compiler.mjs', 'internal/toolchain/build-library.mjs',
   'internal/toolchain/async-embedding.patch', 'scripts/harmony-library.mjs', 'internal/toolchain/harmony-api21.patch',
@@ -55,7 +55,7 @@ export function coreFingerprint(root, configPath = 'anseronui.config.json') {
   const configFile = resolve(root, configPath);
   const config = JSON.parse(readFileSync(configFile, 'utf8'));
   const files = new Set([
-    configFile, resolve(root, 'packages/devtools/instrumentation/index.mjs'), resolve(root, 'packages/devtools/instrumentation/runtime.inc'),
+    configFile, resolve(root, 'packages/devtools/instrumentation/index.mjs'), resolve(root, 'packages/devtools/instrumentation/runtime.inc'), resolve(root, 'packages/devtools/instrumentation/editing.inc'),
     ...['scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs',
       'internal/toolchain/build-library.mjs', 'internal/toolchain/async-embedding.patch', 'scripts/harmony-library.mjs', 'internal/toolchain/harmony-api21.patch',
       'packages/core/native/profile.json', 'packages/core/native/framework.profile.json', 'packages/core/native/business.profile.json',

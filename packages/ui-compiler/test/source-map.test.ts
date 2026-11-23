@@ -3,7 +3,6 @@ import { lowerTSX } from '../src/index.js';
 import { originalSource, replaceMapped, sourceMapComment } from '../src/source-map.js';
 // @ts-expect-error Build scripts are JavaScript and run through the pinned tsx loader.
 import { lowerTimers } from '../../../scripts/lower-timers.mjs';
-// @ts-expect-error The instrumentation build script has no declaration file.
 import { instrumentSource } from '../../devtools/instrumentation/index.mjs';
 import { SourceLocations } from '../../../internal/toolchain/scriptc/packages/compiler/src/backend/source-locations.js';
 

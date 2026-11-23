@@ -45,6 +45,50 @@ import AVKit
         view.cacheDisplay(in:view.bounds,to:image)
         return image
     }
+    #if DEBUG
+    static func devtoolsCapture() throws {
+        let f = Fixture(); defer { f.close() }
+        try f.create(1,"View",["backgroundColor":"#ff0000"],NSRect(x:20,y:30,width:120,height:80))
+        try f.create(2,"View",["backgroundColor":"#0000ff"],NSRect(x:0,y:40,width:120,height:40),parent:1)
+        try f.create(3,"View",["backgroundColor":"#00ff00"],NSRect(x:100,y:0,width:20,height:20),parent:1)
+        f.window.makeKeyAndOrderFront(nil); f.root.layoutSubtreeIfNeeded(); f.root.displayIfNeeded()
+        RunLoop.main.run(until:Date(timeIntervalSinceNow:0.1))
+        let packet = try f.renderer.devtoolsCapture(["id":1,"sample":1,"offset":0])
+        Integration.check(packet["ox"] as? CGFloat == 20 && packet["oy"] as? CGFloat == 30,"capture root coordinates")
+        Integration.check(packet["ow"] as? CGFloat == 120 && packet["oh"] as? CGFloat == 80,"capture size")
+        let dataURL = packet["chunk"] as! String
+        Integration.check(dataURL.hasPrefix("data:image/png;base64,"),"capture PNG format")
+        let bytes = Data(base64Encoded:String(dataURL.dropFirst("data:image/png;base64,".count)))!
+        let image = NSBitmapImageRep(data:bytes)!
+        Integration.check(image.pixelsWide == 120 && image.pixelsHigh == 80,"capture bitmap size")
+        let color = image.colorAt(x:30,y:10)!.usingColorSpace(.sRGB)!
+        Integration.check(color.redComponent > 0.9 && color.redComponent > color.greenComponent * 4 && color.blueComponent < 0.1 && color.alphaComponent > 0.9,"capture rendered pixels")
+        let full = try f.renderer.devtoolsCapture(["id":0,"sample":2,"offset":0])
+        Integration.check(full["ow"] as? CGFloat == 500,"capture page root")
+        func capture(_ id:Int,_ sample:Int) throws -> NSBitmapImageRep {
+            var offset = 0, encoded = ""
+            repeat {
+                let packet = try f.renderer.devtoolsCapture(["id":id,"sample":sample,"offset":offset])
+                encoded += packet["chunk"] as! String
+                offset = packet["next"] as! Int
+            } while offset != 0
+            return NSBitmapImageRep(data:Data(base64Encoded:String(encoded.dropFirst("data:image/png;base64,".count)))!)!
+        }
+        for id in [0,1] {
+            for sample in [1,2] {
+                let png = try capture(id,sample)
+                let x = id == 0 ? 20 : 0, y = id == 0 ? 30 : 0
+                let top = png.colorAt(x:(x+30)/sample,y:(y+10)/sample)!.usingColorSpace(.sRGB)!
+                let bottom = png.colorAt(x:(x+30)/sample,y:(y+60)/sample)!.usingColorSpace(.sRGB)!
+                let right = png.colorAt(x:(x+110)/sample,y:(y+10)/sample)!.usingColorSpace(.sRGB)!
+                Integration.check(top.redComponent > 0.9 && top.blueComponent < 0.1,"capture top stays red (id=\(id), sample=\(sample))")
+                Integration.check(bottom.blueComponent > 0.9 && bottom.redComponent < 0.1,"capture bottom stays blue (id=\(id), sample=\(sample))")
+                Integration.check(right.greenComponent > 0.9 && right.redComponent < 0.1,"capture top-right stays green (id=\(id), sample=\(sample))")
+            }
+        }
+        print("PASS: DevTools native PNG orientation, pixels, node/page geometry and sampling")
+    }
+    #endif
     static func run() throws {
         try accessibility()
         try darkStyles()

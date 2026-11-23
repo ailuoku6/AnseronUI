@@ -54,6 +54,11 @@ export function buildHarmony({framework,app,config,core,standalone=false,release
   if(existsSync(join(project,'AppScope/resources/base/media/app_icon_custom.png'))) {metadata.app.icon='$media:app_icon_custom';write(appFile,JSON.stringify(metadata,null,2)+'\n');}
   const ets=join(project,'entry/src/main/ets');
   cpSync(join(framework,'packages/render-harmony/src/main/ets'),join(ets,'anseronui'),{recursive:true});
+  // Release ArkTS inputs contain no capture code, imports or snapshot IDs.
+  if (release) for (const name of ['HarmonyHost.ets','AnseronView.ets']) {
+    const file = join(ets,'anseronui',name);
+    writeFileSync(file,readFileSync(file,'utf8').replace(/^[ \t]*\/\/ ANSERONUI_DEVTOOLS_BEGIN[\s\S]*?^[ \t]*\/\/ ANSERONUI_DEVTOOLS_END\r?\n/gm,''));
+  }
   for (const file of ['ServiceSetup.ets','workability/WorkAbility.ets']) {
     const destination=join(ets,file);
     if (!existsSync(destination)) { mkdirSync(dirname(destination),{recursive:true}); copyFileSync(join(framework,'scripts/templates/app/platforms/harmony/entry/src/main/ets',file),destination); }

@@ -1,4 +1,4 @@
-import type { DevtoolsNetwork, DevtoolsSessionSummary, DevtoolsSnapshot, DevtoolsNode, DevtoolsLog, DevtoolsNativeCall } from "./protocol.js";
+import type { DevtoolsCommand, DevtoolsScreenshot, DevtoolsNetwork, DevtoolsSessionSummary, DevtoolsSnapshot, DevtoolsNode, DevtoolsLog, DevtoolsNativeCall } from "./protocol.js";
 
 const STALE_AFTER_MS = 10_000;
 const MAX_LOGS = 20_000;
@@ -19,7 +19,8 @@ export class DevtoolsSession {
   capabilities: string[] = [];
   device: DevtoolsSnapshot["device"];
   private lastSeq = 0;
-  commands: Array<{type: "full"} | {type: "sample"; value: number}> = [];
+  commands: DevtoolsCommand[] = [];
+  screenshot?: DevtoolsScreenshot;
   diagnostics: { code: string; message: string }[] = [];
 
   constructor(pagerId: string) { this.pagerId = pagerId; }
@@ -30,7 +31,7 @@ export class DevtoolsSession {
   }
   state(): DevtoolsSnapshot & { nodes: DevtoolsNode[]; logs: DevtoolsLog[]; network: DevtoolsNetwork[] } {
     return { protocol: 1, type: "snapshot", pagerId: this.pagerId, page: this.page, ts: this.lastSeenAt,
-      sampleMs: this.sampleMs, capabilities: this.capabilities, device: this.device,
+      screenshot: this.screenshot, sampleMs: this.sampleMs, capabilities: this.capabilities, device: this.device,
       platform: this.platform as DevtoolsSnapshot["platform"], nodes: [...this.nodes.values()], logs: this.logs, network: this.network, native: this.native, stats: this.stats, droppedLogs: this.droppedLogs, diagnostics: this.diagnostics };
   }
   apply(snapshot: DevtoolsSnapshot): void {
@@ -43,6 +44,7 @@ export class DevtoolsSession {
     if (snapshot.page) this.page = snapshot.page;
     if (snapshot.platform) this.platform = snapshot.platform;
     if (snapshot.nodes) this.nodes = new Map(snapshot.nodes.map(node => [node.id, node]));
+    if (snapshot.screenshot) this.screenshot = snapshot.screenshot;
     if (snapshot.stats) this.stats = { ...snapshot.stats };
     if (snapshot.logs?.length) this.logs = [...new Map([...this.logs, ...snapshot.logs].map(l => [l.seq, l])).values()].slice(-MAX_LOGS);
     if (snapshot.network?.length) {

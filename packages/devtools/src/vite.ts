@@ -1,3 +1,5 @@
+import { lowerTSX } from "../../ui-compiler/src/index.js";
+import { instrumentSource } from "../instrumentation/index.mjs";
 import type { Plugin } from "vite";
 import { fileURLToPath } from "node:url";
 import { startDevtoolsServer, type DevtoolsServer } from "./server.js";
@@ -19,6 +21,7 @@ export function anseronuiDevtools(options: { port?: number; host?: string; endpo
   return {
     name: "anseronui-devtools",
     apply: "serve",
+    enforce: "pre",
     async configureServer(server) {
       const previous = registry.get(port);
       const pending = (async () => {
@@ -30,6 +33,13 @@ export function anseronuiDevtools(options: { port?: number; host?: string; endpo
         console.info(`[anseronui-devtools] panel: http://127.0.0.1:${devtools.port}/__anseronui_devtools`);
         server.httpServer?.once("close", () => { void devtools.close(); });
       }).catch(error => console.warn(`[anseronui-devtools] unavailable: ${String(error)}`));
+    },
+    transform(source, id) {
+      const path = id.split('?')[0].replaceAll('\\', '/');
+      if (path.endsWith('.tsx') && !path.includes('/node_modules/')) return {code:lowerTSX(source,path,{devtools:true}).source,map:null};
+      if (!/packages\/(core|ui)\/src\/(business-runtime|index|jsx-runtime)\.ts$/.test(path)) return;
+      const relative = path.slice(path.lastIndexOf('/packages/') + 1);
+      return {code:instrumentSource(relative, source, {enabled:true, platform:'web', endpoint:options.endpoint ?? `http://127.0.0.1:${port}/__anseronui_devtools/ingest`}), map:null};
     },
     resolveId(id) { return id === VIRTUAL_ID ? RESOLVED_ID : undefined; },
     load(id) { return id === RESOLVED_ID ? `import { installBrowserDevtools } from ${JSON.stringify(clientModule)}; installBrowserDevtools({ endpoint: ${JSON.stringify(options.endpoint ?? `http://127.0.0.1:${port}/__anseronui_devtools/ingest`)} });` : undefined; },

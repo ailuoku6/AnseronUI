@@ -26,6 +26,12 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(paths.some(path => /^dist\/sdk\/packages\/devtools\/src\/panel\/assets\/.*\.js$/.test(path)));
     assert.ok(paths.includes('dist/sdk/packages/devtools/src/client.ts'));
     assert.ok(paths.includes('dist/sdk/packages/devtools/src/vite.ts'));
+    for (const path of ['scripts/devtools-cli.mjs', 'packages/devtools/src/server.ts',
+      'packages/devtools/src/commands.ts', 'packages/devtools/src/query.ts',
+      'packages/devtools/instrumentation/index.mjs', 'packages/devtools/instrumentation/runtime.inc',
+      'packages/devtools/instrumentation/editing.inc', 'packages/devtools/native/android.gradle']) {
+      assert.ok(paths.includes('dist/sdk/' + path), `Missing packaged DevTools input: ${path}`);
+    }
     assert.ok(!paths.some(path => path.endsWith('/.DS_Store')));
     for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md',
       'docs/guides/project/app-icons.md', 'docs/guides/ui/styles.md', 'docs/guides/ui/virtual-list.md', 'docs/guides/navigation/page-lifecycle.md',
@@ -58,6 +64,8 @@ test('packed SDK creates a portable app with all native templates and no private
     run('tar', ['-xzf', join(directory, pack.filename), '-C', directory]);
     const manifest = JSON.parse(readFileSync(join(directory, 'package/package.json'), 'utf8'));
     assert.equal(manifest.license, 'MIT');
+    assert.equal(manifest.bin.anseronui, 'dist/sdk/scripts/anseronui.mjs');
+    assert.ok(manifest.dependencies.tsx, 'DevTools server needs a published runtime TS loader');
     assert.equal(manifest.dependencies.pngjs, '7.0.0');
     // This fixture extracts the tarball without npm install. Supply the declared
     // image dependency locally, as npm would, so default icons can be checked offline.
@@ -77,6 +85,8 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(readme.includes(`](${iconDocs})`));
     assert.ok(existsSync(join(directory, 'package', iconDocs.replace('node_modules/anseronui/', ''))));
     assert.ok(readme.includes('docs/platforms/harmonyos.md'));
+    assert.ok(readme.includes('npx anseronui inspect sessions'));
+    assert.ok(readme.includes('node_modules/anseronui/dist/sdk/docs/diagnostics/devtools.md'));
     const config = JSON.parse(readFileSync(join(app, 'anseronui.config.json'), 'utf8'));
     assert.equal(config.schemaVersion, 2);
     assert.equal(config.pages[0].source, 'src/pages/home.tsx');
@@ -86,6 +96,7 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.equal(metadata.dependencies.anseronui, pack.version);
     assert.equal(metadata.scripts.ios, 'anseronui run ios');
     assert.equal(metadata.scripts.harmony, 'anseronui run harmony');
+    assert.equal(metadata.scripts.devtools, 'anseronui devtools');
     assert.ok(existsSync(join(app, 'platforms/harmony/entry/src/main/ets/entryability/EntryAbility.ets')));
     assert.ok(existsSync(join(app, 'platforms/harmony/entry/src/main/ets/workability/WorkAbility.ets')));
     assert.ok(existsSync(join(app, '.gitignore')));

@@ -1,3 +1,4 @@
+  private devtoolsScroll = new Map<number, Map<number, [number,number]>>();
   // Inserted into the staged BusinessRuntime only for Debug builds.
   private devtoolsCalls = new Map<number, Map<number, { id: string; module: string; method: string; args: string; ts: number; durationMs?: number; result?: string; error?: string }>>();
   private devtoolsLogs = new Map<number, Array<{ seq: number; level: string; tag: string; args: string[]; ts: number }>>();
@@ -21,6 +22,10 @@
     if (ok) call.result = value.slice(0, 4096); else call.error = value.slice(0, 4096);
   }
   private devtoolsDiagnostic(id: number, code: string, message: string, stack?: string): void {
+    if (['RENDER_ERROR','LAYOUT_NOT_CONVERGED','COMMIT_FAILED','CORE_ERROR'].includes(code)) {
+      const waiter = this.devtoolsWaiters.get(id);
+      if (waiter) { this.devtoolsWaiters.delete(id); clearTimeout(waiter.timer); waiter.reject(new Error(code + ': ' + message)); }
+    }
     let logs = this.devtoolsLogs.get(id);
     if (!logs) { logs = []; this.devtoolsLogs.set(id, logs); }
     logs.push({ seq: (logs.at(-1)?.seq ?? 0) + 1, level: 'error', tag: code, args: [message.slice(0, 4096), ...(stack ? [stack.slice(0, 32768)] : [])], ts: Date.now() });
@@ -32,7 +37,7 @@
       if (size > 131072) { logs.splice(0, i + 1); break; }
     }
   }
-  private devtoolsSessions = new Map<number, { id: string; owner: ServiceSlot; seq: number; interval: number; ids: Map<string, number>; nextId: number }>();
+  private devtoolsSessions = new Map<number, { id: string; owner: ServiceSlot; seq: number; interval: number; ids: Map<string, number>; nextId: number; results: Array<Record<string, unknown>>; screenshot?: {id:number; ts:number; sample:number; live:boolean; data?:string; err?:string; ox?:number; oy?:number; ow?:number; oh?:number}; live:boolean; sample:number; lastShot:number; shotRevision:number }>();
   private devtoolsValue(value: unknown, depth = 0): unknown {
     if (depth > 4) return '[Depth limit]';
     if (typeof value === 'function') return '[Function]';
@@ -49,19 +54,19 @@
   private devtoolsStart(surface: Surface): void {
     if (this.devtoolsSessions.has(surface.id)) return;
     const session = { id: '__PLATFORM__-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '-' + surface.id,
-      owner: this.newServiceSlot(surface), seq: 0, interval: 1000, ids: new Map<string, number>(), nextId: -3 };
+      owner: this.newServiceSlot(surface), seq: 0, interval: 1000, ids: new Map<string, number>(), nextId: -3, results: [] as Array<Record<string, unknown>>, live:false, sample:2, lastShot:0, shotRevision:-1 };
     this.devtoolsSessions.set(surface.id, session);
     __anseronuiDevtoolsSetLogSink(surface.id, (level, args) => this.devtoolsLogSink(surface, level, args));
     void this.devtoolsPoll(surface);
   }
-  private devtoolsNodes(surface: Surface): Array<{ id: number; parentId: number; tag: string; component: string; props: Record<string, unknown>; state: Record<string, unknown>; rect: Frame; children: number[]; path: string }> {
+  private devtoolsNodes(surface: Surface): Array<{ id: number; parentId: number; tag: string; component: string; props: Record<string, unknown>; state: Record<string, unknown>; rect: Frame; children: number[]; path: string; editable?: {p:Record<string,string>; s:Record<string,string>}; scrollOffset?: [number,number] }> {
     const session = this.devtoolsSessions.get(surface.id)!;
-    const nodes: Array<{ id: number; parentId: number; tag: string; component: string; props: Record<string, unknown>; state: Record<string, unknown>; rect: Frame; children: number[]; path: string }> = [];
+    const nodes: Array<{ id: number; parentId: number; tag: string; component: string; props: Record<string, unknown>; state: Record<string, unknown>; rect: Frame; children: number[]; path: string; editable?: {p:Record<string,string>; s:Record<string,string>}; scrollOffset?: [number,number] }> = [];
     nodes.push({ id: -2, parentId: 0, tag: 'Page', component: surface.page.name, props: {}, state: {}, rect: { x: 0, y: 0, width: surface.width, height: surface.height }, children: [], path: '' });
     const visit = (items: HostNode[], x: number, y: number): void => {
       for (const node of items) {
         const rect = { x: x + node.frame.x, y: y + node.frame.y, width: node.frame.width, height: node.frame.height };
-        nodes.push({ id: node.id, parentId: -2, tag: node.nativeName ?? node.kind, component: '', props: this.devtoolsValue(node.props) as Record<string, unknown>, state: {}, rect, children: [], path: node.path });
+        nodes.push({ id: node.id, parentId: -2, tag: node.nativeName ?? node.kind, component: '', props: this.devtoolsValue({...node.style, ...node.props}) as Record<string, unknown>, state: {}, rect, children: [], path: node.path });
         visit(node.children, rect.x, rect.y);
       }
     };
@@ -86,6 +91,13 @@
       for (const candidate of nodes) if (candidate.path.length > parent.path.length && node.path.startsWith(candidate.path + '/')) parent = candidate;
       node.parentId = parent.id; parent.children.push(node.id);
     }
+    for (const node of nodes) {
+      const p: Record<string,string> = {}, s: Record<string,string> = {};
+      for (const key of Object.keys(node.props)) { const type = this.devtoolsWireType(node.props[key]); if (type && !key.startsWith('on') && !['children','ref','name','nativeProps'].includes(key)) p[key] = type; }
+      for (const key of Object.keys(node.state)) { const type = this.devtoolsWireType(node.state[key]); if (type && key.startsWith('state[')) s[key] = type; }
+      if (node.id !== -2) node.editable = {p,s};
+      node.scrollOffset = this.devtoolsScroll.get(surface.id)?.get(node.id);
+    }
     return nodes;
   }
   private async devtoolsPoll(surface: Surface): Promise<void> {
@@ -93,6 +105,7 @@
     if (!session) return;
     while (session.owner.active && !this.disposed && this.surfaces.get(surface.id) === surface) {
       try {
+        if (session.live && surface.visible && Date.now() - session.lastShot >= 2000) await this.devtoolsCapture(surface, 0, session.sample, true);
         const nodes = this.devtoolsNodes(surface);
         const calls = [...(this.devtoolsCalls.get(surface.id)?.values() ?? [])];
         const network = calls.filter(call => call.module === 'http').map(call => {
@@ -104,7 +117,7 @@
             status: result.status, requestBody: args.body, requestHeaders: args.headers, responseBody: result.body, responseHeaders: result.headers, error: call.error, transport: 'AnseronUI HTTP' };
         });
         const payload = JSON.stringify({ protocol: 1, type: 'snapshot', pagerId: session.id, platform: '__PLATFORM__', page: surface.page.name,
-          ts: Date.now(), seq: ++session.seq, sampleMs: session.interval, capabilities: ['full', 'sample'], nodes, logs: this.devtoolsLogs.get(surface.id) ?? [], network, native: calls.filter(call => call.module !== 'http'),
+          ts: Date.now(), seq: ++session.seq, sampleMs: session.interval, capabilities: ['full', 'sample', 'state', 'propSchemaV1', 'shot', 'live'], screenshot:session.screenshot, commandResults:session.results, nodes, logs: this.devtoolsLogs.get(surface.id) ?? [], network, native: calls.filter(call => call.module !== 'http'),
           device: { platform: '__PLATFORM__', pageWidth: surface.width, pageHeight: surface.height },
           // Node statistics describe the AnseronUI inspection tree itself:
           // Page + components + logical host nodes. Native UIView/NSView
@@ -112,16 +125,24 @@
           stats: { nodes: nodes.length, hostNodes: nodes.filter(node => node.id > 0).length,
             components: nodes.filter(node => node.component.length > 0).length, revision: surface.revision } });
         // Module arguments are bounded at 64 KiB; the service reassembles full snapshots atomically.
-        const count = Math.ceil(payload.length / 3000);
+        const count = Math.ceil(payload.length / 10000);
         if (count > 512) throw new Error('DEVTOOLS_SNAPSHOT_TOO_LARGE');
         for (let index = 0; index < count && session.owner.active; index++) {
-          const body = JSON.stringify({ protocol: 1, type: 'snapshotChunk', pagerId: session.id, seq: session.seq, index, count, data: payload.slice(index * 3000, (index + 1) * 3000) });
+          const body = JSON.stringify({ protocol: 1, type: 'snapshotChunk', pagerId: session.id, seq: session.seq, index, count, data: payload.slice(index * 10000, (index + 1) * 10000) });
           const response = JSON.parse(await this.invokeModule(surface, session.owner, 'http', 'request', JSON.stringify({
             url: '__ENDPOINT__', method: 'POST', headers: { 'content-type': 'application/json' }, body, timeout: 3000,
           }))) as { status: number; body: string };
           if (response.status >= 200 && response.status < 300) {
-            const result = JSON.parse(response.body) as { commands?: Array<{ type: string; value?: number }> };
-            for (const command of result.commands ?? []) if (command.type === 'sample' && command.value !== undefined && command.value >= 100 && command.value <= 5000) session.interval = command.value;
+            const result = JSON.parse(response.body) as { commands?: Array<{ type: string; value?: unknown; requestId?: string; expiresAt?: number; id?:number; key?:string; target?:string; schemaToken?:string; sample?:number; on?:boolean }> };
+            if (index === count - 1) session.results = [];
+            for (const command of result.commands ?? []) {
+              if (command.expiresAt !== undefined && command.expiresAt <= Date.now()) continue;
+              if (command.type === 'sample' && typeof command.value === 'number' && command.value >= 100 && command.value <= 5000) session.interval = command.value;
+              else if (command.type !== 'full') {
+                try { const value = await this.devtoolsCommand(surface, command); session.results.push({...value, requestId:command.requestId ?? '', ok:true}); }
+                catch (error) { session.results.push({requestId:command.requestId ?? '', ok:false, error:String(error)}); }
+              }
+            }
           }
         }
       } catch { /* A disconnected inspector must never fail the page; retry the complete tree. */ }
@@ -133,6 +154,9 @@
   private devtoolsStop(surface: Surface): void {
     const session = this.devtoolsSessions.get(surface.id);
     if (!session) return;
+    const waiter = this.devtoolsWaiters.get(surface.id);
+    if (waiter) { clearTimeout(waiter.timer); waiter.reject(new Error('SURFACE_DISPOSED')); this.devtoolsWaiters.delete(surface.id); }
+    this.devtoolsOverrides.delete(surface.id); this.devtoolsScroll.delete(surface.id);
     session.owner.active = false;
     for (const [id, request] of surface.modules) if (request.owner === session.owner) {
       this.emit(surface, { type: 'CancelRequest', requestId: id }); surface.modules.delete(id); request.reject(new Error('SURFACE_DISPOSED'));

@@ -2,6 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { readFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { DevtoolsHub } from './hub.js';
+import { randomUUID } from 'node:crypto';
+import { inspectQuery } from './query.js';
+import { commandError } from './commands.js';
 import { SnapshotAssembler } from './chunks.js';
 import type { DevtoolsSnapshot } from './protocol.js';
 export const DEVTOOLS_PANEL_PATH = '/__anseronui_devtools';
@@ -19,9 +22,13 @@ export async function startDevtoolsServer(options: {port?: number; host?: string
   const hub = options.hub ?? new DevtoolsHub();
   const assembler = new SnapshotAssembler();
   const clients = new Set<ServerResponse>();
+  const cancellations = new Set<() => void>();
   const emit = (res: ServerResponse, data: unknown) => {
     if (res.writableEnded || res.destroyed) return false;
-    try { return res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { return false; }
+    // write(false) means backpressure, not a disconnected inspector. Keep the
+    // client registered and send its next full state once the socket drains.
+    if (res.writableNeedDrain) return true;
+    try { res.write(`data: ${JSON.stringify(data)}\n\n`); return true; } catch { return false; }
   };
   const summaries = () => ({type:'sessions', sessions:hub.summaries()});
   const unsubscribe = hub.onSnapshot((snapshot, session) => {
@@ -38,6 +45,11 @@ export async function startDevtoolsServer(options: {port?: number; host?: string
         req.on('close', () => clients.delete(res)); return;
       }
       if (req.method === 'GET' && path === DEVTOOLS_PANEL_PATH + '/api/sessions') return json(res, 200, {sessions:hub.summaries()});
+      if (req.method === 'GET' && path.startsWith(DEVTOOLS_PANEL_PATH + '/api/inspect/')) {
+        const [subject, id] = path.slice((DEVTOOLS_PANEL_PATH + '/api/inspect/').length).split('/');
+        const result = inspectQuery(hub, subject, url.searchParams, id === undefined ? undefined : decodeURIComponent(id));
+        return json(res, result.status, result.body);
+      }
       if (req.method === 'GET' && path === DEVTOOLS_PANEL_PATH + '/api/session') {
         const s = hub.sessions.get(url.searchParams.get('pagerId') ?? ''); return json(res, s ? 200 : 404, s?.state() ?? {error:'UNKNOWN_SESSION'});
       }
@@ -45,16 +57,47 @@ export async function startDevtoolsServer(options: {port?: number; host?: string
         const {pagerId, command} = await body(req);
         const session = hub.sessions.get(pagerId);
         if (!session || session.stale) return json(res, 404, {error:'PAGE_OFFLINE'});
-        if (!command || !['full','sample'].includes(command.type) || !session.capabilities.includes(command.type)) return json(res, 400, {error:'UNSUPPORTED_COMMAND'});
-        if (command.type === 'sample' && (!Number.isInteger(command.value) || command.value < 100 || command.value > 5000)) return json(res, 400, {error:'INVALID_INTERVAL'});
-        session.commands = session.commands.filter(c => c.type !== command.type);
-        session.commands.push(command.type === 'full' ? {type:'full'} : {type:'sample', value:command.value});
-        return json(res, 200, {ok:true});
+        const invalid = commandError(command);
+        if (invalid) return json(res, 400, {error:invalid});
+        const capability = ['set','inspectProps'].includes(command.type) ? 'propSchemaV1' : command.type;
+        if (!session.capabilities.includes(capability)) return json(res, 400, {error:'UNSUPPORTED_COMMAND'});
+        if (session.commands.length >= 100) return json(res, 429, {error:'COMMAND_QUEUE_FULL'});
+        // IDs and deadlines are server owned. A timed-out edit must never be
+        // applied later when an offline device reconnects.
+        const requestId = randomUUID();
+        const queued = {...command, requestId, expiresAt:Date.now() + 10000};
+        if (['full','sample','live'].includes(command.type)) {
+          session.commands = session.commands.filter(c => c.type !== command.type);
+          session.commands.push(queued);
+          return json(res, 200, {ok:true, requestId});
+        }
+        await new Promise<void>(resolve => {
+          let done = false;
+          const finish = (status: number, value: unknown) => {
+            if (done) return; done = true;
+            clearTimeout(timer); off(); cancellations.delete(cancel);
+            session.commands = session.commands.filter(c => c.requestId !== requestId);
+            if (!res.destroyed) json(res, status, value);
+            resolve();
+          };
+          const cancel = () => finish(503, {ok:false,error:'SERVER_CLOSED'});
+          const off = hub.onSnapshot((snapshot) => {
+            if (snapshot.pagerId !== pagerId) return;
+            if (snapshot.destroyed) return finish(404, {ok:false,error:'PAGE_OFFLINE'});
+            const result = snapshot.commandResults?.find(r => r.requestId === requestId);
+            if (result) finish(result.ok ? 200 : 400, result);
+          });
+          const timer = setTimeout(() => finish(504, {ok:false,error:'COMMAND_TIMEOUT'}), 10000);
+          cancellations.add(cancel);
+          res.once('close', () => finish(499, {ok:false,error:'CLIENT_CLOSED'}));
+          session.commands.push(queued);
+        });
+        return;
       }
       if (req.method === 'POST' && path === DEVTOOLS_INGEST_PATH) {
         const snapshot = assembler.accept(await body(req));
         if (!snapshot) return json(res, 200, {ok:true, commands:[]});
-        const session = hub.ingest(snapshot); return json(res, 200, {ok:true, commands:session.commands.splice(0)});
+        const session = hub.ingest(snapshot); return json(res, 200, {ok:true, commands:session.commands.splice(0).filter(c => !c.expiresAt || c.expiresAt > Date.now())});
       }
       if (req.method === 'GET' && (path === DEVTOOLS_PANEL_PATH || path === DEVTOOLS_PANEL_PATH + '/' || /^\/__anseronui_devtools\/assets\/[\w.-]+\.(js|css)$/.test(path))) {
         const file = path.includes('/assets/') ? path.slice(DEVTOOLS_PANEL_PATH.length + 1) : 'index.html';
@@ -75,5 +118,5 @@ export async function startDevtoolsServer(options: {port?: number; host?: string
       if (!emit(client, summaries())) clients.delete(client);
     }
   }, 5000); timer.unref();
-  return {server,hub,port:(server.address() as AddressInfo).port,close:async () => {clearInterval(timer);unsubscribe();for (const client of clients) client.end(); await new Promise<void>(resolve => server.close(() => resolve()));}};
+  return {server,hub,port:(server.address() as AddressInfo).port,close:async () => {clearInterval(timer);unsubscribe();for (const cancel of cancellations) cancel();for (const client of clients) client.end(); await new Promise<void>(resolve => server.close(() => resolve()));}};
 }
