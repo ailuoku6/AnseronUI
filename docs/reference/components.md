@@ -87,6 +87,7 @@
 - 页面隐藏时暂停工作使用 `usePageEffect()`。见[页面生命周期](../guides/navigation/page-lifecycle.md)。
 - 延迟任务使用 `setTimeout`、`clearTimeout` 或 `useTimers()`。见[计时器](../guides/navigation/timers.md)。
 - 原生服务使用 `useServices()`。见[标准系统服务](../guides/services/native-services.md)。
+- 文本内容尺寸使用 `useTextMeasurer()` 或 `useServices().measureText()`。见[文本尺寸测量](../guides/ui/text-measurement.md)。
 
 ## 资源与媒体
 

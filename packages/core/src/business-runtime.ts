@@ -2,6 +2,7 @@ import { templateNode } from "../../ui/src/template.js";
 import type { TemplateElement, HostTemplate } from "../../ui/src/template.js";
 import { registerTimerScope, unregisterTimerScope, withTimerScope, timeoutInScope, clearTimeout, forgetTimeout } from "../../ui/src/timers.js";
 import type { TimerScope } from "../../ui/src/timers.js";
+import { prepareTextMeasurement } from "../../ui/src/text-measurement.js";
 import { CORE_ABI_VERSION } from "./contracts.js";
 import type { RenderNode, BeginRenderRequest, NodeMutation, CoreRequest, CoreResult } from "./contracts.js";
 import {
@@ -12,7 +13,7 @@ import type {
 } from "@anseronui/protocol";
 import { normalizeChildren, setHookDispatcher, RefCell, createNativeServices, NativeServiceError } from "@anseronui/ui";
 import type {
-  Child, Component, Context, EffectSetup, HookDispatcher, Page, Ref, Services, Style, UIElement,
+  Child, Component, Context, EffectSetup, HookDispatcher, Page, Ref, Services, Style, UIElement, MeasureTextOptions, TextSize,
 } from "@anseronui/ui";
 
 type PendingUpdate = { id: number; value: unknown };
@@ -71,7 +72,7 @@ type Surface = {
   pending: Draft | null; dirty: boolean; nodeIds: Map<string, number>;
   nextNodeId: number; nextRequestId: number; nextUpdateId: number;
   measureCache: Map<string, { width: number; height: number; baseline: number }>;
-  modules: Map<number, { owner: ServiceSlot; resolve: (value: string) => void; reject: (reason: Error) => void }>;
+  modules: Map<number, { owner: ServiceSlot; resolve: (value: string) => void; reject: (reason: Error) => void; measureNodeId?: number }>;
   handles: Map<number, { owner: ServiceSlot; handle: import("@anseronui/ui").NodeHandle }>;
   deferredEvents: InputPayload[];
   inputRevisions: Map<number, number>;
@@ -351,7 +352,7 @@ export class BusinessRuntime {
         return;
       }
       const request = surface.modules.get(payload.requestId);
-      if (!request || !request.owner.active) return;
+      if (!request || !request.owner.active || request.measureNodeId !== undefined) return;
       surface.modules.delete(payload.requestId);
       if (payload.ok) request.resolve(payload.value);
       else request.reject(new Error(payload.value));
@@ -980,6 +981,7 @@ export class BusinessRuntime {
     };
     const slot: ServiceSlot = { kind: "services", active: true, subscriptions: new Set(), pageListeners: new Set(), facade: {
       ...createNativeServices(invokeJSON, subscribe), subscribe,
+      measureText: options => this.measureText(surface, slot, options),
       page: {
         isVisible: () => surface.visible,
         subscribe: listener => {
@@ -1009,6 +1011,24 @@ export class BusinessRuntime {
       },
     } };
     return slot;
+  }
+  private async measureText(surface: Surface, owner: ServiceSlot, options: MeasureTextOptions): Promise<TextSize> {
+    if (this.rendering) throw new Error("SERVICE_DURING_RENDER");
+    if (!owner.active || this.disposed || this.surfaces.get(surface.id) !== surface) throw new Error("SURFACE_DISPOSED");
+    const query = prepareTextMeasurement(options);
+    if (query.text.length === 0 || query.maxWidth === 0 || query.maxHeight === 0) return { width: 0, height: 0 };
+    const requestId = surface.nextRequestId++, nodeId = surface.nextNodeId++;
+    if (!isU32(requestId) || !isU32(nodeId)) throw new Error("REQUEST_ID_OVERFLOW");
+    // Reserve an identity without creating a render node. All hosts measure
+    // detached text already; the identity only correlates the response.
+    const promise = new Promise<string>((resolve, reject) => {
+      surface.modules.set(requestId, { owner, resolve, reject, measureNodeId: nodeId });
+    });
+    this.emit(surface, { type: "MeasureRequest", requestId, nodeId, kind: "Text",
+      text: query.text, fontSize: query.fontSize, maxWidth: query.maxWidth,
+      props: { ...query.props, text: query.text, fontSize: query.fontSize } });
+    const size = JSON.parse(await promise) as TextSize;
+    return { width: Math.min(query.maxWidth, size.width), height: Math.min(query.maxHeight ?? size.height, size.height) };
   }
   private invokeModule(surface: Surface, owner: ServiceSlot, module: string, method: string, argument: string): Promise<string> {
     if (this.rendering) throw new Error("SERVICE_DURING_RENDER");
@@ -1107,6 +1127,13 @@ export class BusinessRuntime {
     }
   }
   private acceptMeasure(surface: Surface, result: Extract<InputPayload, { type: "MeasureResult" }>): void {
+    const request = surface.modules.get(result.requestId);
+    if (request?.measureNodeId === result.nodeId && request.owner.active) {
+      surface.modules.delete(result.requestId);
+      if (!finiteDimension(result.width) || !finiteDimension(result.height)) request.reject(new Error("INVALID_TEXT_MEASUREMENT_RESULT"));
+      else request.resolve(JSON.stringify({ width: result.width, height: result.height }));
+      return;
+    }
     const draft = surface.pending, query = draft?.measures.get(result.requestId);
     if (!draft || !query || query.nodeId !== result.nodeId || !finiteDimension(result.width) || !finiteDimension(result.height)) return;
     this.progress(surface);

@@ -942,7 +942,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             view.setTextColor(parseColor(props.optString("color", ""), themeColor(android.R.attr.textColorPrimary, Color.BLACK)))
             view.typeface = android.graphics.Typeface.create(view.typeface, (if (props.optString("fontWeight") == "bold") android.graphics.Typeface.BOLD else 0) or (if (props.optString("fontStyle") == "italic") android.graphics.Typeface.ITALIC else 0))
             view.gravity = when (props.optString("textAlign")) { "center" -> android.view.Gravity.CENTER_HORIZONTAL; "right" -> android.view.Gravity.RIGHT; else -> android.view.Gravity.LEFT }
-            if (affects("numberOfLines", "ellipsizeMode")) { view.maxLines = props.optInt("numberOfLines", Int.MAX_VALUE); view.ellipsize = if (props.optString("ellipsizeMode") == "clip") null else android.text.TextUtils.TruncateAt.END }
+            if (affects("numberOfLines", "ellipsizeMode")) { view.maxLines = props.optInt("numberOfLines", Int.MAX_VALUE).takeIf { it > 0 } ?: Int.MAX_VALUE; view.ellipsize = if (props.optString("ellipsizeMode") == "clip") null else android.text.TextUtils.TruncateAt.END }
             when (record.kind) {
                 "Text" -> view.text = props.optString("text", "")
                 "RichText" -> {

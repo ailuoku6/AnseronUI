@@ -49,7 +49,7 @@ test('every host tag and browser suite has an executable coverage entry', () => 
   });
   for (const tag of tags) assert.ok(mounted.has(tag === 'Native' ? 'NativeComponent' : tag), `Host tag is not mounted in runtime tests: ${tag}`);
   for (const suite of browserSuites) {
-    assert.ok(existsSync(resolve(root, `packages/render-web/test/${suite === 'virtual-list-wasm' ? 'virtual-list' : suite}.browser.ts`)), `Missing browser suite source: ${suite}`);
+    assert.ok(existsSync(resolve(root, `packages/render-web/test/${suite === 'virtual-list-wasm' ? 'virtual-list' : suite === 'text-measurement-wasm' ? 'text-measurement' : suite}.browser.ts`)), `Missing browser suite source: ${suite}`);
   }
 });
 

@@ -5,6 +5,7 @@ import type { UIElement, ScrollEvent, TouchEvent, LayoutEvent, Style } from "@an
 import { LayoutShowcase } from "./layout-showcase.js";
 import { AnimationShowcase } from "./animation-showcase.js";
 import { FloatingBall } from "./floating-ball.js";
+import { TextMeasurementShowcase } from './text-measurement-showcase.js';
 
 const backgroundBlurStyles: { panel: Style; clear: Style } = {
   panel: { width: 220, height: 56, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#ffffff33", backgroundBlurRadius: 20 },
@@ -56,6 +57,7 @@ export function Components(): UIElement {
             </View>
             <Text numberOfLines={1} style={{ fontSize: 14, color: "#5c667a" }}>这是一段限制为一行的长文本，用来验证超出宽度后是否能正确显示省略号。</Text>
           </View>
+          <TextMeasurementShowcase />
           <View style={{ flexDirection: "column", padding: 14, gap: 10, borderRadius: 12, backgroundColor: "#ffffff", flexShrink: 0 }}>
             <Text style={{ fontSize: 18, fontWeight: "bold" }}>Liquid Glass · 融合容器</Text>
             <View style={{ height: 112, position: "relative", overflow: "hidden", borderRadius: 10, backgroundColor: "#314c83" }}>

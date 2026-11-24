@@ -35,6 +35,8 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(!paths.some(path => path.endsWith('/.DS_Store')));
     for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md',
       'docs/guides/project/app-icons.md', 'docs/guides/ui/styles.md', 'docs/guides/ui/virtual-list.md', 'docs/guides/navigation/page-lifecycle.md',
+      'docs/reference/typescript.md', 'docs/reference/components.md', 'docs/guides/ui/component-composition.md',
+      'docs/guides/ui/interactions.md', 'docs/guides/navigation/timers.md', 'docs/guides/services/native-services.md', 'docs/guides/services/native-extensions.md',
       'docs/diagnostics/devtools.md', 'docs/diagnostics/performance.md', 'docs/platforms/harmonyos.md',
       'scripts/anseronui.mjs', 'scripts/templates/app/gitignore', 'scripts/harmony-app.mjs', 'scripts/harmony-library.mjs',
       'packages/render-harmony/src/main/ets/HarmonyMedia.ets', 'packages/render-harmony/src/main/ets/HarmonyVideoSurface.ets',
@@ -58,7 +60,10 @@ test('packed SDK creates a portable app with all native templates and no private
       'internal/toolchain/scriptc/pnpm-lock.yaml']) {
       assert.ok(paths.includes('dist/sdk/' + path), `Missing packed asset: ${path}`);
     }
-    assert.ok(!paths.some(path => /(^|\/)(node_modules|\.git|\.verification|AGENTS.md)(\/|$)/.test(path)));
+    assert.ok(!paths.some(path => /(^|\/)(node_modules|\.git|\.verification)(\/|$)/.test(path)));
+    assert.ok(paths.includes('dist/sdk/scripts/templates/app/AGENTS.md'));
+    assert.ok(paths.includes('dist/sdk/scripts/templates/app/.agents/skills/anseronui-development/SKILL.md'));
+    assert.ok(paths.includes('dist/sdk/scripts/templates/app/.agents/skills/anseronui-debugging/SKILL.md'));
     assert.ok(!paths.some(path => path.startsWith('dist/sdk/internal/verification/')));
     assert.ok(!paths.some(path => /\.(so|a|wasm)$/.test(path)));
     run('tar', ['-xzf', join(directory, pack.filename), '-C', directory]);
@@ -87,6 +92,10 @@ test('packed SDK creates a portable app with all native templates and no private
     assert.ok(readme.includes('docs/platforms/harmonyos.md'));
     assert.ok(readme.includes('npx anseronui inspect sessions'));
     assert.ok(readme.includes('node_modules/anseronui/dist/sdk/docs/diagnostics/devtools.md'));
+    assert.match(readme, /AI 开发入口.*AGENTS\.md/s);
+    assert.ok(existsSync(join(app, 'AGENTS.md')));
+    assert.ok(existsSync(join(app, '.agents/skills/anseronui-development/SKILL.md')));
+    assert.ok(existsSync(join(app, '.agents/skills/anseronui-debugging/SKILL.md')));
     const config = JSON.parse(readFileSync(join(app, 'anseronui.config.json'), 'utf8'));
     assert.equal(config.schemaVersion, 2);
     assert.equal(config.pages[0].source, 'src/pages/home.tsx');

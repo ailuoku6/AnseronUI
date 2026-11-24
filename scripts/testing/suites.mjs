@@ -1,6 +1,6 @@
 const npm = (...names) => names.map(name => ['npm', 'run', name]);
 const node = (...args) => [process.execPath, ...args];
-export const browserSuites = ['extensions', 'layout', 'styles', 'routing', 'accessibility', 'virtual-list', 'split', 'accessibility-wasm', 'virtual-list-wasm'];
+export const browserSuites = ['extensions', 'layout', 'styles', 'routing', 'accessibility', 'virtual-list', 'split', 'accessibility-wasm', 'virtual-list-wasm', 'text-measurement', 'text-measurement-wasm'];
 
 // Each suite runs serially: Core builds share staging directories. CI runs
 // suites in separate jobs/checkouts instead of racing those directories.
@@ -13,7 +13,7 @@ export const suites = {
     node('scripts/build-core.mjs', 'wasm', 'internal/fixtures/fine-grained/config.json'), node('--import', 'tsx', 'scripts/test-fine-grained-aot.mjs', 'wasm')],
   web: [...npm('prepare:compiler', 'build:web'), ...browserSuites.map(name => node('scripts/test-web-extensions.mjs', name))],
   ios: [...npm('prepare:compiler'), node('--test', 'scripts/anseronui.test.mjs'), node('scripts/test-native-icons.mjs', 'ios'), node('scripts/test-ios.mjs')],
-  macos: [...npm('prepare:compiler', 'test:macos'), ['.verification/macos-tests/integration', '--renderer-regressions'], ['.verification/macos-tests/integration', '--drag-regression'], ['.verification/macos-tests/integration', '--devtools-regression']],
+  macos: [...npm('prepare:compiler', 'test:macos'), ['.verification/macos-tests/integration', '--renderer-regressions'], ['.verification/macos-tests/integration', '--drag-regression'], ['.verification/macos-tests/integration', '--devtools-regression'], ['.verification/macos-tests/integration', '--text-measurement']],
   'android-build': [...npm('prepare:compiler'), node('scripts/test-native-icons.mjs', 'android'), ...npm('build:android'), ['examples/native/android/gradlew', '-p', 'examples/native/android', ':app:assembleDebugAndroidTest', '--console=plain', '--no-daemon']],
   android: [...npm('prepare:compiler'), node('scripts/test-android.mjs')],
   harmony: [...npm('prepare:compiler'), node('scripts/test-harmony-ci.mjs')],

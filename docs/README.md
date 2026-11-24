@@ -27,6 +27,7 @@
 页面看起来什么样，以及怎么响应触摸。
 
 - [样式](guides/ui/styles.md)
+- [文本尺寸测量](guides/ui/text-measurement.md)
 - [事件与手势](guides/ui/interactions.md)
 - [无障碍](guides/ui/accessibility.md)：读屏描述、角色、动作、播报和聚焦。
 - [动画](guides/ui/animations.md)

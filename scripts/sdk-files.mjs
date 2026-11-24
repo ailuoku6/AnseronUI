@@ -13,6 +13,8 @@ const directories = [
 const files = [
   'LICENSE', 'THIRD_PARTY_NOTICES.md',
   'docs/guides/project/app-icons.md', 'docs/guides/ui/styles.md', 'docs/guides/ui/virtual-list.md', 'docs/guides/navigation/page-lifecycle.md',
+  'docs/reference/typescript.md', 'docs/reference/components.md', 'docs/guides/ui/component-composition.md', 'docs/guides/ui/interactions.md',
+  'docs/guides/navigation/timers.md', 'docs/guides/services/native-services.md', 'docs/guides/services/native-extensions.md',
   'docs/diagnostics/devtools.md', 'docs/diagnostics/performance.md', 'docs/diagnostics/error-stacks.md',
   'packages/render-macos/Package.swift', 'packages/flexily/LICENSE', 'packages/render-ios/Package.swift',
   'packages/render-android/src/main/AndroidManifest.xml',
@@ -37,8 +39,8 @@ export function sdkFiles(root) {
   const result = [...files, ...vendorFiles.map(path => `internal/toolchain/scriptc/${path}`)];
   function walk(path) {
     for (const entry of readdirSync(join(root, path), { withFileTypes: true })) {
-      if (['AGENTS.md', '.DS_Store', '__pycache__', 'node_modules', 'test', 'tests'].includes(entry.name)) continue;
       const next = `${path}/${entry.name}`;
+      if ((entry.name === 'AGENTS.md' && next !== 'scripts/templates/app/AGENTS.md') || ['.DS_Store', '__pycache__', 'node_modules', 'test', 'tests'].includes(entry.name)) continue;
       if (entry.isDirectory()) walk(next); else result.push(next);
     }
   }

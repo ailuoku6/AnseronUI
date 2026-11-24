@@ -11,8 +11,34 @@ import AVKit
         check(condition(),message)
     }
     static func descendants(_ view:NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+    static func textMeasurement() throws {
+        let view = AnseronUIRenderView(frame:NSRect(x:0,y:0,width:390,height:844))
+        var errors:[String] = []
+        view.onFailure = { errors.append(String(describing:$0)) }
+        view.onDiagnostic = { errors.append("\($0): \($1)") }
+        func node(_ id:String) -> NSView? { descendants(view).first { $0.identifier?.rawValue == id } }
+        view.load(page:"components")
+        defer { view.destroy() }
+        wait("text measurement completes") { node("text-measure-toggle") != nil || !errors.isEmpty }
+        check(errors.isEmpty,"text measurement: \(errors)")
+        let result = (node("text-measure-result") as! NSTextField).stringValue
+        let pieces = result.components(separatedBy:" / 两行: ")
+        check(pieces.count == 2,"measurement result: \(result)")
+        let collapsed = Double(pieces[1])!
+        let full = Double(pieces[0].components(separatedBy:" × ")[1])!
+        let preview = node("text-measure-preview")!
+        check(abs(preview.frame.height - collapsed) < 1,"collapsed Text matches measured size")
+        check(full > collapsed,"full text exceeds two lines")
+        node("text-measure-toggle")!.accessibilityPerformPress()
+        wait("expand uses measured full height") { abs(preview.frame.height - full) < 1 }
+        node("text-measure-toggle")!.accessibilityPerformPress()
+        wait("collapse restores measured height") { abs(preview.frame.height - collapsed) < 1 }
+        check(errors.isEmpty,"measurement diagnostics: \(errors)")
+        print("macOS AOT text measurement: full, collapsed and expanded sizes passed")
+    }
     static func main() throws {
         _ = NSApplication.shared
+        if CommandLine.arguments.contains("--text-measurement") { try textMeasurement(); return }
         if CommandLine.arguments.contains("--drag-regression") {
             try RendererRegression.dragWorker()
             try RendererRegression.dragAOT()

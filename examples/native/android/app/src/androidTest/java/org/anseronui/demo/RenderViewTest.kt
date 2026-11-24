@@ -372,6 +372,9 @@ class RenderViewTest {
                     .put(JSONObject().put("type", "SetProps").put("nodeId", 1).put("props", JSONObject().put("src", light).put("dmSrc", dark)))).toString())
                 val measured = renderer.measure("Text", "first\nsecond", 16f, 200f, JSONObject().put("text", "first\nsecond").put("fontSize", 16).put("lineHeight", 30))
                 assertEquals(60f, measured.height, 1f)
+                val unlimited = renderer.measure("Text", "first\nsecond\nthird", 16f, 200f,
+                    JSONObject().put("text", "first\nsecond\nthird").put("fontSize", 16).put("lineHeight", 30).put("numberOfLines", 0))
+                assertEquals(90f, unlimited.height, 1f)
             }
             fun waitWidth(width: Int) {
                 val until = SystemClock.uptimeMillis() + 5000

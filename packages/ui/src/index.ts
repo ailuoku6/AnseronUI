@@ -2,6 +2,8 @@ import { VariableHeightLayout } from "./virtual-layout.js";
 import type { NativeServices, HttpRequest, HttpResponse, SubscribeNative } from "./native-services.js";
 export * from "./native-services.js";
 import type { Timers } from "./timers.js";
+import type { TextMeasurer } from "./text-measurement.js";
+export type { MeasureTextOptions, TextMeasureStyle, TextSize, TextMeasurer } from "./text-measurement.js";
 export { setTimeout, clearTimeout } from "./timers.js";
 export type { Timers } from "./timers.js";
 export type Key = string | number;
@@ -291,6 +293,8 @@ export class RefCell {
 }
 export type EffectSetup = () => void | (() => void);
 export interface Services extends NativeServices {
+  /** Measures Text content with the platform layout engine, without mounting a view. */
+  measureText: TextMeasurer;
   page: { isVisible(): boolean; subscribe(listener: (visible: boolean) => void): () => void };
   subscribe: SubscribeNative;
   timers: Timers;
@@ -356,6 +360,8 @@ export function createContext<T>(defaultValue: T): Context<T> {
 }
 export function useContext<T>(context: Context<T>): T { return dispatcher().context(context); }
 export function useServices(): Services { return dispatcher().services(); }
+/** Capture during render; call in an effect or event, including after await. */
+export function useTextMeasurer(): TextMeasurer { return dispatcher().services().measureText; }
 /** Captures a surface-specific timer binding, also safe after await. */
 export function useTimers(): Timers { return dispatcher().services().timers; }
 export function useRouter(): Router { return dispatcher().services().router; }

@@ -20,6 +20,11 @@ test("CLI creates and checks a new app, and scaffolds existing app integration",
   assert.equal(check.status, 0, check.stderr || check.stdout);
   assert.ok(existsSync(join(created, "src/pages/home.tsx")));
   assert.ok(existsSync(join(created, "web/vite.config.ts")));
+  assert.ok(existsSync(join(created, "AGENTS.md")));
+  assert.ok(existsSync(join(created, ".agents/skills/anseronui-development/SKILL.md")));
+  assert.ok(existsSync(join(created, ".agents/skills/anseronui-debugging/SKILL.md")));
+  assert.match(readFileSync(join(created, "AGENTS.md"), "utf8"), /anseronui-development\/SKILL\.md/);
+  assert.match(readFileSync(join(created, "README.md"), "utf8"), /AI 开发入口.*AGENTS\.md/s);
   const config = JSON.parse(readFileSync(join(created, "anseronui.config.json"), "utf8"));
   assert.deepEqual(config.pages.map(page => page.name), ["home", "details"]);
   assert.match(readFileSync(join(created, "web/main.ts"), "utf8"), /handleBackPress/);
