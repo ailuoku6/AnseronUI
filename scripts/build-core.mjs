@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { coreFingerprint, frameworkFingerprint, businessFingerprint } from './core-inputs.mjs';
 import { createHash } from 'node:crypto';
+import { androidABI, androidTargetIdentity } from './android-abi.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 process.chdir(root);
 const rawArgs = process.argv.slice(2);
@@ -16,7 +17,8 @@ const args = rawArgs.filter(arg => !['--framework-only','--business-only'].inclu
 if (args.length > 2 || args.some(arg => arg.startsWith('--'))) throw new Error('Expected target [config] [--framework-only|--business-only]');
 const target = args[0] ?? 'native';
 const configPath = args[1] ?? process.env.ANSERONUI_CONFIG;
-const targets = { native:'', 'macos-arm64':'', 'ios-simulator':'aarch64-apple-ios-simulator', 'ios-device':'aarch64-apple-ios', android:'aarch64-linux-android', harmony:'aarch64-linux-ohos', wasm:'wasm32-wasi' };
+const android = target === 'android' ? androidABI() : null;
+const targets = { native:'', 'macos-arm64':'', 'ios-simulator':'aarch64-apple-ios-simulator', 'ios-device':'aarch64-apple-ios', android:android?.target, harmony:'aarch64-linux-ohos', wasm:'wasm32-wasi' };
 if (target === 'macos-arm64' && (process.platform !== 'darwin' || process.arch !== 'arm64')) throw new Error('macOS currently requires an Apple Silicon Mac and Xcode.');
 if (!(target in targets)) throw new Error(`Unknown target ${target}: ${Object.keys(targets).join(', ')}`);
 function run(command, args, env = process.env) {
@@ -42,12 +44,13 @@ if (['native','macos-arm64'].includes(target) && process.platform === 'darwin') 
   env.PATH = `${bin}:${env.PATH}`;
 }
 if (target === 'android') {
+  if (android.abi === 'x86_64') env.SCRIPTC_ANDROID_LLVM_CLANG = process.env.ANSERONUI_ANDROID_LLVM_CLANG ?? (process.platform === 'darwin' ? '/opt/homebrew/opt/llvm/bin/clang' : 'clang-22');
   const sdk = env.ANDROID_HOME ?? env.ANDROID_SDK_ROOT ?? join(homedir(), process.platform === 'darwin' ? 'Library/Android/sdk' : 'Android/Sdk');
   const ndks = join(sdk,'ndk');
   env.ANDROID_NDK_ROOT ??= join(ndks, readdirSync(ndks).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}))[0]);
 }
 const harmonySDK = process.env.HARMONY_NATIVE_SDK ?? '/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native';
-const targetIdentity = target === 'harmony' ? {platform:'harmony', arch:'arm64', minimumApi:21, sdk:JSON.parse(readFileSync(join(harmonySDK,'oh-uni-package.json'),'utf8')), compiler:output(join(harmonySDK,'llvm/bin/clang'),['--version']), llvm:output(process.env.HARMONY_LLVM_CLANG ?? '/opt/homebrew/opt/llvm/bin/clang',['--version'])} : target === 'macos-arm64' ? { platform: 'macos', arch: 'arm64', deploymentTarget: '14.0', sdk: output('xcrun',['--sdk','macosx','--show-sdk-version']), xcode: output('xcodebuild',['-version']), compiler: output('xcrun',['clang','--version']) } : null;
+const targetIdentity = target === 'harmony' ? {platform:'harmony', arch:'arm64', minimumApi:21, sdk:JSON.parse(readFileSync(join(harmonySDK,'oh-uni-package.json'),'utf8')), compiler:output(join(harmonySDK,'llvm/bin/clang'),['--version']), llvm:output(process.env.HARMONY_LLVM_CLANG ?? '/opt/homebrew/opt/llvm/bin/clang',['--version'])} : target === 'macos-arm64' ? { platform: 'macos', arch: 'arm64', deploymentTarget: '14.0', sdk: output('xcrun',['--sdk','macosx','--show-sdk-version']), xcode: output('xcodebuild',['-version']), compiler: output('xcrun',['clang','--version']) } : target === 'android' ? { ...androidTargetIdentity(env), ...(android.abi === 'x86_64' ? { llvm: output(env.SCRIPTC_ANDROID_LLVM_CLANG, ['--version']) } : {}) } : null;
 const devtools = debugBuildOptions(target);
 const configuration = configPath ?? 'anseronui.config.json';
 const destination = resolve('.verification/core-' + target);
@@ -102,7 +105,7 @@ if (target === 'wasm') {
     const prebuilt = join(env.ANDROID_NDK_ROOT,'toolchains/llvm/prebuilt');
     const host = readdirSync(prebuilt).find(name=>name.startsWith(process.platform==='darwin'?'darwin':'linux'));
     if (!host) throw new Error('No NDK toolchain for this host');
-    compiler = join(prebuilt,host,'bin/aarch64-linux-android26-clang');
+    compiler = join(prebuilt,host,'bin',android.clang);
     archiver = join(prebuilt,host,'bin/llvm-ar');
   }
   run(compiler, [...compileFlags,'-fPIC','-I','packages/core/native/include','-c','packages/core/native/split_bridge.c','-o',object],env);
@@ -140,8 +143,8 @@ if (target === 'android') {
   const prebuilt = join(env.ANDROID_NDK_ROOT,'toolchains/llvm/prebuilt');
   const host = readdirSync(prebuilt).find(name=>name.startsWith(process.platform==='darwin'?'darwin':'linux'));
   if (!host) throw new Error('No NDK toolchain for this host');
-  const clang = join(prebuilt,host,'bin/aarch64-linux-android26-clang');
-  const library = 'packages/render-android/src/main/jniLibs/arm64-v8a/libanseronui.so';
+  const clang = join(prebuilt,host,'bin',android.clang);
+  const library = `packages/render-android/src/main/jniLibs/${android.abi}/libanseronui.so`;
   mkdirSync(resolve(library,'..'),{recursive:true});
   run(clang,['-shared','-fPIC','-I','packages/core/native/include','packages/core/native/transport.c','packages/render-android/src/main/cpp/transport_jni.c',join(destination,'entry.lib.a'),'-lm','-o',library],env);
   mkdirSync('examples/native/android/app/src/main/assets',{recursive:true});

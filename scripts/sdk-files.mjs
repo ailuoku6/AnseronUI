@@ -20,7 +20,7 @@ const files = [
   'packages/render-android/src/main/AndroidManifest.xml',
   'internal/toolchain/build-library.mjs', 'internal/toolchain/harmony-api21.patch', 'docs/platforms/harmonyos.md', 'internal/toolchain/async-embedding.patch', 'internal/toolchain/scriptc.vendor.json',
   ...['anseronui', 'devtools-cli', 'standalone-app', 'native-plugins', 'sdk-files', 'prepare-compiler', 'prepare-tools',
-    'macos-app', 'harmony-app', 'harmony-library', 'app-icons', 'web-app', 'build-core', 'build-app', 'stage-core', 'core-inputs', 'lower-timers'].map(name => `scripts/${name}.mjs`),
+    'android-abi', 'macos-app', 'harmony-app', 'harmony-library', 'app-icons', 'web-app', 'build-core', 'build-app', 'stage-core', 'core-inputs', 'lower-timers'].map(name => `scripts/${name}.mjs`),
 ];
 export const toolchainHost = `${process.platform}-${process.arch}${process.platform === 'linux' ? (process.report.getReport().header.glibcVersionRuntime ? '-gnu' : '-musl') : process.platform === 'win32' ? '-msvc' : ''}`;
 export const sdkAliases = Object.fromEntries([

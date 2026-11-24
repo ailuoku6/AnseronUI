@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, utimesSync
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { coreFingerprint, coreSourceDirs, frameworkFingerprint, businessFingerprint } from './core-inputs.mjs';
+import { coreFingerprint, coreSourceDirs, frameworkFingerprint, businessFingerprint, androidCompilerInputs } from './core-inputs.mjs';
 
 test('Core stamp detects protocol, page, compiler and config changes without depending on mtimes', () => {
   const root = mkdtempSync(join(tmpdir(), 'anseronui-core-inputs-'));
@@ -15,7 +15,7 @@ test('Core stamp detects protocol, page, compiler and config changes without dep
   try {
     const config = { sourceDirs: ['examples/page'], pages: [{ source: 'examples/page/page.tsx' }] };
     write('anseronui.config.json', JSON.stringify(config));
-    for (const path of ['scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs',
+    for (const path of [...androidCompilerInputs, 'scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs', 'scripts/android-abi.mjs',
       'internal/toolchain/build-library.mjs', 'internal/toolchain/async-embedding.patch', 'scripts/harmony-library.mjs',
       'internal/toolchain/harmony-api21.patch', 'packages/core/native/profile.json',
       'packages/core/native/framework.profile.json', 'packages/core/native/business.profile.json', 'scripts/prepare-compiler.mjs',
@@ -40,7 +40,7 @@ test('Core stamp detects protocol, page, compiler and config changes without dep
     assert.equal(check().status, 0, 'Matching Core must be accepted');
     utimesSync(join(root, 'packages/protocol/src/index.ts'), new Date(0), new Date(0));
     assert.equal(coreFingerprint(root), original, 'Touching a file must not require rebuilding');
-    for (const path of ['packages/protocol/src/index.ts', 'examples/page/index.ts', 'packages/ui-compiler/src/index.ts', 'internal/toolchain/async-embedding.patch']) {
+    for (const path of [...androidCompilerInputs, 'packages/protocol/src/index.ts', 'examples/page/index.ts', 'packages/ui-compiler/src/index.ts', 'internal/toolchain/async-embedding.patch']) {
       write(path, 'changed');
       assert.notEqual(coreFingerprint(root), original, path);
       const stale = check();

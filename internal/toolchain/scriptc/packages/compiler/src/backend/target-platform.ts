@@ -5,6 +5,7 @@ const MOBILE_LIBRARY_TARGETS = [
   "aarch64-apple-ios",
   "aarch64-apple-ios-simulator",
   "aarch64-linux-android",
+  "x86_64-linux-android",
 ] as const;
 
 export function isIosTarget(target: string | null): boolean {
@@ -12,7 +13,7 @@ export function isIosTarget(target: string | null): boolean {
 }
 
 export function isAndroidTarget(target: string | null): boolean {
-  return target === "aarch64-linux-android";
+  return target === "aarch64-linux-android" || target === "x86_64-linux-android";
 }
 
 export function isMobileTarget(target: string | null): boolean {

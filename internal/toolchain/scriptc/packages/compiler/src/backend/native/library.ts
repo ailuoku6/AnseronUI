@@ -367,7 +367,12 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void> 
         compilerVisibleSource?: string,
       ): Promise<string> => {
         const obj = join(buildDir, objName);
-        if (opts.asyncEmbedding && src.endsWith(".ll") && !sanitize) {
+        if (
+          opts.asyncEmbedding &&
+          src.endsWith(".ll") &&
+          !sanitize &&
+          driver.target !== "x86_64-linux-android"
+        ) {
           await emitNativeArtifact({
             outputPath: obj,
             llvm: await readFile(src, "utf8"),
@@ -377,9 +382,21 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void> 
           });
           return obj;
         }
+        // The packaged helper does not advertise Android x86_64. Its async
+        // LLVM IR requires LLVM 22+, newer than Zig's bundled LLVM.
+        const androidLlvm =
+          opts.asyncEmbedding &&
+          src.endsWith(".ll") &&
+          driver.target === "x86_64-linux-android" &&
+          !sanitize;
+        const compiler = androidLlvm
+          ? [process.env["SCRIPTC_ANDROID_LLVM_CLANG"] ?? "clang-22"]
+          : driver.argv;
         const args = [
-          ...driver.argv.slice(1),
-          ...cflags,
+          ...compiler.slice(1),
+          ...(androidLlvm
+            ? ["-target", "x86_64-linux-android26", "-fPIC", optimization === "dev" ? "-O0" : "-O2"]
+            : cflags),
           ...(compilerVisibleSource !== undefined
             ? [
                 `-ffile-prefix-map=${src}=${compilerVisibleSource}`,
@@ -394,11 +411,11 @@ export async function compileLibArchive(opts: LibArchiveOptions): Promise<void> 
           obj,
         ];
         try {
-          await execFileAsync(driver.argv[0] ?? "clang", args);
+          await execFileAsync(compiler[0] ?? "clang", args);
         } catch (err) {
           const stderr = subprocessFailureDetail(err);
           throw new Error(
-            `${driver.argv.join(" ")} failed compiling ${src} for the library archive.\n` +
+            `${compiler.join(" ")} failed compiling ${src} for the library archive.\n` +
               `This is a scriptc bug (generated/runtime C should always compile) unless the compiler itself is missing/broken.\n\n${stderr}`,
           );
         }

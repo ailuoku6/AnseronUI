@@ -21,7 +21,8 @@ export type NativeTargetName =
   | "wasm32-wasi"
   | "ios-arm64"
   | "ios-simulator-arm64"
-  | "android-arm64";
+  | "android-arm64"
+  | "android-x64";
 
 export type NativeObjectFormat = "macho" | "elf" | "coff" | "wasm";
 export type NativeTargetPlatform = "darwin" | "linux" | "win32" | "wasi";
@@ -534,6 +535,18 @@ export const ANDROID_ARM64_TARGET: NativeTargetSpec = {
   runtimePackPackage: "@scriptc/runtime-android-arm64",
 };
 
+export const ANDROID_X64_TARGET: NativeTargetSpec = {
+  ...LINUX_X64_GNU_TARGET,
+  name: "android-x64",
+  llvmTriple: "x86_64-unknown-linux-android26",
+  minimumOs: "Android 26",
+  defaultLinker: "zig",
+  defaultLinkerArgs: ["cc"],
+  linkerTargetTriple: "x86_64-linux-android.26",
+  supports: { asm: true, obj: true, exe: false, library: true },
+  runtimePackPackage: "@scriptc/runtime-android-x64",
+};
+
 export const NATIVE_TARGETS = [
   MACOS_ARM64_TARGET,
   MACOS_X64_TARGET,
@@ -546,6 +559,7 @@ export const NATIVE_TARGETS = [
   IOS_ARM64_TARGET,
   IOS_SIMULATOR_ARM64_TARGET,
   ANDROID_ARM64_TARGET,
+  ANDROID_X64_TARGET,
 ] as const;
 
 let linuxLibcMemo: LinuxLibc | undefined;
@@ -671,6 +685,8 @@ function requestedTarget(
       return hostPlatform === "darwin" ? IOS_SIMULATOR_ARM64_TARGET : null;
     case "aarch64-linux-android":
       return ANDROID_ARM64_TARGET;
+    case "x86_64-linux-android":
+      return ANDROID_X64_TARGET;
     default:
       return null;
   }
@@ -686,7 +702,7 @@ export function selectNativeTarget(
   if (target === null) return null;
   if (
     target.platform === "linux" &&
-    target.name !== "android-arm64" &&
+    !target.name.startsWith("android-") &&
     (target.name !== host.name || raw.endsWith("-gnu.2.34") || raw.endsWith("-gnu.2.36"))
   ) {
     return {

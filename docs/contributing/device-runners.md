@@ -1,6 +1,6 @@
 # 设备测试 runner 接入
 
-Android 与 HarmonyOS 设备任务使用 Apple Silicon Mac。测试入口与报告说明见[自动测试](testing.md)。两个任务可以使用两台 Mac；同一台 Mac 必须只启动一个 runner 进程，以免同时占用构建目录、HTTP fixture 端口或图形会话。
+Android 设备测试由 GitHub 托管 Ubuntu runner 自动创建 API 35 x86_64 模拟器，使用 KVM 加速，每次 push 和 PR 执行，无需注册 runner 或设置 `ANSERONUI_ANDROID_CI`。本页的自托管接入步骤用于 HarmonyOS。测试入口与报告见[自动测试](testing.md)。
 
 ## 准备公共工具
 
@@ -19,7 +19,7 @@ xcrun clang --version
 
 `uname -m` 必须输出 `arm64`。测试会安装编译器依赖，因此首次执行需要 npm/pnpm registry 网络访问。pnpm 已列为项目依赖，无需全局安装。
 
-## Android
+## 本地 Android 测试（可选）
 
 安装 JDK 17、Android Studio 和 SDK Command-line Tools。Android Studio 的 SDK Manager 中安装 Platform 35、Build Tools 35.0.0、NDK 27.2.12479018、Platform Tools 与 Emulator。默认 SDK 位置示例：
 
@@ -41,7 +41,7 @@ adb -s "$ANDROID_SERIAL" shell getprop ro.product.cpu.abilist
 adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed
 ```
 
-ABI 必须包含 `arm64-v8a`；启动状态应为 `1`。测试不支持 x86 模拟器。测试脚本会设置和移除端口 5174 的 `adb reverse`。
+ABI 必须包含 `arm64-v8a` 或 `x86_64`；启动状态应为 `1`。Intel/AMD 主机使用 x86_64 系统镜像，Apple Silicon 使用 arm64-v8a。测试会自动选择 ABI，或通过 `ANSERONUI_ANDROID_ABI` 指定。x86_64 构建需要 LLVM 22+，默认 Linux 命令为 `clang-22`，macOS 为 Homebrew LLVM；自定义路径设置 `ANSERONUI_ANDROID_LLVM_CLANG`。测试脚本会设置和移除端口 5174 的 `adb reverse`。
 
 ## HarmonyOS
 
@@ -70,12 +70,12 @@ HarmonyOS 构建使用 DevEco 自带 Java。若与 Android 共用一台主机，
 
 1. 打开仓库 Settings → Actions → Runners → New self-hosted runner，选择 macOS / ARM64。
 2. 在源码 checkout 以外的目录执行 GitHub 页面给出的下载、解压与 `config.sh` 命令。页面生成的注册 token 仅用于注册，不写入仓库。
-3. 注册时添加所需标签：`anseronui-android` 或 `anseronui-harmony`。共用一台主机时，给同一个 runner 添加两个标签。保留默认的 `self-hosted`、`macOS`、`ARM64` 标签。
+3. 注册时添加 `anseronui-harmony` 标签。保留默认的 `self-hosted`、`macOS`、`ARM64` 标签。
 4. 在启动 runner 的终端中设置上述平台环境变量。运行 `./run.sh`。保持终端与桌面登录会话开启，确认页面显示 **Idle**。
 
 需要后台常驻时，使用 runner 自带的 `svc.sh` 为当前登录用户安装服务。安装前在同一终端执行 `./env.sh`，保存 PATH。平台变量写入 runner 目录的 `.env`，使用真实绝对路径，不写 `$HOME` 等 shell 表达式。修改 `.env` 后重启服务。模拟器仍需已启动，图形会话仍需保持登录。
 
-两个平台共用一个 runner 进程时，GitHub 会依次派发两个任务。若同一主机启动多个 runner 进程，平台各自的 concurrency group 无法避免跨平台资源争用。
+同一主机只启动一个 HarmonyOS runner 进程，避免争用设备和图形会话。
 
 ## 验证并启用
 
@@ -83,19 +83,18 @@ HarmonyOS 构建使用 DevEco 自带 Java。若与 Android 共用一台主机，
 
 ```sh
 npm ci --ignore-scripts
-npm run test:ci -- android
+npm run test:ci -- harmony
 ```
 
-HarmonyOS runner 改为执行 `npm run test:ci -- harmony`。先确认 suite 成功，再在仓库 Settings → Secrets and variables → Actions → Variables 中添加：
+先确认 suite 成功，再在仓库 Settings → Secrets and variables → Actions → Variables 中添加：
 
 | 变量 | 值 | 启用条件 |
 | --- | --- | --- |
-| `ANSERONUI_ANDROID_CI` | `true` | Android runner 在线且本地 suite 通过 |
 | `ANSERONUI_HARMONY_CI` | `true` | HarmonyOS runner 在线且本地 suite 通过 |
 
-在 Actions → Tests → Run workflow 手动运行一次。检查两个设备 job、上传的 artifacts 与 `Full test gate`。随后每次 push 自动执行同一工作流。将 `Full test gate` 加入分支保护的 required checks。
+在 Actions → Tests → Run workflow 手动运行一次。检查 Android 和 HarmonyOS 设备 job、上传的 artifacts 与 `Full test gate`。随后每次 push 自动执行同一工作流。将 `Full test gate` 加入分支保护的 required checks。
 
-变量未启用时，设备 job 跳过，push 的 gate 失败并说明设备覆盖不完整。变量启用但 runner 离线时，GitHub 会等待匹配 runner；将其恢复在线或关闭对应变量。关闭变量不会把全端测试算作通过。
+HarmonyOS 变量未启用时，该设备 job 跳过，push 的 gate 失败并说明设备覆盖不完整。变量启用但 runner 离线时，GitHub 会等待匹配 runner；将其恢复在线或关闭对应变量。关闭变量不会把全端测试算作通过。
 
 ## 排查接入失败
 

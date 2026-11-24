@@ -150,10 +150,13 @@ function compareNdkVersionsDesc(a: string, b: string): number {
  * the NDK ships exactly one per host OS. Memoized per selection
  * environment. */
 const ndkSysrootMemos = new Map<string, string>();
-function androidNdkSysroot(env: NodeJS.ProcessEnv): string {
-  const key = ["ANDROID_NDK_ROOT", "ANDROID_NDK_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT"]
-    .map((name) => env[name] ?? "")
-    .join("\0");
+function androidNdkSysroot(env: NodeJS.ProcessEnv, target: string): string {
+  const key =
+    target +
+    "\0" +
+    ["ANDROID_NDK_ROOT", "ANDROID_NDK_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT"]
+      .map((name) => env[name] ?? "")
+      .join("\0");
   const memo = ndkSysrootMemos.get(key);
   if (memo !== undefined) return memo;
   const ndkRoots: string[] = [];
@@ -193,7 +196,7 @@ function androidNdkSysroot(env: NodeJS.ProcessEnv): string {
     }
     for (const host of hosts) {
       const sysroot = join(prebuilt, host, "sysroot");
-      if (existsSync(join(sysroot, "usr", "include", "aarch64-linux-android"))) {
+      if (existsSync(join(sysroot, "usr", "include", target))) {
         ndkSysrootMemos.set(key, sysroot);
         return sysroot;
       }
@@ -202,7 +205,7 @@ function androidNdkSysroot(env: NodeJS.ProcessEnv): string {
   throw new Error(
     "no Android NDK sysroot was found — install an NDK (sdkmanager 'ndk;<version>') and/or set " +
       "ANDROID_NDK_ROOT to it (ANDROID_HOME with an ndk/ directory also works). " +
-      "aarch64-linux-android compiles against the NDK's bionic headers.",
+      `${target} compiles against the NDK's bionic headers.`,
   );
 }
 
@@ -264,8 +267,8 @@ export function resolveCc(
     // versioned stub libraries enforce at the embedder's link. API 26
     // bionic carries everything the library-lane units call (arc4random_buf
     // included), so no shim TU joins the archive.
-    const sysroot = androidNdkSysroot(env);
-    const zigTarget = `aarch64-linux-android.${ANDROID_MIN_API}`;
+    const sysroot = androidNdkSysroot(env, target);
+    const zigTarget = `${target}.${ANDROID_MIN_API}`;
     return {
       argv: ["zig", "cc"],
       target,
@@ -277,7 +280,7 @@ export function resolveCc(
         "-isystem",
         join(sysroot, "usr", "include"),
         "-isystem",
-        join(sysroot, "usr", "include", "aarch64-linux-android"),
+        join(sysroot, "usr", "include", target),
       ],
       linkArgs: ["-lm"],
     };

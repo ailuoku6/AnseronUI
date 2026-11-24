@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { copySDK, sdkFingerprint, toolchainHost, sdkAliases } from './sdk-files.mjs';
+import { androidABI } from './android-abi.mjs';
 import { buildHarmony, runHarmony } from './harmony-app.mjs';
 import { buildMacOS, requireMacOS, validateMacOSBuild } from './macos-app.mjs';
 import { discoverNativePlugins, generateNativePlugins, pluginBuildConfig } from './native-plugins.mjs';
@@ -135,7 +136,7 @@ export function createStandalone(targetPath, { name, applicationId, force = fals
   write(join(target, 'platforms/android/settings.gradle'), `pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\nrootProject.name = '${displayName}'\ninclude ':app', ':render'\n`);
   const renderer = posix(relative(join(target, 'platforms/android'), resolve(target, config.app.framework, 'packages/render-android')));
   write(join(target, 'platforms/android/render/build.gradle'), `plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }\nandroid {\n namespace 'org.anseronui.render'\n compileSdk 35\n defaultConfig { minSdk 26 }\n compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }\n kotlinOptions { jvmTarget = '17' }\n sourceSets.main {\n  java.srcDirs = [rootProject.file(${JSON.stringify(renderer + '/src/main/java')})]\n  manifest.srcFile rootProject.file(${JSON.stringify(renderer + '/src/main/AndroidManifest.xml')})\n  jniLibs.srcDirs = [rootProject.file('../../.verification/android-jni')]\n }\n}\napply from: rootProject.file(${JSON.stringify(renderer + '/../devtools/native/android.gradle')})\n`);
-  write(join(target, 'README.md'), `# ${displayName}\n\nAnseronUI 跨平台应用，应用标识 \`${identifier}\`。\n\n\`npm install\` → \`npm run setup\` → \`npm run ios\` / \`npm run android\` / \`npm run macos\`。\n\nsetup 使用 npm 包内的固定版本编译器源码构建工具链，无需 Git。iOS 需要 macOS、Xcode、模拟器 runtime 和 Python 3。macOS AppKit 需要 Apple Silicon、macOS 15+ 构建主机与 Xcode。Android 需要 SDK 35、NDK、JDK 17–22 及 arm64-v8a 设备或模拟器。\n\n指定设备：\`npm run ios -- --device <UUID或名称>\`、\`npm run android -- --device <serial>\`，或 \`npm run android -- --avd <AVD名称>\`。\`--no-build\` 复用已有产物，\`--dry-run\` 预览操作。\n\n\`npm run check\` 检查配置；\`npm run typecheck\` 检查 TSX。\`npm run build:ios\` / \`npm run build:android\` / \`npm run build:macos\` 只构建；\`build:ios-device\` 生成未签名真机产物，需自行配置 Xcode 签名。\n\nWeb：\`npm run build:web\`，然后 \`npm run dev:web\`。修改 TSX 后需重新编译 Wasm。\n\n页面位于 \`src/pages\`；页面清单位于 \`anseronui.config.json\`。${localFramework ? '本地源码模式：页面路径相对于框架目录。' : '配置中的页面、源码及 Web 路径相对于本工程，可整体移动工程。npm 依赖固定版本，提交 package-lock.json 以锁定依赖。SDK 与编译器缓存位于 .anseronui/，构建产物位于 .verification/、platforms/android/app/build/ 和 dist/web/。无需框架源码仓库。'}\n\n应用图标：已附带默认图标及浅色／深色／着色、自适应和单色资源，位于 \`assets/icons/\`。替换图片，或在 \`anseronui.config.json\` 的 \`app.icon\` 配置 1024 × 1024 不透明 PNG，或按平台指定 iOS 浅色／深色／着色及 Icon Composer、Android 自适应／单色／night 资源。运行 \`npm run check\` 后重新构建。完整说明见[应用图标文档](node_modules/anseronui/dist/sdk/docs/guides/project/app-icons.md)，本地源码模式可查看框架 \`docs/guides/project/app-icons.md\`。\n\n五端使用共享 TSX 页面；iOS、Android 与 Web 支持范围见框架文档，macOS 使用原生 AppKit Renderer；鸿蒙使用 Stage/ArkUI Native Node。鸿蒙运行：\`npm run harmony\`，构建：\`npm run build:harmony\`。需要 DevEco HarmonyOS 6.0.1/API 21 SDK 和主机 LLVM 23（HARMONY_LLVM_CLANG）。构建与签名要求见框架 docs/platforms/harmonyos.md。\n\n调试工具：另开终端运行 \`npm run devtools\`，打开 http://127.0.0.1:8091/__anseronui_devtools，再启动 Debug App。业务代码无需导入或注册 DevTools。命令行用 \`npx anseronui inspect sessions\` 获取页面 ID，再用 \`npx anseronui inspect nodes --pager <pagerId>\`、\`logs\`、\`network\`、\`native\` 检索页面信息；支持过滤、分页及单条详情。正式 Release 构建排除调试插桩。完整说明见[DevTools 文档](node_modules/anseronui/dist/sdk/docs/diagnostics/devtools.md)。\n\n原生插件：使用 \`npm install <插件包>\` 安装到生产依赖，\`npm run check\` 查看已发现插件，再重新构建目标平台。构建自动接入包内的原生源码和注册表；生成文件位于 \`.anseronui/plugins/\`，请勿手动修改。插件发布协议见 AnseronUI 框架 README。\n`);
+  write(join(target, 'README.md'), `# ${displayName}\n\nAnseronUI 跨平台应用，应用标识 \`${identifier}\`。\n\n\`npm install\` → \`npm run setup\` → \`npm run ios\` / \`npm run android\` / \`npm run macos\`。\n\nsetup 使用 npm 包内的固定版本编译器源码构建工具链，无需 Git。iOS 需要 macOS、Xcode、模拟器 runtime 和 Python 3。macOS AppKit 需要 Apple Silicon、macOS 15+ 构建主机与 Xcode。Android 需要 SDK 35、NDK、JDK 17–22 及 arm64-v8a 或 x86_64 设备/模拟器。运行时自动选择设备 ABI；只构建时默认 ARM64，ANSERONUI_ANDROID_ABI=x86_64 可指定 x86_64。x86_64 构建还需要 LLVM 22+，可通过 ANSERONUI_ANDROID_LLVM_CLANG 指定路径。\n\n指定设备：\`npm run ios -- --device <UUID或名称>\`、\`npm run android -- --device <serial>\`，或 \`npm run android -- --avd <AVD名称>\`。\`--no-build\` 复用已有产物，\`--dry-run\` 预览操作。\n\n\`npm run check\` 检查配置；\`npm run typecheck\` 检查 TSX。\`npm run build:ios\` / \`npm run build:android\` / \`npm run build:macos\` 只构建；\`build:ios-device\` 生成未签名真机产物，需自行配置 Xcode 签名。\n\nWeb：\`npm run build:web\`，然后 \`npm run dev:web\`。修改 TSX 后需重新编译 Wasm。\n\n页面位于 \`src/pages\`；页面清单位于 \`anseronui.config.json\`。${localFramework ? '本地源码模式：页面路径相对于框架目录。' : '配置中的页面、源码及 Web 路径相对于本工程，可整体移动工程。npm 依赖固定版本，提交 package-lock.json 以锁定依赖。SDK 与编译器缓存位于 .anseronui/，构建产物位于 .verification/、platforms/android/app/build/ 和 dist/web/。无需框架源码仓库。'}\n\n应用图标：已附带默认图标及浅色／深色／着色、自适应和单色资源，位于 \`assets/icons/\`。替换图片，或在 \`anseronui.config.json\` 的 \`app.icon\` 配置 1024 × 1024 不透明 PNG，或按平台指定 iOS 浅色／深色／着色及 Icon Composer、Android 自适应／单色／night 资源。运行 \`npm run check\` 后重新构建。完整说明见[应用图标文档](node_modules/anseronui/dist/sdk/docs/guides/project/app-icons.md)，本地源码模式可查看框架 \`docs/guides/project/app-icons.md\`。\n\n五端使用共享 TSX 页面；iOS、Android 与 Web 支持范围见框架文档，macOS 使用原生 AppKit Renderer；鸿蒙使用 Stage/ArkUI Native Node。鸿蒙运行：\`npm run harmony\`，构建：\`npm run build:harmony\`。需要 DevEco HarmonyOS 6.0.1/API 21 SDK 和主机 LLVM 23（HARMONY_LLVM_CLANG）。构建与签名要求见框架 docs/platforms/harmonyos.md。\n\n调试工具：另开终端运行 \`npm run devtools\`，打开 http://127.0.0.1:8091/__anseronui_devtools，再启动 Debug App。业务代码无需导入或注册 DevTools。命令行用 \`npx anseronui inspect sessions\` 获取页面 ID，再用 \`npx anseronui inspect nodes --pager <pagerId>\`、\`logs\`、\`network\`、\`native\` 检索页面信息；支持过滤、分页及单条详情。正式 Release 构建排除调试插桩。完整说明见[DevTools 文档](node_modules/anseronui/dist/sdk/docs/diagnostics/devtools.md)。\n\n原生插件：使用 \`npm install <插件包>\` 安装到生产依赖，\`npm run check\` 查看已发现插件，再重新构建目标平台。构建自动接入包内的原生源码和注册表；生成文件位于 \`.anseronui/plugins/\`，请勿手动修改。插件发布协议见 AnseronUI 框架 README。\n`);
   writeFileSync(join(target, 'README.md'), '\nAI 开发入口见 [AGENTS.md](AGENTS.md)，其中包含 [TSX 开发 skill](.agents/skills/anseronui-development/SKILL.md) 和 [页面调试 skill](.agents/skills/anseronui-debugging/SKILL.md)。\n', { flag: 'a' });
   generateNativePlugins(target, []);
   console.log(`Created independent AnseronUI app: ${target}\nApplication ID: ${identifier}\nNext: cd ${JSON.stringify(target)}${localFramework ? '' : ' && npm install'} && npm run setup && npm run ios\nAndroid: npm run android\nmacOS: npm run macos`);
@@ -235,7 +236,7 @@ function javaEnvironment(env) {
   if (!home) throw new Error('Set JAVA_HOME to JDK 17–22 (recommended 17); Android Studio JBR 21 is also supported.');
   return { ...env, JAVA_HOME: home };
 }
-export function buildStandalone(configPath, target, { release = false, signed = false } = {}) {
+export function buildStandalone(configPath, target, { release = false, signed = false, androidAbi } = {}) {
   release ||= signed;
   if (!['web', 'ios', 'ios-device', 'android', 'macos', 'harmony'].includes(target)) throw new Error('Expected web, ios, ios-device, android, or macos');
   if (signed && target.startsWith('ios') && !process.env.ANSERONUI_IOS_TEAM_ID) throw new Error('Set ANSERONUI_IOS_TEAM_ID to create a signed iOS distribution IPA.');
@@ -250,6 +251,7 @@ export function buildStandalone(configPath, target, { release = false, signed = 
   if (config.schemaVersion === 2 && (!existsSync(join(framework, '.compiler-fingerprint')) || readFileSync(join(framework, '.compiler-fingerprint'), 'utf8') !== readFileSync(join(framework, '.sdk-fingerprint'), 'utf8'))) throw new Error('SDK changed; run npm run setup before building.');
   if (!existsSync(join(framework, 'internal/toolchain/scriptc/packages/compiler/dist/index.js'))) throw new Error('Run npm run setup from the app first.');
   const env = { ...(target === 'android' ? javaEnvironment(androidEnvironment()) : process.env), ANSERONUI_DEBUG_BUILD: release ? '0' : '1', ANSERONUI_RELEASE_BUILD: release ? '1' : '0' };
+  if (target === 'android') env.ANSERONUI_ANDROID_ABI = androidABI(androidAbi ? { ...env, ANSERONUI_ANDROID_ABI: androidAbi } : env).abi;
   if (target === 'android' && release) {
     const ndkDirectory = join(env.ANDROID_HOME, 'ndk');
     env.ANDROID_NDK_ROOT ??= join(ndkDirectory, readdirSync(ndkDirectory).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}))[0]);
@@ -282,21 +284,22 @@ export function buildStandalone(configPath, target, { release = false, signed = 
       if (signed && !['ANSERONUI_ANDROID_KEYSTORE','ANSERONUI_ANDROID_STORE_PASSWORD','ANSERONUI_ANDROID_KEY_ALIAS','ANSERONUI_ANDROID_KEY_PASSWORD'].every(name => process.env[name])) throw new Error('Set ANSERONUI_ANDROID_KEYSTORE, ANSERONUI_ANDROID_STORE_PASSWORD, ANSERONUI_ANDROID_KEY_ALIAS, and ANSERONUI_ANDROID_KEY_PASSWORD to create signed Android artifacts.');
       const native = join(app, 'platforms/android');
       write(join(native, 'app/src/main/assets/core.manifest.json'), readFileSync(join(core, 'manifest.json')));
-      const jni = join(app, '.verification/android-jni/arm64-v8a'); mkdirSync(jni, { recursive: true });
+      const { abi } = androidABI(env);
+      const jni = join(app, '.verification/android-jni', abi); mkdirSync(jni, { recursive: true });
       const library = join(jni, 'libanseronui.so');
-      copyFileSync(join(framework, 'packages/render-android/src/main/jniLibs/arm64-v8a/libanseronui.so'), library);
+      copyFileSync(join(framework, 'packages/render-android/src/main/jniLibs', abi, 'libanseronui.so'), library);
       if (release) {
         const ndk = env.ANDROID_NDK_ROOT;
         const prebuilt = join(ndk, 'toolchains/llvm/prebuilt');
         const host = readdirSync(prebuilt).find(name => name.startsWith(process.platform === 'darwin' ? 'darwin' : 'linux'));
         if (!host) throw new Error(`No Android NDK toolchain found in ${prebuilt}`);
         const objcopy = join(prebuilt, host, 'bin/llvm-objcopy');
-        const symbols = join(app, '.verification/android-symbols/arm64-v8a'); mkdirSync(symbols, { recursive: true });
+        const symbols = join(app, '.verification/android-symbols', abi); mkdirSync(symbols, { recursive: true });
         run(objcopy, ['--only-keep-debug', library, join(symbols, 'libanseronui.so.dbg')], { env });
         run(objcopy, ['--strip-debug', library], { env });
         run(objcopy, ['--add-gnu-debuglink=' + join(symbols, 'libanseronui.so.dbg'), library], { env });
       }
-      run(join(native, 'gradlew'), ['-p', native, ...(release ? [':app:assembleRelease', ':app:bundleRelease'] : [':app:assembleDebug']), '--console=plain'], { env });
+      run(join(native, 'gradlew'), ['-p', native, `-PanseronuiAbi=${abi}`, ...(release ? [':app:assembleRelease', ':app:bundleRelease'] : [':app:assembleDebug']), '--console=plain'], { env });
     } else {
       const ios = join(app, 'platforms/ios');
       write(join(ios, 'core.manifest.json'), readFileSync(join(core, 'manifest.json')));
@@ -448,8 +451,14 @@ export async function runStandalone(configPath, target, options = {}) {
     console.log(`Android device: ${serial}`);
     await untilReady(() => adbOut(['-s', serial, 'shell', 'getprop', 'sys.boot_completed']) === '1', 'Android boot');
     const abi = adbOut(['-s', serial, 'shell', 'getprop', 'ro.product.cpu.abilist']);
-    if (!abi.split(',').includes('arm64-v8a')) throw new Error(`This framework builds arm64-v8a; device ABIs are ${abi}. Use an ARM64 device/emulator.`);
-    if (!options['no-build']) buildStandalone(configPath, target);
+    const selected = androidABI(env, abi);
+    if (!options['no-build']) buildStandalone(configPath, target, { androidAbi: selected.abi });
+    else {
+      const manifestPath = join(app, '.verification/core-android/manifest.json');
+      const builtABI = existsSync(manifestPath) ? json(manifestPath).targetIdentity?.abi ?? 'arm64-v8a' : 'arm64-v8a';
+      androidABI({ ANSERONUI_ANDROID_ABI: builtABI }, abi);
+      if (env.ANSERONUI_ANDROID_ABI && selected.abi !== builtABI) throw new Error(`Existing APK was built for ${builtABI}; rebuild for ${selected.abi} before --no-build.`);
+    }
     const apk = join(app, 'platforms/android/app/build/outputs/apk/debug/app-debug.apk');
     if (!existsSync(apk)) throw new Error('APK missing. Run npm run build:android first.');
     run(adb, ['-s', serial, 'reverse', 'tcp:8091', 'tcp:8091'], { env });

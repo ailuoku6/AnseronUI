@@ -32,7 +32,7 @@ npm run android -- --dry-run
 - Android：默认使用唯一在线设备。没有连接设备且只有一个 AVD 时自动启动。多个 AVD 用 `--avd`，多个连接设备用 `--device`。`adb devices` 查看序列号，`emulator -list-avds` 查看 AVD。离线或未授权设备需要先处理，命令不会绕过授权。
 - macOS：构建 Apple Silicon arm64 `.app` 并在当前 Mac 启动。`npm run macos -- --no-build` 会校验已有产物和输入；输入变了就要重新构建。macOS 不接受 `--device` 或 `--avd`。
 - HarmonyOS：`npm run harmony`。SDK 和验证范围见[HarmonyOS](../platforms/harmonyos.md)。
-- Android 安装前检查 `arm64-v8a`，拒绝向 x86 模拟器安装。启动 AVD 最多等待 180 秒，日志在 `.verification/emulator.log`。
+- Android 支持 `arm64-v8a` 和 `x86_64`。运行命令按设备 ABI 选择构建目标；`--no-build` 会检查已有 Core 的 ABI 与设备兼容。只构建时默认 ARM64，设置 `ANSERONUI_ANDROID_ABI=x86_64` 可构建模拟器 APK。x86_64 还需要 LLVM 22+，Linux 默认使用 `clang-22`，macOS 默认使用 `/opt/homebrew/opt/llvm/bin/clang`；可通过 `ANSERONUI_ANDROID_LLVM_CLANG` 指定路径。启动 AVD 最多等待 180 秒，日志在 `.verification/emulator.log`。
 - `--device` 和 `--avd` 互斥。`--avd` 只用于 Android。
 - iOS 和 Android 的 `--no-build` 安装并启动已有产物，不检查业务源码是否变化。
 - `--dry-run` 只打印平台、应用标识和步骤，不访问设备，也不构建。

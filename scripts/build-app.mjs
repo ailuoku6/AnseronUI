@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
+import { androidABI } from './android-abi.mjs';
 import { buildHarmony } from './harmony-app.mjs';
 import { buildMacOS, requireMacOS } from './macos-app.mjs';
 import { homedir } from 'node:os';
@@ -53,6 +54,7 @@ if (target === 'harmony') {
     }
   } else run('xcodebuild',['-project','examples/native/ios/AnseronUIDemo.xcodeproj','-scheme','AnseronUIDemo','-configuration','Debug','-sdk',target==='ios'?'iphonesimulator':'iphoneos','-derivedDataPath',`.verification/${target==='ios'?'ios-app':'ios-device-app'}`,...(target === 'ios' ? ['CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-'] : ['CODE_SIGNING_ALLOWED=NO']),'ARCHS=arm64','build']);
 } else if (target === 'android') {
+  const { abi } = androidABI();
   run(process.execPath,['scripts/build-core.mjs','android', ...coreArgs]);
   generateAppIcons(process.cwd(), iconConfig, 'android', { androidProjectDir: 'examples/native/android' });
   integrateAndroidIcons(process.cwd(), { projectDir: 'examples/native/android' });
@@ -69,16 +71,16 @@ if (target === 'harmony') {
     const host = readdirSync(prebuilt).find(name => name.startsWith(process.platform === 'darwin' ? 'darwin' : 'linux'));
     if (!host) throw new Error(`No Android NDK toolchain found in ${prebuilt}`);
     const objcopy = join(prebuilt, host, 'bin/llvm-objcopy');
-    const library = '.verification/android-jni/arm64-v8a/libanseronui.so';
-    const symbols = '.verification/android-symbols/arm64-v8a';
+    const library = `.verification/android-jni/${abi}/libanseronui.so`;
+    const symbols = `.verification/android-symbols/${abi}`;
     mkdirSync(symbols, { recursive: true });
-    mkdirSync('.verification/android-jni/arm64-v8a', { recursive: true });
-    copyFileSync('packages/render-android/src/main/jniLibs/arm64-v8a/libanseronui.so', library);
+    mkdirSync(`.verification/android-jni/${abi}`, { recursive: true });
+    copyFileSync(`packages/render-android/src/main/jniLibs/${abi}/libanseronui.so`, library);
     run(objcopy, ['--only-keep-debug', library, join(symbols, 'libanseronui.so.dbg')], env);
     run(objcopy, ['--strip-debug', library], env);
     run(objcopy, ['--add-gnu-debuglink=' + join(symbols, 'libanseronui.so.dbg'), library], env);
   }
-  run('examples/native/android/gradlew',['-p','examples/native/android',...(release?[':app:assembleRelease',':app:bundleRelease']:[':app:assembleDebug']),'--console=plain'],env);
+  run('examples/native/android/gradlew',['-p','examples/native/android',`-PanseronuiAbi=${abi}`,...(release?[':app:assembleRelease',':app:bundleRelease']:[':app:assembleDebug']),'--console=plain'],env);
 } else if (target === 'web') {
   run(process.execPath,['scripts/build-core.mjs','wasm', ...coreArgs]);
   // The framework repository has a checked-in demo Vite host. Standalone

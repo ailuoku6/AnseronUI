@@ -165,6 +165,16 @@ test('Android run targets the chosen serial for install and launch, and stops on
     const abi = appCLI(f, ['run', 'android', '--no-build'], { ...fake.env, CLI_TEST_ABI: 'x86_64' });
     assert.notEqual(abi.status, 0); assert.match(abi.stderr, /arm64-v8a/);
     assert.ok(!fake.calls().some(item => item.args.includes('install')));
+    const core = join(f.app, '.verification/core-android'); mkdirSync(core, { recursive: true });
+    writeFileSync(join(core, 'manifest.json'), JSON.stringify({ targetIdentity: { abi: 'x86_64' } }));
+    writeFileSync(fake.log, '');
+    const x86 = appCLI(f, ['run', 'android', '--no-build'], { ...fake.env, CLI_TEST_ABI: 'x86_64' });
+    assert.equal(x86.status, 0, x86.stderr);
+    assert.ok(fake.calls().some(item => item.args.includes('install')));
+    writeFileSync(fake.log, '');
+    const wrong = appCLI(f, ['run', 'android', '--no-build'], fake.env);
+    assert.notEqual(wrong.status, 0); assert.match(wrong.stderr, /x86_64.*incompatible/);
+    assert.ok(!fake.calls().some(item => item.args.includes('install')));
   } finally { f.cleanup(); }
 });
 

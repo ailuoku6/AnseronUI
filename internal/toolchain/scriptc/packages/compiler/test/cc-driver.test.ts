@@ -117,6 +117,34 @@ test("an empty ANDROID_NDK_ROOT does not mask ANDROID_NDK_HOME", async () => {
   expect(driver.targetArgs).toContain(join(sysroot, "usr", "include"));
 });
 
+test("Android targets select their own NDK headers and API floor", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "scr-android-abis-"));
+  const sysroot = join(dir, "toolchains", "llvm", "prebuilt", "test-host", "sysroot");
+  try {
+    for (const target of ["aarch64-linux-android", "x86_64-linux-android"]) {
+      await mkdir(join(sysroot, "usr", "include", target), { recursive: true });
+      const env = { SCRIPTC_CC: "zigcc", SCRIPTC_TARGET: target, ANDROID_NDK_ROOT: dir };
+      expect(configuredTargetPlatform(env)).toBe("linux");
+      const driver = resolveCc(env, "linux");
+      expect(driver.zigTarget).toBe(`${target}.26`);
+      expect(driver.targetArgs).toEqual([
+        "-target",
+        `${target}.26`,
+        "-D_GNU_SOURCE",
+        "-isystem",
+        join(sysroot, "usr", "include"),
+        "-isystem",
+        join(sysroot, "usr", "include", target),
+      ]);
+    }
+    expect(() => resolveCc({ SCRIPTC_CC: "zigcc", SCRIPTC_TARGET: "i686-linux-android" })).toThrow(
+      "unsupported mobile target",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test.skipIf(process.platform === "win32")(
   "iOS SDK discovery uses the resolver's explicit environment",
   async () => {

@@ -3,6 +3,7 @@ import {
   IOS_ARM64_TARGET,
   IOS_SIMULATOR_ARM64_TARGET,
   ANDROID_ARM64_TARGET,
+  ANDROID_X64_TARGET,
   nativeHelperForTarget,
   LINUX_ARM64_GNU_TARGET,
   LINUX_ARM64_MUSL_TARGET,
@@ -98,6 +99,7 @@ describe("native code-generation targets", () => {
     expect(ffiExtendsNarrowIntegers("aarch64-apple-ios", "linux", "arm64")).toBe(true);
     expect(ffiExtendsNarrowIntegers("aarch64-macos", "linux", "arm64")).toBe(true);
     expect(ffiExtendsNarrowIntegers("aarch64-linux-android", "darwin", "arm64")).toBe(false);
+    expect(ffiExtendsNarrowIntegers("x86_64-linux-android", "darwin", "arm64")).toBe(true);
     expect(ffiExtendsNarrowIntegers(undefined, "darwin", "arm64")).toBe(true);
     expect(ffiExtendsNarrowIntegers(undefined, "linux", "x64")).toBe(true);
     expect(ffiExtendsNarrowIntegers(undefined, "linux", "arm64")).toBe(false);
@@ -182,7 +184,23 @@ describe("native code-generation targets", () => {
         "24.0.0",
       ),
     ).toEqual(IOS_SIMULATOR_ARM64_TARGET);
-    for (const target of [IOS_ARM64_TARGET, IOS_SIMULATOR_ARM64_TARGET, ANDROID_ARM64_TARGET]) {
+    for (const platform of ["darwin", "linux", "win32"] as const) {
+      const android = nativeCodegenTarget(
+        { SCRIPTC_TARGET: "x86_64-linux-android" },
+        platform,
+        "x64",
+        "24.0.0",
+        "gnu",
+      );
+      expect(android).toEqual(ANDROID_X64_TARGET);
+      expect(nativeHelperForTarget(android!, platform, "x64", "gnu")).not.toBeNull();
+    }
+    for (const target of [
+      IOS_ARM64_TARGET,
+      IOS_SIMULATOR_ARM64_TARGET,
+      ANDROID_ARM64_TARGET,
+      ANDROID_X64_TARGET,
+    ]) {
       expect(target.supports).toEqual({ asm: true, obj: true, exe: false, library: true });
     }
   });

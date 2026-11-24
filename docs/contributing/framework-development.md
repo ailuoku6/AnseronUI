@@ -4,12 +4,12 @@
 
 ## 开发环境与依赖
 
-当前构建脚本以 macOS Apple Silicon 开发环境为主要验证环境：iOS 模拟器和设备构建固定 arm64，Android 产物固定 `arm64-v8a`。不要把这些命令视为已经覆盖 Intel 模拟器或所有开发主机。
+iOS 模拟器和设备构建固定 arm64，需要 Apple Silicon Mac。Android 支持 `arm64-v8a` 和 `x86_64`，可在 Linux CI 中构建并运行 x86_64 模拟器。
 
 - 通用：Node.js 24+、npm、Python 3、C/C++ 工具链；`prepare:compiler` 安装编译器依赖时还需要 pnpm。
 - 编译器：仓库包含固定版本的 [scriptc](https://github.com/vercel-labs/scriptc) 0.4.8 及异步 embedding 适配；首次准备会安装 npm 依赖。
 - iOS：完整 Xcode 和已选择的 Developer 目录；部署目标为 iOS 15+。
-- Android：JDK 17、Android SDK（compileSdk 35）、NDK；应用最低 Android API 26。
+- Android：JDK 17、Android SDK（compileSdk 35）、NDK；应用最低 Android API 26。x86_64 的异步 AOT 需要 LLVM 22+，可用 `ANSERONUI_ANDROID_LLVM_CLANG` 指定编译器路径。
 - macOS：Apple Silicon、macOS 15+ 构建主机与完整 Xcode；产物声明最低 macOS 14，兼容性验证边界见 [AppKit Renderer](../../packages/render-macos/README.md)。
 - Web/Wasm：同一套 [scriptc](https://github.com/vercel-labs/scriptc)/WASI 编译链。Wasm 相关编译需要可用的 Zig 工具链。
 
@@ -84,7 +84,7 @@ adb install -r examples/native/android/app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n org.anseronui.demo/.MainActivity
 ```
 
-请先启动 arm64 Android 模拟器或连接设备；多个设备时使用 `adb -s <设备序列号>`。SDK 路径可通过 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 设置，NDK 可通过 `ANDROID_NDK_ROOT` 设置。
+请先启动 arm64-v8a / x86_64 Android 模拟器或连接设备；多个设备时使用 `adb -s <设备序列号>`。SDK 路径可通过 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 设置，NDK 可通过 `ANDROID_NDK_ROOT` 设置。
 
 异步表单的 HTTP 演示依赖本地 fixture：另开终端运行 `npm run dev:async-form -- --port 5174 --strictPort`，Android 再运行 `adb reverse tcp:5174 tcp:5174`。没有 fixture 时，HTTP 演示或依赖它的设备测试会失败。
 

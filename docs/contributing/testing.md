@@ -16,12 +16,12 @@
 | `npm run test:ci -- ios` | macOS 专属 CLI 路径、原生图标编译、当前 AOT 构建、UIKit transport 测试、XCUITest | Apple Silicon Mac、Xcode、已安装 iPhone simulator runtime |
 | `npm run test:ci -- macos` | 当前 AOT/AppKit 集成、Renderer 回归、DevTools 截图 | Apple Silicon macOS 15+、Xcode、图形会话 |
 | `npm run test:ci -- android-build` | 原生图标资源编译、当前 arm64 APK、instrumentation APK | JDK 17、SDK 35、NDK、Zig |
-| `npm run test:ci -- android` | 当前 AOT 构建、全部 instrumentation 用例 | 上述工具与已连接 arm64 设备/模拟器 |
+| `npm run test:ci -- android` | 当前 AOT 构建、全部 instrumentation 用例 | 上述工具与已连接 arm64-v8a / x86_64 设备或模拟器；x86_64 需要 LLVM 22+ |
 | `npm run test:ci -- harmony` | smoke 和主示例的构建、安装、UI 验收 | Apple Silicon Mac、DevEco API 21 SDK、LLVM、已连接模拟器/已签名设备 |
 
 套件自动准备编译器。Core 的输出目录共享，因此同一 checkout 内串行运行套件。`native` 和 `wasm` 最后构建专用性能 fixture；后续平台测试会重新构建主配置。
 
-iOS 自动选择可用 iPhone。用 `IOS_SIMULATOR_UDID` 指定设备。Android 用 `ANDROID_SERIAL`；只有一个设备时自动选择。HarmonyOS 用 `HARMONY_DEVICE`。Android 当前只构建 `arm64-v8a`，x86 模拟器不满足运行条件。
+iOS 自动选择可用 iPhone。用 `IOS_SIMULATOR_UDID` 指定设备。Android 用 `ANDROID_SERIAL`；只有一个设备时自动选择。HarmonyOS 用 `HARMONY_DEVICE`。Android 支持 `arm64-v8a` 和 `x86_64`。设备测试自动选择目标 ABI；`ANSERONUI_ANDROID_ABI` 可指定架构。只构建时默认 `arm64-v8a`。x86_64 的异步 AOT 需要 LLVM 22+：Linux 默认使用 `clang-22`，macOS 默认使用 Homebrew LLVM。自定义路径设置 `ANSERONUI_ANDROID_LLVM_CLANG`。CI 自动安装 LLVM 22。
 
 iOS、Android、macOS 自动提供端口 5174 的 HTTP fixture。端口被占用时立即失败。Android 自动设置和释放 `adb reverse`。每条命令有超时；失败返回非零退出码。`.verification/tests/<suite>/` 保存逐步日志与 `results.json`，未执行步骤记录为 `not-run`。
 
@@ -37,18 +37,17 @@ npm run test:harmony:virtual-list -- <hdc-target>
 
 ## GitHub runner
 
-托管 runner 自动执行共享测试、布局、Native/Wasm、WebKit、iOS、macOS 和 Android APK 构建。`macos-15` 使用 Apple Silicon。Android/HarmonyOS 的设备执行需要自托管 runner：
+托管 runner 自动执行共享测试、布局、Native/Wasm、WebKit、iOS、macOS、Android arm64 APK 构建和 x86_64 模拟器测试。Android 使用 `ubuntu-latest`、KVM 和 API 35 Google APIs 模拟器，每次 push、PR 和手动运行都会执行，无需仓库开关或自托管 runner。`macos-15` 使用 Apple Silicon。HarmonyOS 的设备执行需要自托管 runner：
 
 | 平台 | Runner 标签 | 工具与设备 | 仓库 Actions 变量 |
 | --- | --- | --- | --- |
-| Android | `self-hosted`, `macOS`, `ARM64`, `anseronui-android` | Node 24、Python、JDK 17、Android SDK 35、NDK、Zig、已启动的 arm64 模拟器或设备 | `ANSERONUI_ANDROID_CI=true` |
 | HarmonyOS | `self-hosted`, `macOS`, `ARM64`, `anseronui-harmony` | Node 24、Python、Xcode、Zig、DevEco Studio、API 21 SDK、LLVM、已启动的 API 21 模拟器 | `ANSERONUI_HARMONY_CI=true` |
 
 按[设备 runner 接入](device-runners.md)安装工具、启动模拟器、注册 runner、设置进程环境并验证首轮运行，再开启表中的变量。
 
-runner 进程需能读取工具环境：Android 设置 `ANDROID_HOME`、`ANDROID_NDK_ROOT`、`JAVA_HOME`。HarmonyOS 默认使用 `/Applications/DevEco-Studio.app/Contents`，自定义安装设置 `DEVECO_STUDIO_HOME`、`DEVECO_SDK_HOME`、`HARMONY_NATIVE_SDK`、`HARMONY_LLVM_CLANG`。设备序列号通过 runner 的 `ANDROID_SERIAL` / `HARMONY_DEVICE` 环境变量设置。
+HarmonyOS runner 进程需能读取工具环境。默认使用 `/Applications/DevEco-Studio.app/Contents`，自定义安装设置 `DEVECO_STUDIO_HOME`、`DEVECO_SDK_HOME`、`HARMONY_NATIVE_SDK`、`HARMONY_LLVM_CLANG`。设备序列号通过 runner 的 `HARMONY_DEVICE` 环境变量设置。
 
-设备任务在 push 和手动运行时执行。pull request 仅执行托管 runner 任务。设备任务按平台串行，避免争用设备。未配置设备 runner 时，任务跳过，push 的 **Full test gate 失败**并报告覆盖不完整，不会无限等待不存在的 runner。PR 的 gate 仅代表托管任务通过。
+HarmonyOS 设备任务在 push 和手动运行时执行，并串行使用设备。未配置 HarmonyOS runner 时，该任务跳过，push 的 **Full test gate 失败**并报告覆盖不完整。PR 的 gate 要求全部托管任务成功，包括 Android 模拟器测试；不包含 HarmonyOS 设备执行。
 
 在分支保护中将 `Full test gate` 设为 required check，才能阻止测试失败的合并。工作流本身不会修改分支保护。
 

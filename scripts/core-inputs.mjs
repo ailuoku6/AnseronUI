@@ -7,10 +7,17 @@ export const coreSourceDirs = config => [
   'packages/flexily/src', 'packages/protocol/src', ...config.sourceDirs,
 ];
 
+export const androidCompilerInputs = [
+  'internal/toolchain/scriptc/packages/compiler/src/backend/target-platform.ts',
+  'internal/toolchain/scriptc/packages/compiler/src/backend/targets.ts',
+  'internal/toolchain/scriptc/packages/compiler/src/backend/native/driver.ts',
+  'internal/toolchain/scriptc/packages/compiler/src/backend/native/library.ts',
+];
 const buildInputs = [
+  ...androidCompilerInputs,
   "packages/ui-compiler/src/",
   'packages/devtools/instrumentation/index.mjs', 'packages/devtools/instrumentation/runtime.inc', 'packages/devtools/instrumentation/editing.inc',
-  'scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs',
+  'scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs', 'scripts/android-abi.mjs',
   'scripts/prepare-compiler.mjs', 'internal/toolchain/build-library.mjs',
   'internal/toolchain/async-embedding.patch', 'scripts/harmony-library.mjs', 'internal/toolchain/harmony-api21.patch',
 ];
@@ -56,7 +63,7 @@ export function coreFingerprint(root, configPath = 'anseronui.config.json') {
   const config = JSON.parse(readFileSync(configFile, 'utf8'));
   const files = new Set([
     configFile, resolve(root, 'packages/devtools/instrumentation/index.mjs'), resolve(root, 'packages/devtools/instrumentation/runtime.inc'), resolve(root, 'packages/devtools/instrumentation/editing.inc'),
-    ...['scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs',
+    ...[...androidCompilerInputs, 'scripts/stage-core.mjs', 'scripts/core-inputs.mjs', 'scripts/build-core.mjs', 'scripts/android-abi.mjs',
       'internal/toolchain/build-library.mjs', 'internal/toolchain/async-embedding.patch', 'scripts/harmony-library.mjs', 'internal/toolchain/harmony-api21.patch',
       'packages/core/native/profile.json', 'packages/core/native/framework.profile.json', 'packages/core/native/business.profile.json',
       'packages/core/native/split_bridge.c', 'scripts/lower-timers.mjs', 'scripts/prepare-compiler.mjs'].map(path => resolve(root, path)),

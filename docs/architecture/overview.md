@@ -113,7 +113,7 @@ flowchart TD
 - `android`：Android arm64；
 - `wasm`：Wasm32 WASI reactor。
 
-原生目标分别产出独立 Framework Core 与 Business Bundle archive，再合并组合适配器供现有 transport 链接；Android 最终生成 `libanseronui.so`，iOS 通过 Swift/C binding 调用。Web 产出两个 Wasm reactor，由组合 adapter 串行调用。默认应用构建目前固定 iOS arm64 / Android arm64-v8a，并非任意 CPU 架构通用构建。
+原生目标分别产出独立 Framework Core 与 Business Bundle archive，再合并组合适配器供现有 transport 链接；Android 最终生成 `libanseronui.so`，iOS 通过 Swift/C binding 调用。Web 产出两个 Wasm reactor，由组合 adapter 串行调用。iOS 构建固定 arm64。Android 支持 arm64-v8a 和 x86_64，默认构建 arm64-v8a，运行时按设备选择 ABI。
 
 ### 4. 启动与握手
 
