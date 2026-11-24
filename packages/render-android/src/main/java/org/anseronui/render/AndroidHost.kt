@@ -123,7 +123,7 @@ class AndroidHost(
             core = createCore().also {
                 require(it.bundleBuildId.isNotEmpty() && it.bundleBuildId.length <= 128 && it.runtimeEpoch in 1..0xffffffffL)
             }
-            send(JSONObject().put("type", "Handshake").put("requiredNodes", JSONArray(requiredNodes)))
+            send(JSONObject().put("type", "Handshake").put("capabilities", JSONArray(listOf("patchProps", "detachChild", "commitChunks", "resetSurface", "inputRevision"))).put("limits", JSONObject().put("messageBytes",1048576).put("transactionBytes",16777216).put("commandsPerMessage",4096).put("commandsPerTransaction",65536)).put("requiredNodes", JSONArray(requiredNodes)))
         }
     }
 
@@ -147,6 +147,12 @@ class AndroidHost(
         enqueue { visible = value; if (ready) send(JSONObject().put("type", "SurfaceVisibility").put("visible", value)) }
     }
 
+    private var environmentVersion = 0L
+    fun environmentChanged() {
+        if (closed || !started) return
+        renderer.appearanceChanged()
+        enqueue { if (ready) send(JSONObject().put("type", "EnvironmentChanged").put("version", ++environmentVersion)) }
+    }
     fun resize(width: Float, height: Float) {
         require(started && width.isFinite() && width >= 0 && height.isFinite() && height >= 0)
         if (closed) return
@@ -191,7 +197,7 @@ class AndroidHost(
         val runtime = core ?: error("Core not initialized")
         require(inputSequence < 0xffffffffL) { "Input sequence overflow" }
         val envelope = JSONObject()
-            .put("protocolMajor", 1).put("protocolMinor", 5)
+            .put("protocolMajor", 2).put("protocolMinor", 0)
             .put("bundleBuildId", runtime.bundleBuildId).put("runtimeEpoch", runtime.runtimeEpoch)
             .put("surfaceId", surfaceId).put("surfaceGeneration", generation)
             .put("sequence", ++inputSequence).put("ackSequence", outputSequence).put("payload", payload)
@@ -245,20 +251,21 @@ class AndroidHost(
         }
     }
 
+    private val commitBuffer = RenderCommitBuffer()
     private fun handle(bytes: ByteArray) {
         val decodeStart = if (profiling) System.nanoTime() else 0L
         metric(bridgeMetrics, "bridgeOutputBytes", bytes.size.toDouble())
         require(bytes.size <= 1_048_576) { "Output message too large" }
         val envelope = JSONObject(String(bytes, StandardCharsets.UTF_8))
         val runtime = core ?: error("Core disposed")
-        require(envelope.getInt("protocolMajor") == 1 && envelope.getInt("protocolMinor") >= 0)
+        require(envelope.getInt("protocolMajor") == 2 && envelope.getInt("protocolMinor") >= 0)
         require(envelope.getString("bundleBuildId") == runtime.bundleBuildId)
         require(envelope.getLong("runtimeEpoch") == runtime.runtimeEpoch)
         require(envelope.getLong("surfaceId") == surfaceId && envelope.getLong("surfaceGeneration") == generation)
         require(envelope.getLong("sequence") == outputSequence + 1 && outputSequence < 0xffffffffL)
         require(envelope.getLong("ackSequence") in 0..inputSequence)
         outputSequence++
-        val payload = envelope.getJSONObject("payload")
+        val payload = commitBuffer.accept(envelope.getJSONObject("payload")) ?: return
         metric(bridgeMetrics, "bridgeDecodeMs", elapsed(decodeStart))
         val queuedAt = if (profiling) System.nanoTime() else 0L
         when (payload.getString("type")) {
@@ -268,6 +275,10 @@ class AndroidHost(
                 ready = true
                 send(JSONObject().put("type", "CreateSurface").put("page", pendingPage).put("width", pendingWidth).put("height", pendingHeight).put("visible", visible))
                 ui.post { onReady() }
+            }
+            "ResetSurface" -> {
+                commitBuffer.reset(payload.getLong("rejectedThroughTransactionId"))
+                ui.post { renderer.clear(); enqueue { send(JSONObject().put("type", "ResetAck").put("resetToken", payload.getLong("resetToken"))) } }
             }
             "Commit" -> ui.post {
                 metric(hostMetrics, "uiQueueMs", elapsed(queuedAt))
@@ -405,5 +416,44 @@ class AndroidHost(
             cleanup { renderer.clear() }
         }
         cleanup { thread.quitSafely() }
+    }
+}
+
+/** Buffered on the Core owner; only assembled commits reach the UI thread. */
+private class RenderCommitBuffer {
+    private var header: JSONObject? = null
+    private val chunks = mutableMapOf<Int, String>()
+    private var bytes = 0
+    private var count = 0
+    private var through = 0L
+    private var last: JSONObject? = null
+    fun reset(rejected: Long) { header = null; chunks.clear(); bytes = 0; count = 0; through = maxOf(through, rejected); last = null }
+    fun accept(payload: JSONObject): JSONObject? {
+        when (payload.getString("type")) {
+            "CommitBegin" -> {
+                require(payload.getLong("transactionId") > through && payload.getInt("chunkCount") in 1..65536 && payload.getInt("commandCount") in 0..65536 && payload.getInt("totalBytes") in 1..16777216)
+                if (header != null) { require(header.toString() == payload.toString()); return null }
+                header = payload; chunks.clear(); bytes = 0; count = 0; return null
+            }
+            "CommitChunk" -> {
+                val begin = header ?: error("COMMIT_WITHOUT_BEGIN")
+                val index = payload.getInt("index"); val text = payload.getString("data")
+                require(payload.getLong("transactionId") == begin.getLong("transactionId") && index in 0 until begin.getInt("chunkCount"))
+                if (chunks.containsKey(index)) { require(chunks[index] == text); return null }
+                val commands = JSONArray(text); require(commands.length() <= 4096)
+                bytes += text.toByteArray(StandardCharsets.UTF_8).size - 2 + if (commands.length() > 0) 1 else 0; count += commands.length()
+                require(bytes <= begin.getInt("totalBytes") && count <= begin.getInt("commandCount"))
+                chunks[index] = text; return null
+            }
+            "CommitEnd" -> {
+                if (header == null && last?.optLong("revision") == payload.getLong("transactionId")) return last
+                val begin = header ?: error("COMMIT_WITHOUT_BEGIN")
+                require(begin.getLong("transactionId") == payload.getLong("transactionId") && chunks.size == begin.getInt("chunkCount") && count == begin.getInt("commandCount") && bytes + 1 == begin.getInt("totalBytes"))
+                val text = "[" + (0 until chunks.size).joinToString(",") { chunks.getValue(it).drop(1).dropLast(1) } + "]"
+                val result = JSONObject().put("type", "Commit").put("revision", begin.getLong("revision")).put("commands", JSONArray(text))
+                header = null; chunks.clear(); last = result; return result
+            }
+        }
+        return payload
     }
 }

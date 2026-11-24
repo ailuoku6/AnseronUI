@@ -38,7 +38,7 @@ function harness(page: ReturnType<typeof definePage>, onWake?: () => void) {
 }
 function createdNode(commands: RenderCommand[], kind: string): number {
   if (kind === "Button") {
-    const root = commands.find(command => command.type === "SetProps" && command.props.accessibilityRole === "button");
+    const root = commands.find(command => command.type === "PatchProps" && command.set.accessibilityRole === "button");
     if (root) return root.nodeId;
   }
   const item = commands.find(command => command.type === "CreateNode" && command.kind === kind);
@@ -59,8 +59,8 @@ describe("reference Core", () => {
     const h = harness(page); h.send({ type: "CreateSurface", page: "accessibility", width: 320, height: 480 });
     const commit = h.drain().find(item => item.type === "Commit")!;
     if (commit.type !== "Commit") throw new Error("No commit");
-    const props = commit.commands.find(item => item.type === "SetProps");
-    expect(props).toMatchObject({ props: { accessibilityRole: "checkbox", accessibilityLabel: "通知", accessibilityHint: "切换通知", accessibilityValue: "已开启",
+    const props = commit.commands.find(item => item.type === "PatchProps");
+    expect(props).toMatchObject({ set: { accessibilityRole: "checkbox", accessibilityLabel: "通知", accessibilityHint: "切换通知", accessibilityValue: "已开启",
       accessibilityChecked: true, accessibilitySelected: true, accessible: true, accessibilityHidden: false, accessibilityClickable: true, accessibilityLongClickable: false } });
     const handle = ref.current!;
     for (const method of ["accessibilityFocus", "accessibilityAnnounce"] as const) {
@@ -74,8 +74,8 @@ describe("reference Core", () => {
     change(false);
     const reset = h.drain().find(item => item.type === "Commit")!;
     if (reset.type !== "Commit") throw new Error("No reset");
-    expect(reset.commands.find(item => item.type === "SetProps")).toMatchObject({ props: {} });
-    expect(JSON.stringify(reset.commands)).not.toContain("accessibilityRole");
+    expect(reset.commands.find(item => item.type === "PatchProps")).toMatchObject({ set: {} });
+    expect(reset.commands.find(item => item.type === "PatchProps")).toMatchObject({ unset: expect.arrayContaining(["accessibilityRole", "accessibilityLabel"]) });
     h.runtime.dispose();
     await expect(handle.accessibilityFocus()).rejects.toThrow("NODE_UNMOUNTED");
     await expect(handle.accessibilityAnnounce("失效节点")).rejects.toThrow("NODE_UNMOUNTED");
@@ -95,15 +95,15 @@ describe("reference Core", () => {
     const outputs = h.drain();
     const commit = outputs.find(item => item.type === 'Commit');
     if (!commit || commit.type !== 'Commit') throw new Error('Missing commit');
-    const props = commit.commands.filter(command => command.type === 'SetProps');
-    expect(props[0]).toMatchObject({ props:{ dmBackgroundColor:'#111111', dmBorderColor:'#dddddd', dmShadowColor:'#ffffff', shadowOpacity:0.25, shadowRadius:8, shadowOffsetX:-2, shadowOffsetY:4 } });
-    expect(props[1]).toMatchObject({ props:{ dmColor:'#eeeeee', placeholderTextColor:'#666666', dmPlaceholderTextColor:'#aaaaaa' } });
-    expect(JSON.parse(String(props[2].props.spans))[0]).toMatchObject({ color:'#112233', dmColor:'#ddeeff' });
+    const props = commit.commands.filter(command => command.type === 'PatchProps');
+    expect(props[0]).toMatchObject({ set:{ dmBackgroundColor:'#111111', dmBorderColor:'#dddddd', dmShadowColor:'#ffffff', shadowOpacity:0.25, shadowRadius:8, shadowOffsetX:-2, shadowOffsetY:4 } });
+    expect(props[1]).toMatchObject({ set:{ dmColor:'#eeeeee', placeholderTextColor:'#666666', dmPlaceholderTextColor:'#aaaaaa' } });
+    expect(JSON.parse(String(props[2].set.spans))[0]).toMatchObject({ color:'#112233', dmColor:'#ddeeff' });
     toggle(false);
     const update = h.drain().find(item => item.type === 'Commit');
     if (!update || update.type !== 'Commit') throw new Error('Missing update');
-    const next = update.commands.find(command => command.type === 'SetProps');
-    expect(next?.type === 'SetProps' && next.props.dmBackgroundColor).toBeUndefined();
+    const next = update.commands.find(command => command.type === 'PatchProps');
+    expect(next?.type === 'PatchProps' && next.set.dmBackgroundColor).toBeUndefined();
     h.runtime.dispose();
   });
   it("transports native Liquid Glass settings as view styles", () => {
@@ -112,8 +112,8 @@ describe("reference Core", () => {
     h.send({ type: "CreateSurface", page: "liquid-glass", width: 320, height: 480 });
     const commit = h.drain().find(item => item.type === "Commit");
     if (!commit || commit.type !== "Commit") throw new Error("No commit");
-    const props = commit.commands.find(command => command.type === "SetProps");
-    expect(props).toMatchObject({ props: { glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: false, glassEffectSpacing: 10, backgroundBlurRadius: 0, backgroundColor: "transparent", opacity: 0 } });
+    const props = commit.commands.find(command => command.type === "PatchProps");
+    expect(props).toMatchObject({ set: { glassEffect: true, glassEffectStyle: "clear", glassEffectTintColor: "#5599cc", glassEffectInteractive: true, glassEffectContainer: false, glassEffectSpacing: 10, backgroundBlurRadius: 0, backgroundColor: "transparent", opacity: 0 } });
     h.runtime.dispose();
   });
   it("transports standalone backdrop styles and resets zero or removed blur without glass", () => {
@@ -127,9 +127,9 @@ describe("reference Core", () => {
     const props = () => {
       const commit = h.drain().find(item => item.type === "Commit");
       if (!commit || commit.type !== "Commit") throw new Error("No commit");
-      const command = commit.commands.find(item => item.type === "SetProps");
-      if (!command || command.type !== "SetProps") throw new Error("No props");
-      return command.props;
+      const command = commit.commands.find(item => item.type === "PatchProps");
+      if (!command || command.type !== "PatchProps") throw new Error("No props");
+      return command.set;
     };
     h.send({ type: "CreateSurface", page: "backdrop-styles", width: 320, height: 480 });
     const initial = props();
@@ -335,6 +335,47 @@ describe("reference Core", () => {
     h.runtime.dispose(); expect(ref.current).toBeNull();
   });
 
+  it("maps every public NodeHandle operation to the view bridge", async () => {
+    const view = createRef<import("@anseronui/ui").NodeHandle>();
+    const input = createRef<import("@anseronui/ui").NodeHandle>();
+    const scroll = createRef<import("@anseronui/ui").NodeHandle>();
+    const h = harness(definePage("node-handle-api", () => <View ref={view}>
+      <TextInput ref={input} value="value" onChangeText={() => {}} />
+      <ScrollView ref={scroll}><Text>content</Text></ScrollView>
+    </View>));
+    h.send({ type: "CreateSurface", page: "node-handle-api", width: 320, height: 480 }); h.drain();
+    expect(view.current?.nodeId).toBeTypeOf("number");
+    expect(input.current?.nodeId).toBeTypeOf("number");
+    expect(scroll.current?.nodeId).toBeTypeOf("number");
+
+    const invoke = async (handle: import("@anseronui/ui").NodeHandle, method: string, args: unknown, value: unknown = null) => {
+      const animation = args as { style: import("@anseronui/ui").AnimationStyle; options: import("@anseronui/ui").AnimationOptions };
+      const result = method === "animate" ? handle.animate(animation.style, animation.options) : method === "scrollTo" ? handle.scrollTo(12, 34, true) :
+        method === "accessibilityAnnounce" ? handle.accessibilityAnnounce("saved") : method === "invoke" ? handle.invoke("custom", args) :
+          method === "focus" ? handle.focus() : method === "blur" ? handle.blur() : method === "measure" ? handle.measure() :
+            method === "accessibilityFocus" ? handle.accessibilityFocus() : handle.cancelAnimation();
+      const request = h.drain().find(item => item.type === "InvokeModule");
+      expect(request).toMatchObject({ type: "InvokeModule", module: "__view", method: method === "invoke" ? "custom" : method });
+      if (!request || request.type !== "InvokeModule") throw new Error("missing NodeHandle request: " + method);
+      expect(JSON.parse(request.argument)).toEqual({ nodeId: handle.nodeId, args });
+      h.send({ type: "ModuleResult", requestId: request.requestId, ok: true, value: JSON.stringify(value) }); h.drain();
+      return result;
+    };
+
+    await expect(invoke(view.current!, "invoke", { key: "value" }, { value: 3 })).resolves.toEqual({ value: 3 });
+    await expect(invoke(view.current!, "animate", { style: { opacity: 0.5 }, options: { duration: 1 } }, { finished: true })).resolves.toEqual({ finished: true });
+    await expect(invoke(view.current!, "cancelAnimation", null)).resolves.toBeNull();
+    await expect(invoke(view.current!, "accessibilityFocus", null)).resolves.toBeNull();
+    await expect(invoke(view.current!, "accessibilityAnnounce", { message: "saved" })).resolves.toBeNull();
+    await expect(invoke(input.current!, "focus", null)).resolves.toBeNull();
+    await expect(invoke(input.current!, "blur", null)).resolves.toBeNull();
+    await expect(invoke(scroll.current!, "scrollTo", { x: 12, y: 34, animated: true })).resolves.toBeNull();
+    await expect(invoke(view.current!, "measure", null, { x: 1, y: 2, width: 3, height: 4 })).resolves.toEqual({ x: 1, y: 2, width: 3, height: 4 });
+    expect(() => view.current!.animate({ opacity: 2 }, { duration: 1 })).toThrow("INVALID_ANIMATION_RANGE");
+    await expect(view.current!.accessibilityAnnounce("" as string)).rejects.toThrow("INVALID_ACCESSIBILITY_MESSAGE");
+    h.runtime.dispose();
+  });
+
   it("dispatches touch capture, target and bubbling with synchronous propagation control", () => {
     const calls: string[] = [];
     let stop = true;
@@ -482,8 +523,8 @@ describe("reference Core", () => {
     const commit = output.find(item => item.type === "Commit");
     if (!commit || commit.type !== "Commit") throw new Error("No commit");
     expect(commit.commands).toContainEqual(expect.objectContaining({ type: "CreateNode", kind: "RichText" }));
-    const richProps = commit.commands.find(item => item.type === "SetProps" && typeof item.props.spans === "string");
-    expect(richProps?.type === "SetProps" && JSON.parse(String(richProps.props.spans))).toHaveLength(2);
+    const richProps = commit.commands.find(item => item.type === "PatchProps" && typeof item.set.spans === "string");
+    expect(richProps?.type === "PatchProps" && JSON.parse(String(richProps.set.spans))).toHaveLength(2);
     const viewId = createdNode(commit.commands, "View");
     h.send({ type: "NativeEvent", nodeId: viewId, revision: 1, event: "touchDown", x: 4, y: 5, pageX: 14, pageY: 15, pointerId: 2, touches: [{ x: 4, y: 5, pageX: 14, pageY: 15, pointerId: 2 }] });
     h.drain();
@@ -507,7 +548,7 @@ describe("reference Core", () => {
     const commit = output.find(item => item.type === "Commit");
     expect(commit?.type).toBe("Commit");
     if (!commit || commit.type !== "Commit") return;
-    const props = commit.commands.filter(item => item.type === "SetProps").map(item => item.type === "SetProps" ? item.props : {});
+    const props = commit.commands.filter(item => item.type === "PatchProps").map(item => item.type === "PatchProps" ? item.set : {});
     expect(props).toContainEqual(expect.objectContaining({ borderRadius: 6, borderColor: "#123456" }));
     expect(props).toContainEqual(expect.objectContaining({ secureTextEntry: true, maxLength: 8, keyboardType: "email-address" }));
     expect(commit.commands.filter(item => item.type === "BindEvent" && item.enabled).map(item => item.type === "BindEvent" ? item.event : null))
@@ -533,10 +574,10 @@ describe("reference Core", () => {
     if (!commit || commit.type !== "Commit") return;
     expect(commit.commands).toContainEqual(expect.objectContaining({ type: "CreateNode", kind: "Image" }));
     expect(commit.commands).toContainEqual(expect.objectContaining({ type: "CreateNode", kind: "Video" }));
-    const imageProps = commit.commands.find(item => item.type === "SetProps" && item.props.src === "https://example.test/photo.png");
-    expect(imageProps?.type === "SetProps" && imageProps.props).toEqual(expect.objectContaining({ resizeMode: "contain", placeholderSrc: "https://example.test/placeholder.png" }));
-    const videoProps = commit.commands.find(item => item.type === "SetProps" && item.props.src === "https://example.test/clip.mp4");
-    expect(videoProps?.type === "SetProps" && videoProps.props).toEqual(expect.objectContaining({ controls: true, muted: true, loop: true, rate: 1.5 }));
+    const imageProps = commit.commands.find(item => item.type === "PatchProps" && item.set.src === "https://example.test/photo.png");
+    expect(imageProps?.type === "PatchProps" && imageProps.set).toEqual(expect.objectContaining({ resizeMode: "contain", placeholderSrc: "https://example.test/placeholder.png" }));
+    const videoProps = commit.commands.find(item => item.type === "PatchProps" && item.set.src === "https://example.test/clip.mp4");
+    expect(videoProps?.type === "PatchProps" && videoProps.set).toEqual(expect.objectContaining({ controls: true, muted: true, loop: true, rate: 1.5 }));
     expect(commit.commands.filter(item => item.type === "BindEvent" && item.enabled).map(item => item.type === "BindEvent" ? item.event : null))
       .toEqual(expect.arrayContaining(["loadSuccess", "loadFailure", "playStateDidChanged", "playTimeDidChanged", "firstFrameDidDisplay"]));
     const image = createdNode(commit.commands, "Image");
@@ -563,7 +604,7 @@ describe("reference Core", () => {
     // Input captured before the renderer applied the preceding commit arrives after its ACK.
     h.send({ type: "InputChange", nodeId: id, revision: 1, inputRevision: 2, value: "abc" });
     const outputs = h.drain();
-    expect(outputs.some(item => item.type === "Commit" && item.commands.some(command => command.type === "SetProps" && command.props.value === "abc" && command.props.inputRevision === 2))).toBe(true);
+    expect(outputs.some(item => item.type === "Commit" && item.commands.some(command => command.type === "PatchProps" && command.set.value === "abc" && command.set.inputRevision === 2))).toBe(true);
     h.send({ type: "InputChange", nodeId: id, revision: 1, inputRevision: 1, value: "a" });
     expect(h.drain()).toEqual([]);
     h.runtime.dispose();
@@ -589,7 +630,7 @@ describe("reference Core", () => {
     expect(effects).toEqual(["setup:0"]);
     h.send({ type: "Tap", nodeId: buttonId, revision: 1 });
     const second = h.drain();
-    expect(second.some(item => item.type === "Commit" && item.commands.some(command => command.type === "SetProps" && command.props.text === "2"))).toBe(true);
+    expect(second.some(item => item.type === "Commit" && item.commands.some(command => command.type === "PatchProps" && command.set.text === "2"))).toBe(true);
     expect(effects).toEqual(["setup:0", "cleanup:0", "setup:2"]);
     h.send({ type: "DestroySurface" });
     expect(h.drain().some(item => item.type === "SurfaceDisposed")).toBe(true);
@@ -626,9 +667,9 @@ describe("reference Core", () => {
     const initial = h.drain();
     const first = initial.find(item => item.type === "Commit");
     if (!first || first.type !== "Commit") throw new Error("No first commit");
-    const buttons = first.commands.filter((cmd): cmd is Extract<RenderCommand, { type: "SetProps" }> => cmd.type === "SetProps" && typeof cmd.props.accessibilityLabel === "string");
-    const b = buttons.find(cmd => cmd.props.accessibilityLabel === "b:0")!.nodeId;
-    const swap = buttons.find(cmd => cmd.props.accessibilityLabel === "swap")!.nodeId;
+    const buttons = first.commands.filter((cmd): cmd is Extract<RenderCommand, { type: "PatchProps" }> => cmd.type === "PatchProps" && typeof cmd.set.accessibilityLabel === "string");
+    const b = buttons.find(cmd => cmd.set.accessibilityLabel === "b:0")!.nodeId;
+    const swap = buttons.find(cmd => cmd.set.accessibilityLabel === "swap")!.nodeId;
     h.send({ type: "Tap", nodeId: b, revision: 1 });
     h.drain();
     h.send({ type: "Tap", nodeId: swap, revision: 2 });
@@ -655,8 +696,8 @@ describe("reference Core", () => {
     h.send({ type: "CreateSurface", page: "component-bailout", width: 300, height: 100 });
     const first = h.drain().find(item => item.type === "Commit");
     if (!first || first.type !== "Commit") throw new Error("No initial commit");
-    const button = first.commands.find(item => item.type === "SetProps" && item.props.accessibilityLabel === "update");
-    if (!button || button.type !== "SetProps") throw new Error("Update button missing");
+    const button = first.commands.find(item => item.type === "PatchProps" && item.set.accessibilityLabel === "update");
+    if (!button || button.type !== "PatchProps") throw new Error("Update button missing");
     const buttonId = button.nodeId;
     expect(childRenders).toBe(1);
     h.send({ type: "Tap", nodeId: buttonId, revision: 1 });
@@ -683,8 +724,8 @@ describe("reference Core", () => {
     h.send({ type: "CreateSurface", page: "context-bailout", width: 300, height: 100 });
     const first = h.drain().find(item => item.type === "Commit");
     if (!first || first.type !== "Commit") throw new Error("No initial commit");
-    const button = first.commands.find(item => item.type === "SetProps" && item.props.accessibilityLabel === "toggle");
-    if (!button || button.type !== "SetProps") throw new Error("Toggle button missing");
+    const button = first.commands.find(item => item.type === "PatchProps" && item.set.accessibilityLabel === "toggle");
+    if (!button || button.type !== "PatchProps") throw new Error("Toggle button missing");
     expect(childRenders).toBe(1);
     h.send({ type: "Tap", nodeId: button.nodeId, revision: 1 });
     h.drain();
@@ -714,7 +755,7 @@ describe("reference Core", () => {
     expect(updated?.type).toBe("Commit");
     expect(parentRenders).toBe(1);
     expect(childRenders).toBe(2);
-    if (updated?.type === "Commit") expect(updated.commands.some(item => item.type === "SetProps" && item.props.accessibilityLabel === "1")).toBe(true);
+    if (updated?.type === "Commit") expect(updated.commands.some(item => item.type === "PatchProps" && item.set.accessibilityLabel === "1")).toBe(true);
     h.runtime.dispose();
   });
 
@@ -786,7 +827,7 @@ describe("reference Core", () => {
     await Promise.resolve();
     expect(wakes).toBeGreaterThan(wakesBeforeResult);
     const updated = h.drain();
-    expect(updated.some(item => item.type === "Commit" && item.commands.some(command => command.type === "SetProps" && command.props.text === "loaded"))).toBe(true);
+    expect(updated.some(item => item.type === "Commit" && item.commands.some(command => command.type === "PatchProps" && command.set.text === "loaded"))).toBe(true);
     h.send({ type: "Tap", nodeId: button, revision: 2 });
     const pending = h.drain().find(item => item.type === "InvokeModule");
     if (!pending || pending.type !== "InvokeModule") throw new Error("No second request");
@@ -815,7 +856,7 @@ it('host timers are asynchronous, cancellable, scoped and retired with the surfa
   const h = harness(page);
   h.send({type:'CreateSurface',page:'timers',width:100,height:100});
   const outputs = h.drain();
-  const requests = outputs.filter(p => p.type === 'InvokeModule');
+  const requests = outputs.filter(p => p.type === 'InvokeModule' && p.purpose !== 'renderWatchdog');
   expect(requests).toHaveLength(2);
   expect(requests[1].argument).toBe('2');
   expect(outputs).toContainEqual({type:'CancelRequest',requestId:requests[0].requestId});
@@ -823,7 +864,7 @@ it('host timers are asynchronous, cancellable, scoped and retired with the surfa
   h.send({type:'ModuleResult',requestId:requests[0].requestId,ok:true,value:''});
   h.drain(); expect(calls).toEqual([]);
   h.send({type:'ModuleResult',requestId:requests[1].requestId,ok:true,value:''});
-  const nested = h.drain().find(p => p.type === 'InvokeModule');
+  const nested = h.drain().find(p => p.type === 'InvokeModule' && p.purpose !== 'renderWatchdog');
   expect(nested?.argument).toBe('0');
   expect(calls).toEqual(['fired']);
   clearTimeout(handle); // fired handles are harmless
@@ -844,7 +885,7 @@ it('useTimers keeps the originating surface after await and refuses scheduling a
   await Promise.resolve();
   let count = 0;
   const id = timers!.setTimeout(() => { count++; }, -10);
-  const request = h.drain().find(p => p.type === 'InvokeModule')!;
+  const request = h.drain().find(p => p.type === 'InvokeModule' && p.purpose !== 'renderWatchdog')!;
   expect(request.argument).toBe('0');
   timers!.clearTimeout(id);
   h.send({type:'ModuleResult',requestId:request.requestId,ok:true,value:''}); h.drain();
@@ -860,7 +901,7 @@ it('timer callback failures are diagnostics and do not leave a live handle', () 
   });
   const h = harness(page);
   h.send({type:'CreateSurface',page:'timers',width:100,height:100});
-  const request = h.drain().find(p => p.type === 'InvokeModule')!;
+  const request = h.drain().find(p => p.type === 'InvokeModule' && p.purpose !== 'renderWatchdog')!;
   h.send({type:'ModuleResult',requestId:request.requestId,ok:true,value:''});
   expect(h.drain()).toContainEqual(expect.objectContaining({type:'Diagnostic',code:'TIMER_ERROR',message:'Error: timer boom', errorName:'Error', buildId:'test-build', stack:expect.stringContaining('timer boom')}));
   h.runtime.dispose();

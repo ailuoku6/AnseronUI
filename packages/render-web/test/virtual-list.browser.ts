@@ -37,7 +37,7 @@ export async function verifyVirtualList(business?: Uint8Array, framework?: Uint8
     assert(root.querySelectorAll('[data-testid^="list-row-"]').length < 60, '5000 rows must keep a bounded mounted window');
     setStage('expand');
     const first = row(0)!; const initial = first.getBoundingClientRect().height;
-    first.querySelector('button')!.click();
+    first.querySelector<HTMLElement>('[role="button"]')!.click();
     await wait(() => !!row(0) && row(0)!.getBoundingClientRect().height > initial + 20);
     const heights = Array.from(root.querySelectorAll<HTMLElement>('[data-testid^="list-row-"]')).map(element => element.getBoundingClientRect().height);
     assert(new Set(heights).size > 1, 'actual text rows must have unequal measured heights');

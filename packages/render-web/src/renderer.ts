@@ -1,3 +1,5 @@
+import { RenderTopology } from "../../protocol/src/topology.js";
+import { patchProps, validProps, validInputPair, MAX_TRANSACTION_COMMANDS } from "@anseronui/protocol";
 import { applyAccessibility } from "./accessibility.js";
 import { cleanupAll } from './cleanup.js';
 import { NodeAnimation, visualDefaults, colorValues, paintElement } from "./animation.js";
@@ -111,14 +113,19 @@ export class DOMRenderer {
     }
   }
 
+  private topology = new RenderTopology();
+  private lastCommands = "";
   apply(revision: number, commands: readonly RenderCommand[]): void {
-    if (this.disposed || revision <= this.revision) throw new Error("Invalid renderer revision");
-    this.validate(commands);
+    if (this.disposed || revision < this.revision) throw new Error("Invalid renderer revision");
+    const signature = JSON.stringify(commands);
+    if (revision === this.revision) { if (signature !== this.lastCommands) throw new Error("CONFLICTING_COMMIT"); return; }
+    const publishTopology = this.topology.prepare(commands);
     try {
-      for (const command of commands) this.applyOne(command, revision);
-      for (const record of this.records.values()) { record.animation.setActive(this.pageActive); record.animation.commit(); }
-      this.revision = revision;
-      for (const record of this.records.values()) if (record.kind === 'ScrollView') {
+      const touched = new Set<NodeRecord>();
+      for (const command of commands) { this.applyOne(command, revision); const record = this.records.get(command.nodeId); if (record) touched.add(record); }
+      for (const record of touched) { record.animation.setActive(this.pageActive); record.animation.commit(); }
+      publishTopology(); this.lastCommands = signature; this.revision = revision;
+      for (const record of touched) if (record.kind === 'ScrollView') {
         const anchor = Number(record.props?.scrollAnchorOffset ?? 0);
         const delta = anchor - (record.anchorOffset ?? 0);
         record.anchorOffset = anchor;
@@ -131,6 +138,7 @@ export class DOMRenderer {
   }
 
   clear(): void {
+    this.topology.clear(); this.lastCommands = "";
     clearTimeout(this.announcementTimer); this.announcementTimer = undefined;
     this.announcement = undefined;
     this.resumeVideos.clear();
@@ -194,26 +202,6 @@ export class DOMRenderer {
       element.scrollTo({ left: args.x, top: args.y, behavior: args.animated ? "smooth" : "instant" }); return null;
     }
     throw new Error("UNSUPPORTED_VIEW_METHOD: " + method);
-  }
-
-  private validate(commands: readonly RenderCommand[]): void {
-    if (commands.length > 4096) throw new Error("Too many commands");
-    const known = new Set(this.records.keys());
-    for (const command of commands) {
-      if (command.type === "CreateNode") {
-        if (known.has(command.nodeId) || command.nodeId < 1) throw new Error("Duplicate node ID");
-        known.add(command.nodeId);
-      } else if (command.type === "InsertChild" || command.type === "MoveChild") {
-        if (!known.has(command.nodeId) || (command.parentId !== 0 && !known.has(command.parentId)) || !Number.isInteger(command.index) || command.index < 0) throw new Error("Invalid insertion");
-      } else if (command.type === "RemoveNode") {
-        if (!known.has(command.nodeId)) throw new Error("Unknown removal");
-        known.delete(command.nodeId);
-      } else if (!known.has(command.nodeId)) throw new Error("Unknown node reference");
-      if (command.type === "SetFrame") {
-        const f = command.frame;
-        if (![f.x, f.y, f.width, f.height].every(Number.isFinite) || f.width < 0 || f.height < 0) throw new Error("Invalid frame");
-      }
-    }
   }
 
   private applyOne(command: RenderCommand, revision: number): void {
@@ -334,7 +322,10 @@ export class DOMRenderer {
       const record = this.records.get(command.nodeId)!;
       const descendants = new Set<HTMLElement>([record.element]);
       for (const child of record.element.querySelectorAll("*")) descendants.add(child as HTMLElement);
-      for (const [id, item] of this.records) if (descendants.has(item.element)) { this.records.delete(id); this.releaseRecord(item); }
+      for (const element of descendants) {
+        const id = Number(element.dataset.tsnNode), item = this.records.get(id);
+        if (item) { this.records.delete(id); this.releaseRecord(item); }
+      }
       record.element.remove();
       return;
     }
@@ -343,8 +334,14 @@ export class DOMRenderer {
       const parentRecord = this.records.get(command.parentId);
       if (parentRecord?.native && !parentRecord.native.content) throw new Error("NATIVE_COMPONENT_IS_LEAF");
       const parent = command.parentId === 0 ? this.root : parentRecord!.native?.content ?? parentRecord!.element;
-      const sibling = parent.children.item(command.index);
-      if (sibling !== record.element) parent.insertBefore(record.element, sibling);
+      if (parent.children.item(command.index) !== record.element || record.element.parentElement !== parent) {
+        record.element.remove(); parent.insertBefore(record.element, parent.children.item(command.index));
+      }
+    } else if (command.type === "DetachChild") {
+      record.element.remove();
+    } else if (command.type === "PatchProps") {
+      const next = patchProps(record.props ?? {}, command.set, command.unset);
+      this.setProps(record, next, revision, false, new Set([...Object.keys(command.set), ...command.unset]));
     } else if (command.type === "SetProps") {
       this.setProps(record, command.props, revision);
     } else if (command.type === "SetFrame") {
@@ -357,8 +354,17 @@ export class DOMRenderer {
     }
   }
 
-  private setProps(record: NodeRecord, raw: RenderProps, revision: number, appearanceOnly = false): void {
+  private setProps(record: NodeRecord, raw: RenderProps, revision: number, appearanceOnly = false, changed?: Set<string>): void {
     record.props = raw;
+    // Compositor-only patches must not touch media, text, input or accessibility.
+    const visualKeys = ["opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius", "animation"];
+    if (changed && [...changed].every(key => visualKeys.includes(key))) {
+      record.animation.options = raw.animation ? JSON.parse(String(raw.animation)) : undefined;
+      const values: Record<string, number> = {};
+      for (const key of changed) if (key !== "animation") values[key] = Number(raw[key] ?? visualDefaults[key]);
+      record.animation.stage(values); return;
+    }
+    const affects = (...keys: string[]): boolean => !changed || keys.some(key => changed.has(key));
     const props = { ...raw };
     const dark = this.appearance?.matches === true;
     if (dark) for (const key of ['backgroundColor', 'color', 'borderColor', 'shadowColor', 'placeholderTextColor', 'src']) {
@@ -371,12 +377,12 @@ export class DOMRenderer {
       props.opacity ??= 0.88;
       props.backgroundBlurRadius ??= props.glassEffectStyle === 'clear' ? 12 : 20;
     }
-    if (!appearanceOnly) record.native?.setProps(JSON.parse(String(props.nativeProps ?? "{}")));
+    if (!appearanceOnly && affects("nativeProps")) record.native?.setProps(JSON.parse(String(props.nativeProps ?? "{}")));
     const element = record.element;
-    if (typeof props.testID === "string") element.dataset.testid = props.testID;
-    applyAccessibility(element, record.kind, props, record.enabled.has("tap"), record.enabled.has("longPress"));
-    if (record.kind === "Text") element.textContent = String(props.text ?? "");
-    if (record.kind === "RichText") {
+    if (affects("testID")) { if (typeof props.testID === "string") element.dataset.testid = props.testID; else delete element.dataset.testid; }
+    if (affects("accessible", "accessibilityHidden", "accessibilityRole", "accessibilityLabel", "accessibilityHint", "accessibilityValue", "accessibilityChecked", "accessibilitySelected", "accessibilityClickable", "accessibilityLongClickable", "disabled")) applyAccessibility(element, record.kind, props, record.enabled.has("tap"), record.enabled.has("longPress"));
+    if (record.kind === "Text" && affects("text")) element.textContent = String(props.text ?? "");
+    if (record.kind === "RichText" && affects("spans", "color", "dmColor", "fontSize", "fontWeight", "fontStyle")) {
       const spans = JSON.parse(String(props.spans ?? "[]")) as { text?: string; color?: string; dmColor?: string; fontSize?: number; fontWeight?: string; fontStyle?: string; textDecorationLine?: string }[];
       element.replaceChildren(...spans.map((item, index) => {
         const span = element.ownerDocument.createElement("span");
@@ -391,9 +397,9 @@ export class DOMRenderer {
       }));
       element.style.whiteSpace = "pre-wrap";
     }
-    if (record.kind === "TextInput" && !appearanceOnly) {
+    if (record.kind === "TextInput" && !appearanceOnly && affects("value", "inputRevision", "placeholder")) {
       const input = element as HTMLInputElement;
-      input.placeholder = String(props.placeholder ?? "");
+      if (affects("placeholder")) { input.placeholder = String(props.placeholder ?? ""); }
       const nextValue = String(props.value ?? "");
       const acknowledged = Number(props.inputRevision ?? 0);
       if (acknowledged >= record.inputRevision) {
@@ -401,7 +407,7 @@ export class DOMRenderer {
         else { if (input.value !== nextValue) input.value = nextValue; record.pendingValue = null; }
       }
     }
-    if (record.kind === "Image") {
+    if (record.kind === "Image" && affects("src", "dmSrc", "placeholderSrc", "resizeMode", "controls", "autoplay", "loop", "muted", "rate", "playControl", "accessibilityLabel")) {
       const image = element as HTMLImageElement;
       image.alt = String(props.accessibilityLabel ?? "");
       image.style.objectFit = props.resizeMode === "stretch" ? "fill" : String(props.resizeMode ?? "cover");
@@ -413,7 +419,7 @@ export class DOMRenderer {
         image.src = source.startsWith("asset://") ? "/assets/" + source.slice(8) : source;
       }
     }
-    if (record.kind === "Video" && !appearanceOnly) {
+    if (record.kind === "Video" && !appearanceOnly && affects("src", "controls", "autoplay", "loop", "muted", "rate", "playControl", "resizeMode")) {
       const video = element as HTMLVideoElement;
       video.controls = props.controls !== false;
       video.autoplay = props.autoplay === true && this.pageActive;
@@ -431,33 +437,39 @@ export class DOMRenderer {
       else if (props.playControl === "pause") { this.resumeVideos.delete(video); video.pause(); }
       else if (props.playControl === "stop") { this.resumeVideos.delete(video); video.pause(); video.currentTime = 0; }
     }
+        if (affects("opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius", "backgroundColor", "dmBackgroundColor", "glassEffect", "glassEffectStyle", "glassEffectContainer", "animation")) {
     record.animation.options = props.animation ? JSON.parse(String(props.animation)) : undefined;
     const visual = { ...visualDefaults, ...colorValues(String(props.backgroundColor ?? "transparent")) };
     for (const key of ["opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius"]) if (typeof props[key] === "number") visual[key] = props[key] as number;
     record.animation.stage(visual);
+        }
+        if (affects("glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing", "disabled", "backgroundBlurRadius")) {
     element.style.backdropFilter = Number(props.backgroundBlurRadius ?? 0) > 0 ? `blur(${props.backgroundBlurRadius}px)` : 'none';
     element.style.setProperty('-webkit-backdrop-filter', element.style.backdropFilter);
-    element.style.color = String(props.color ?? "");
-    element.style.lineHeight = props.lineHeight === undefined ? "normal" : props.lineHeight + "px";
-    element.style.fontSize = props.fontSize === undefined ? "" : props.fontSize + "px";
-    element.style.fontWeight = String(props.fontWeight ?? "");
-    element.style.fontStyle = String(props.fontStyle ?? "");
-    element.style.textAlign = String(props.textAlign ?? "");
-    element.style.textDecorationLine = String(props.textDecorationLine ?? "");
-    element.style.borderWidth = props.borderWidth === undefined ? "" : props.borderWidth + "px";
-    element.style.borderStyle = props.borderWidth ? "solid" : "";
-    element.style.borderColor = String(props.borderColor ?? "");
+        }
+    if (affects("color", "dmColor")) { element.style.color = String(props.color ?? ""); }
+    if (affects("lineHeight")) { element.style.lineHeight = props.lineHeight === undefined ? "normal" : props.lineHeight + "px"; }
+    if (affects("fontSize")) { element.style.fontSize = props.fontSize === undefined ? "" : props.fontSize + "px"; }
+    if (affects("fontWeight")) { element.style.fontWeight = String(props.fontWeight ?? ""); }
+    if (affects("fontStyle")) { element.style.fontStyle = String(props.fontStyle ?? ""); }
+    if (affects("textAlign")) { element.style.textAlign = String(props.textAlign ?? ""); }
+    if (affects("textDecorationLine")) { element.style.textDecorationLine = String(props.textDecorationLine ?? ""); }
+    if (affects("borderWidth")) { element.style.borderWidth = props.borderWidth === undefined ? "" : props.borderWidth + "px"; }
+    if (affects("borderWidth")) { element.style.borderStyle = props.borderWidth ? "solid" : ""; }
+    if (affects("borderColor", "dmBorderColor")) { element.style.borderColor = String(props.borderColor ?? ""); }
+        if (affects("shadowColor", "dmShadowColor", "shadowOpacity", "shadowRadius", "shadowOffsetX", "shadowOffsetY")) {
     const shadow = colorValues(String(props.shadowColor ?? '#000000'));
     const opacity = Number(props.shadowOpacity ?? 0);
     // CALayer's radius approximates a Gaussian sigma; CSS blur is about twice that.
     element.style.boxShadow = opacity > 0
       ? `${Number(props.shadowOffsetX ?? 0)}px ${Number(props.shadowOffsetY ?? 0)}px ${2 * Number(props.shadowRadius ?? 0)}px rgba(${shadow.r},${shadow.g},${shadow.b},${shadow.a * opacity})`
       : 'none';
+        }
     element.style.overflowAnchor = 'none';
-    element.style.overflow = String(props.overflow ?? (record.kind === "ScrollView" ? "auto" : ""));
-    element.style.visibility = String(props.visibility ?? "");
-    element.style.touchAction = String(props.touchAction ?? "");
-    if (record.kind === "Text") {
+    if (affects("overflow")) { element.style.overflow = String(props.overflow ?? (record.kind === "ScrollView" ? "auto" : "")); }
+    if (affects("visibility")) { element.style.visibility = String(props.visibility ?? ""); }
+    if (affects("touchAction")) { element.style.touchAction = String(props.touchAction ?? ""); }
+    if (record.kind === "Text" && affects("numberOfLines", "ellipsizeMode")) {
       element.style.whiteSpace = "pre-wrap";
       element.style.display = props.numberOfLines ? "-webkit-box" : "";
       element.style.webkitBoxOrient = "vertical";
@@ -467,13 +479,13 @@ export class DOMRenderer {
     if (record.kind === "TextInput") {
       const input = element as HTMLInputElement;
       if (!appearanceOnly) {
-        input.disabled = props.editable === false;
-        input.type = props.secureTextEntry === true ? "password" : "text";
-        input.maxLength = Number(props.maxLength ?? 524288);
-        input.autocapitalize = String(props.autoCapitalize ?? "none");
-        input.autocomplete = props.autoCorrect === false ? "off" : "on";
-        input.inputMode = ({ numeric: "numeric", "decimal-pad": "decimal", "phone-pad": "tel", "email-address": "email", url: "url" } as Record<string, string>)[String(props.keyboardType)] ?? "text";
-        input.placeholder = String(props.placeholder ?? "");
+        if (affects("editable")) { input.disabled = props.editable === false; }
+        if (affects("secureTextEntry")) { input.type = props.secureTextEntry === true ? "password" : "text"; }
+        if (affects("maxLength")) { input.maxLength = Number(props.maxLength ?? 524288); }
+        if (affects("autoCapitalize")) { input.autocapitalize = String(props.autoCapitalize ?? "none"); }
+        if (affects("autoCorrect")) { input.autocomplete = props.autoCorrect === false ? "off" : "on"; }
+        if (affects("keyboardType")) { input.inputMode = ({ numeric: "numeric", "decimal-pad": "decimal", "phone-pad": "tel", "email-address": "email", url: "url" } as Record<string, string>)[String(props.keyboardType)] ?? "text"; }
+        if (affects("placeholder")) { input.placeholder = String(props.placeholder ?? ""); }
       }
       if (props.placeholderTextColor !== undefined) input.style.setProperty("--placeholder-color", String(props.placeholderTextColor));
       else input.style.removeProperty("--placeholder-color");

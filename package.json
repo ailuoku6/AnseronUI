@@ -11,6 +11,11 @@
     "node": ">=24.0.0"
   },
   "scripts": {
+    "test": "node scripts/test-suite.mjs unit",
+    "test:ci": "node scripts/test-suite.mjs",
+    "test:ios": "node scripts/test-ios.mjs",
+    "test:android": "node scripts/test-android.mjs",
+    "test:harmony:ci": "node scripts/test-harmony-ci.mjs",
     "prepare:tools": "node scripts/prepare-tools.mjs",
     "test:layout": "node scripts/verify-layout.mjs",
     "test:layout:wasm": "node scripts/verify-layout.mjs --wasm",
@@ -20,7 +25,7 @@
     "pretypecheck:framework": "npm run lower:counter",
     "typecheck:framework": "tsc --noEmit -p tsconfig.framework.json",
     "test:framework": "vitest run --config scripts/framework.vitest.config.ts",
-    "test:build": "node --test scripts/core-inputs.test.mjs scripts/lower-timers.test.mjs scripts/compiler-sdk.test.mjs",
+    "test:build": "node --test scripts/core-inputs.test.mjs scripts/lower-timers.test.mjs scripts/compiler-sdk.test.mjs scripts/testing/*.test.mjs scripts/feature-coverage.test.mjs",
     "test:tooling": "node --test scripts/anseronui.test.mjs scripts/native-plugins.test.mjs scripts/app-icons.test.mjs scripts/harmony-app.test.mjs",
     "lower:counter": "node --import tsx scripts/lower-tsx.mjs examples/counter/page.tsx .verification/framework/counter.ts",
     "dev:counter": "vite --config examples/counter/vite.config.ts",
@@ -73,6 +78,7 @@
     "test:harmony": "node --test packages/render-harmony/test/*.test.mjs scripts/harmony-app.test.mjs",
     "test:harmony:device": "node scripts/test-harmony.mjs",
     "test:harmony:demo": "node scripts/test-harmony-demo.mjs",
+    "test:harmony:virtual-list": "node scripts/test-harmony-virtual-list.mjs",
     "build:devtools": "tsc -p packages/devtools/ui/tsconfig.json && vite build --config packages/devtools/ui/vite.config.ts",
     "dev:devtools": "npm run build:devtools && vite --config packages/devtools/test/fixture/vite.config.ts",
     "test:devtools": "node --import tsx --test packages/devtools/test/*.test.ts",

@@ -58,7 +58,7 @@ export const page=definePage('home',Home);`);
     const {page}=await import(pathToFileURL(join(base,relative(process.cwd(),join(dir,'pages/page.ts')))).href);
     const runtime=new ReferenceRuntime({bundleBuildId:'debug-test',pages:[page]});
     let sequence=0,ack=0,revision=0;
-    const send=(payload:any)=>runtime.post({protocolMajor:1,protocolMinor:5,bundleBuildId:'debug-test',runtimeEpoch:1,surfaceId:1,surfaceGeneration:1,sequence:++sequence,ackSequence:ack,payload});
+    const send=(payload:any)=>runtime.post({protocolMajor:2,protocolMinor:0,bundleBuildId:'debug-test',runtimeEpoch:1,surfaceId:1,surfaceGeneration:1,sequence:++sequence,ackSequence:ack,payload});
     const assembler=new SnapshotAssembler();let snapshot:any;let timer:any;
     const nativeNodes=new Set<number>();
     async function settle(){
@@ -77,7 +77,7 @@ export const page=definePage('home',Home);`);
             const request=JSON.parse(p.argument);const result=assembler.accept(JSON.parse(request.body));if(result)snapshot=result;
             send({type:'ModuleResult',requestId:p.requestId,ok:true,value:JSON.stringify({status:200,body:'{"commands":[]}'})});
           }
-          if(p.type==='InvokeModule'&&p.module==='timer')timer=p;
+          if(p.type==='InvokeModule'&&p.module==='timer'&&p.purpose!=='renderWatchdog')timer=p;
         }
       }
     }

@@ -697,6 +697,27 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
         XCTAssertEqual(events.map { $0.type }, ["Tap"])
     }
 
+    func testFieldPatchPreservesNativeInputAndRestoresDefaults() throws {
+        let renderer = IOSRenderer(root: UIView())
+        func commit(_ revision: Int, _ commands: [[String: Any]]) throws {
+            try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type":"Commit", "revision":revision, "commands":commands]))
+        }
+        try commit(1, [["type":"CreateNode", "nodeId":1, "kind":"TextInput"],
+                       ["type":"PatchProps", "nodeId":1, "set":["value":"7", "inputRevision":0, "placeholder":"hint"], "unset":[]]])
+        let input = try XCTUnwrap(renderer.view(for: 1) as? UITextField)
+        input.text = "local unsent"
+        let patch: [[String: Any]] = [["type":"PatchProps", "nodeId":1, "set":["opacity":0.4], "unset":[]]]
+        try commit(2, patch); try commit(2, patch)
+        XCTAssertEqual(input.text, "local unsent"); XCTAssertEqual(input.placeholder, "hint")
+        XCTAssertEqual(input.alpha, 0.4, accuracy: 0.001)
+        try commit(3, [["type":"PatchProps", "nodeId":1, "set":[:], "unset":["opacity", "placeholder"]]])
+        XCTAssertEqual(input.alpha, 1); XCTAssertEqual(input.text, "local unsent"); XCTAssertTrue(input.placeholder?.isEmpty ?? true)
+        try commit(4, [["type":"PatchProps", "nodeId":1, "set":["value":"7", "inputRevision":1], "unset":[]]])
+        XCTAssertEqual(input.text, "7")
+        XCTAssertThrowsError(try commit(4, []))
+        renderer.clear()
+    }
+
     func testScrollViewportClipsContentAfterPropsUpdate() throws {
         let renderer = IOSRenderer(root: UIView())
         try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type": "Commit", "revision": 1, "commands": [

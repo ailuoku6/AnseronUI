@@ -55,7 +55,7 @@ data class RendererEvent(
 data class TextSize(val width: Float, val height: Float, val baseline: Float)
 data class TouchPoint(val x: Double, val y: Double, val pageX: Double, val pageY: Double, val pointerId: Long)
 
-private class NodeRecord(val view: View, val content: ViewGroup?, val kind: String) {
+private class NodeRecord(val view: View, val content: ViewGroup?, val kind: String, val nodeId: Long = 0) {
     val defaultAccessibilityDelegate = if (android.os.Build.VERSION.SDK_INT >= 29) view.accessibilityDelegate else null
     var accessibilityOverridden = false
     val defaultAccessibilityImportance = view.importantForAccessibility
@@ -113,6 +113,8 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
 
     /** The first surface child's target background, after a successful commit. */
     var onPageBackgroundColor: ((Int) -> Unit)? = null
+    private val topology = RenderTopology()
+    private var lastCommands = ""
     private val nodes = mutableMapOf<Long, NodeRecord>()
     private val recordsByView = java.util.IdentityHashMap<View, NodeRecord>()
     private val textPool = java.util.ArrayDeque<TextView>()
@@ -244,7 +246,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         textMeasurements.evictAll()
         nodes.values.forEach { record -> record.declaredProps?.let { setProps(record, it, true); record.animation.setActive(pageActive); record.animation.commit() } }
         val page = surface.getChildAt(0)
-        onPageBackgroundColor?.invoke(nodes.values.firstOrNull { it.view === page }?.pageBackgroundColor ?: Color.TRANSPARENT)
+        onPageBackgroundColor?.invoke(topology.rootId()?.let { nodes[it] }?.pageBackgroundColor ?: Color.TRANSPARENT)
         surface.invalidate()
     }
 
@@ -347,14 +349,14 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                             first = min(first, row.top); last = max(last, row.bottom)
                         }
                         val delta = desired - scrollY
-                        val room = if (delta > 0) last - height - scrollY else scrollY - first
-                        // Consume less momentum as an asynchronous window's
-                        // runway runs out. Never accumulate a delayed jump:
-                        // shift the scroller origin by the unconsumed distance.
-                        if (room >= 0 && delta != 0) {
-                            val scale = (room.toDouble() / max(1, height * 2)).coerceIn(0.0, 1.0)
-                            val travel = (delta * scale).toInt().coerceIn(-room, room)
-                            next = scrollY + travel
+                        // Preserve Android's velocity/deceleration until the
+                        // mounted window is actually exhausted. Scaling every
+                        // frame by runway made even a fully covered fling lag.
+                        // Discard only travel beyond the window, so a delayed
+                        // commit cannot release an accumulated catch-up jump.
+                        if (delta != 0) {
+                            next = if (delta > 0) min(desired, max(scrollY, last - height))
+                                else max(desired, min(scrollY, first))
                             flingAdjustment += next - desired
                         }
                     }
@@ -407,12 +409,12 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             var owner: Long? = null
             var allowX = true; var allowY = true; var policyComplete = false
             while (ancestor != null && ancestor !== surface) {
-                val record = nodes.entries.firstOrNull { it.value.view === ancestor }
+                val record = recordsByView[ancestor]
                 if (record != null) {
-                    if (owner == null && record.value.events.any { it in setOf("touchDown", "touchMove", "touchUp", "touchCancel") }) owner = record.key
+                    if (owner == null && record.events.any { it in setOf("touchDown", "touchMove", "touchUp", "touchCancel") }) owner = record.nodeId
                     if (!policyComplete) {
-                        allowX = allowX && record.value.touchAction != "none" && record.value.touchAction != "pan-y"
-                        allowY = allowY && record.value.touchAction != "none" && record.value.touchAction != "pan-x"
+                        allowX = allowX && record.touchAction != "none" && record.touchAction != "pan-y"
+                        allowY = allowY && record.touchAction != "none" && record.touchAction != "pan-x"
                         if (ancestor is ScrollView) policyComplete = true
                     }
                 }
@@ -470,25 +472,41 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         require(Looper.myLooper() == Looper.getMainLooper()) { "Renderer must run on the UI thread" }
         require(commit.getString("type") == "Commit") { "Invalid commit" }
         val next = commit.getLong("revision")
+        val signature = commit.getJSONArray("commands").toString()
+        if (next == revision) { require(signature == lastCommands) { "CONFLICTING_COMMIT" }; return }
         require(next > revision && next <= 0xffffffffL) { "Invalid revision" }
         val commands = commit.getJSONArray("commands")
-        require(commands.length() <= 4096) { "Too many commands" }
+        require(commands.length() <= 65536) { "Too many commands" }
         validate(commands)
+        val publishTopology = topology.prepare(commands)
         try {
-            val scrollAnchors = nodes.values.mapNotNull { it.view as? TouchScrollView }
+            val geometryChanged = (0 until commands.length()).any { val c = commands.getJSONObject(it); c.getString("type") in setOf("CreateNode", "RemoveNode", "InsertChild", "MoveChild", "DetachChild", "SetFrame") || c.optJSONObject("set")?.has("scrollAnchorOffset") == true }
+            val affected = mutableSetOf<Long>()
+            fun collectAncestors() {
+                for (i in 0 until commands.length()) {
+                    val c = commands.getJSONObject(i)
+                    affected.addAll(topology.ancestors(c.getLong("nodeId")))
+                    if (c.has("parentId")) affected.addAll(topology.ancestors(c.getLong("parentId")))
+                }
+            }
+            if (geometryChanged) collectAncestors()
+            val scrollAnchors = affected.mapNotNull { nodes[it]?.view as? TouchScrollView }
             val pendingAnchors = scrollAnchors.associateWith { it.pendingAnchor() }
             scrollAnchors.forEach { it.captureAnchor() }
             for (i in 0 until commands.length()) applyOne(commands.getJSONObject(i))
             scrollAnchors.forEach { it.reconcileAnchor(it.pendingAnchor() - pendingAnchors.getValue(it)) }
-            nodes.values.forEach { it.animation.setActive(pageActive); it.animation.commit() }
-            revision = next
-            if (!pageActive) for (record in nodes.values) {
+            val touched = (0 until commands.length()).mapNotNull { nodes[commands.getJSONObject(it).getLong("nodeId")] }.toSet()
+            touched.forEach { it.animation.setActive(pageActive); it.animation.commit() }
+            publishTopology(); lastCommands = signature; revision = next
+            if (!pageActive) for (record in touched) {
                 val video = record.view as? AndroidVideoView ?: continue
                 if (video.player.isPlaying) { resumeVideos.add(video); video.player.pause() }
             }
-            updateScrollExtents()
+            if (geometryChanged) { collectAncestors(); updateScrollExtents(affected) }
+            if (geometryChanged || (0 until commands.length()).any { commands.getJSONObject(it).optJSONObject("set")?.has("backgroundColor") == true }) {
             val page = surface.getChildAt(0)
-            onPageBackgroundColor?.invoke(nodes.values.firstOrNull { it.view === page }?.pageBackgroundColor ?: Color.TRANSPARENT)
+            onPageBackgroundColor?.invoke(topology.rootId()?.let { nodes[it] }?.pageBackgroundColor ?: Color.TRANSPARENT)
+            }
         } catch (error: Exception) {
             clear()
             throw error
@@ -496,6 +514,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     }
 
     fun clear() {
+        topology.clear(); lastCommands = ""
         sessions.clear(); textMeasurements.evictAll()
         val records = nodes.values.toList(); nodes.clear(); recordsByView.clear(); textPool.clear(); revision = 0L
         records.forEach { cleanup { releaseNode(it) } }
@@ -584,29 +603,37 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     }
 
     private fun validate(commands: JSONArray) {
-        val known = nodes.keys.toMutableSet()
+        val added = mutableSetOf<Long>(); val removed = mutableSetOf<Long>()
+        fun known(id: Long): Boolean = id !in removed && (id in added || nodes.containsKey(id))
         for (i in 0 until commands.length()) {
             val command = commands.getJSONObject(i)
             val id = command.getLong("nodeId")
             require(id in 1..0xffffffffL) { "Invalid node ID" }
             when (command.getString("type")) {
                 "CreateNode" -> {
-                    require(id !in known && command.getString("kind") in setOf("View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video", "Native"))
-                    known.add(id)
+                    require(!known(id) && command.getString("kind") in setOf("View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video", "Native"))
+                    added.add(id)
                 }
                 "InsertChild", "MoveChild" -> {
                     val parent = command.getLong("parentId")
-                    require(id in known && (parent == 0L || parent in known) && parent != id && command.getInt("index") >= 0)
+                    require(known(id) && (parent == 0L || known(parent)) && parent != id && command.getInt("index") >= 0)
                 }
-                "RemoveNode" -> require(known.remove(id))
-                "SetProps" -> require(id in known && command.has("props"))
+                "RemoveNode" -> require(known(id)).also { removed.add(id) }
+                "DetachChild" -> require(known(id))
+                "PatchProps" -> {
+                    require(known(id) && command.has("set") && command.has("unset"))
+                    val set = command.getJSONObject("set"); val unset = command.getJSONArray("unset")
+                    require(set.has("value") == set.has("inputRevision"))
+                    require((0 until unset.length()).all { !set.has(unset.getString(it)) })
+                }
+                "SetProps" -> require(known(id) && command.has("props"))
                 "SetFrame" -> {
-                    require(id in known)
+                    require(known(id))
                     val frame = command.getJSONObject("frame")
                     require((0..3).all { n -> frame.getDouble(arrayOf("x", "y", "width", "height")[n]).isFinite() })
                     require(frame.getDouble("width") >= 0 && frame.getDouble("height") >= 0)
                 }
-                "BindEvent" -> require(id in known && command.getString("event") in setOf("tap", "changeText", "longPress", "backPress", "focus", "blur", "submit", "scroll", "scrollEnd", "layout", "touchDown", "touchMove", "touchUp", "touchCancel", "spanClick", "loadSuccess", "loadFailure", "playStateDidChanged", "playTimeDidChanged", "firstFrameDidDisplay", "nativeComponent") && command.has("enabled"))
+                "BindEvent" -> require(known(id) && command.getString("event") in setOf("tap", "changeText", "longPress", "backPress", "focus", "blur", "submit", "scroll", "scrollEnd", "layout", "touchDown", "touchMove", "touchUp", "touchCancel", "spanClick", "loadSuccess", "loadFailure", "playStateDidChanged", "playTimeDidChanged", "firstFrameDidDisplay", "nativeComponent") && command.has("enabled"))
                 else -> error("Unknown render command")
             }
         }
@@ -646,7 +673,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 "Video" -> { view = AndroidVideoView(root.context); content = null }
                 else -> error("Unknown node kind")
             }
-            val record = NodeRecord(view, content, kind)
+            val record = NodeRecord(view, content, kind, id)
             record.native = native
             nodes[id] = record
             recordsByView[view] = record
@@ -762,9 +789,9 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                     if (view is ViewGroup) for (index in 0 until view.childCount) collect(view.getChildAt(index))
                 }
                 collect(record.view)
-                val retired = nodes.values.filter { it.view in subtree }
+                val retired = subtree.mapNotNull { recordsByView[it] }
                 retired.forEach { releaseNode(it) }
-                nodes.entries.removeAll { it.value.view in subtree }
+                retired.forEach { nodes.remove(it.nodeId) }
                 subtree.forEach { recordsByView.remove(it) }
                 (record.view.parent as? ViewGroup)?.removeView(record.view)
                 retired.forEach { recycleLeaf(it) }
@@ -772,12 +799,25 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             "InsertChild", "MoveChild" -> {
                 val parentId = command.getLong("parentId")
                 val target = if (parentId == 0L) surface else nodes[parentId]?.content ?: error("Invalid parent")
-                val index = min(command.getInt("index"), target.childCount)
+                val index = min(command.getInt("index"), target.childCount - if (record.view.parent === target) 1 else 0)
                 val current = record.view.parent as? ViewGroup
                 if (current !== target || target.indexOfChild(record.view) != index) {
                     current?.removeView(record.view)
                     target.addView(record.view, index)
                 }
+            }
+            "DetachChild" -> (record.view.parent as? ViewGroup)?.removeView(record.view)
+            "PatchProps" -> {
+                val props = JSONObject((record.declaredProps ?: JSONObject()).toString())
+                val set = command.getJSONObject("set"); val unset = command.getJSONArray("unset")
+                set.keys().forEach { props.put(it, set.get(it)) }
+                for (i in 0 until unset.length()) props.remove(unset.getString(i))
+                val changed = set.keys().asSequence().toSet() + (0 until unset.length()).map { unset.getString(it) }
+                val visual = setOf("opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius")
+                if (changed.all { it in visual }) {
+                    record.declaredProps = props; record.resolvedProps = themed(props)
+                    record.animation.stage(changed.associateWith { props.optDouble(it, NodeAnimation.defaults[it] ?: 0.0) })
+                } else setProps(record, props, changed = changed)
             }
             "SetProps" -> setProps(record, command.getJSONObject("props"))
             "SetFrame" -> {
@@ -862,7 +902,8 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         }
     }
 
-    private fun setProps(record: NodeRecord, raw: JSONObject, appearanceOnly: Boolean = false) {
+    private fun setProps(record: NodeRecord, raw: JSONObject, appearanceOnly: Boolean = false, changed: Set<String>? = null) {
+        fun affects(vararg fields: String): Boolean = changed == null || fields.any { it in changed }
         record.declaredProps = raw // Commit payloads are immutable after handoff to the UI thread.
         var props = themed(raw)
         if (record.kind == "View" && props.optBoolean("glassEffect") && !props.optBoolean("glassEffectContainer")) {
@@ -875,32 +916,33 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         if (props.optDouble("backgroundBlurRadius", 0.0) <= 0) {
             record.backdropBlur?.clear(); record.backdropBlur = null
         }
-        if (!appearanceOnly) record.native?.setProps(JSONObject(props.optString("nativeProps", "{}")))
-        record.touchAction = props.optString("touchAction", "auto")
+        if (!appearanceOnly && affects("nativeProps")) record.native?.setProps(JSONObject(props.optString("nativeProps", "{}")))
+        if (affects("touchAction")) { record.touchAction = props.optString("touchAction", "auto") }
         val view = record.view
-        record.animation.options = if (props.has("animation")) AnimationOptions(JSONObject(props.getString("animation"))) else null
+        if (affects("animation")) { record.animation.options = if (props.has("animation")) AnimationOptions(JSONObject(props.getString("animation"))) else null }
+        if (affects("opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius", "backgroundColor", "dmBackgroundColor", "glassEffect", "glassEffectStyle", "glassEffectContainer")) {
         val color = parseColor(props.optString("backgroundColor", ""), Color.TRANSPARENT)
         record.pageBackgroundColor = color
         val visual = NodeAnimation.defaults.toMutableMap()
         for (key in listOf("opacity","translateX","translateY","scaleX","scaleY","rotate","borderRadius")) if (props.has(key)) visual[key] = props.getDouble(key)
         visual.putAll(mapOf("r" to Color.red(color).toDouble(), "g" to Color.green(color).toDouble(), "b" to Color.blue(color).toDouble(), "a" to Color.alpha(color)/255.0))
         record.animation.stage(visual)
-        view.transitionName = props.optString("testID").takeIf { it.isNotEmpty() }
-        view.isEnabled = props.optBoolean("editable", true) && !props.optBoolean("disabled", false)
-        updateAccessibility(record)
-        view.visibility = if (props.optString("visibility") == "hidden") View.INVISIBLE else View.VISIBLE
+        }
+        if (affects("testID")) { view.transitionName = props.optString("testID").takeIf { it.isNotEmpty() } }
+        if (affects("editable","disabled")) { view.isEnabled = props.optBoolean("editable", true) && !props.optBoolean("disabled", false) }
+        if (affects("accessible","accessibilityRole","accessibilityLabel","accessibilityHint","accessibilityValue","accessibilityHidden","accessibilityChecked","accessibilitySelected","accessibilityClickable","accessibilityLongClickable","disabled")) { updateAccessibility(record) }
+        if (affects("visibility")) { view.visibility = if (props.optString("visibility") == "hidden") View.INVISIBLE else View.VISIBLE }
         val background = view.background as? GradientDrawable ?: GradientDrawable().also { view.background = it }
-        background.setStroke((props.optDouble("borderWidth", 0.0) * density).roundToInt(), parseColor(props.optString("borderColor", ""), Color.TRANSPARENT))
-        view.clipToOutline = props.optString("overflow") == "hidden"
-        if (view is ShadowLayout) view.clipChildren = props.optString("overflow") == "hidden"
+        if (affects("borderWidth","borderColor","dmBorderColor")) { background.setStroke((props.optDouble("borderWidth", 0.0) * density).roundToInt(), parseColor(props.optString("borderColor", ""), Color.TRANSPARENT)) }
+        if (affects("overflow")) { view.clipToOutline = props.optString("overflow") == "hidden" }
+        if (affects("overflow")) { if (view is ShadowLayout) view.clipChildren = props.optString("overflow") == "hidden" }
         (view.parent as? View)?.invalidate()
-        if (view is TextView) {
+        if (view is TextView && affects("text", "spans", "fontSize", "fontWeight", "fontStyle", "color", "dmColor", "textAlign", "numberOfLines", "ellipsizeMode", "lineHeight", "textDecorationLine", "value", "inputRevision", "placeholder", "placeholderTextColor", "dmPlaceholderTextColor", "editable", "secureTextEntry", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "maxLength")) {
             view.textSize = props.optDouble("fontSize", 16.0).toFloat()
             view.setTextColor(parseColor(props.optString("color", ""), themeColor(android.R.attr.textColorPrimary, Color.BLACK)))
-            view.typeface = android.graphics.Typeface.create(view.typeface, if (props.optString("fontWeight") == "bold") android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-            if (props.optString("fontStyle") == "italic") view.setTypeface(view.typeface, android.graphics.Typeface.ITALIC)
+            view.typeface = android.graphics.Typeface.create(view.typeface, (if (props.optString("fontWeight") == "bold") android.graphics.Typeface.BOLD else 0) or (if (props.optString("fontStyle") == "italic") android.graphics.Typeface.ITALIC else 0))
             view.gravity = when (props.optString("textAlign")) { "center" -> android.view.Gravity.CENTER_HORIZONTAL; "right" -> android.view.Gravity.RIGHT; else -> android.view.Gravity.LEFT }
-            if (props.has("numberOfLines")) { view.maxLines = props.optInt("numberOfLines"); view.ellipsize = android.text.TextUtils.TruncateAt.END }
+            if (affects("numberOfLines", "ellipsizeMode")) { view.maxLines = props.optInt("numberOfLines", Int.MAX_VALUE); view.ellipsize = if (props.optString("ellipsizeMode") == "clip") null else android.text.TextUtils.TruncateAt.END }
             when (record.kind) {
                 "Text" -> view.text = props.optString("text", "")
                 "RichText" -> {
@@ -947,18 +989,18 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                     input.hint = props.optString("placeholder", "")
                     input.setHintTextColor(parseColor(props.optString("placeholderTextColor", ""), themeColor(android.R.attr.textColorHint, Color.GRAY)))
                     if (!appearanceOnly) {
-                        input.isEnabled = props.optBoolean("editable", true)
-                        input.isSingleLine = true
-                        input.inputType = if (props.optBoolean("secureTextEntry")) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD else when (props.optString("keyboardType")) {
+                        if (affects("editable")) input.isEnabled = props.optBoolean("editable", true)
+                        if (affects("keyboardType", "secureTextEntry")) input.isSingleLine = true
+                        if (affects("keyboardType", "secureTextEntry")) input.inputType = if (props.optBoolean("secureTextEntry")) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD else when (props.optString("keyboardType")) {
                             "numeric" -> android.text.InputType.TYPE_CLASS_NUMBER
                             "decimal-pad" -> android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
                             "phone-pad" -> android.text.InputType.TYPE_CLASS_PHONE
                             "email-address" -> android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
                             else -> android.text.InputType.TYPE_CLASS_TEXT
                         }
-                        input.imeOptions = when (props.optString("returnKeyType")) { "done" -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE; "go" -> android.view.inputmethod.EditorInfo.IME_ACTION_GO; "next" -> android.view.inputmethod.EditorInfo.IME_ACTION_NEXT; "search" -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; "send" -> android.view.inputmethod.EditorInfo.IME_ACTION_SEND; else -> android.view.inputmethod.EditorInfo.IME_ACTION_UNSPECIFIED }
+                        if (affects("returnKeyType")) input.imeOptions = when (props.optString("returnKeyType")) { "done" -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE; "go" -> android.view.inputmethod.EditorInfo.IME_ACTION_GO; "next" -> android.view.inputmethod.EditorInfo.IME_ACTION_NEXT; "search" -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH; "send" -> android.view.inputmethod.EditorInfo.IME_ACTION_SEND; else -> android.view.inputmethod.EditorInfo.IME_ACTION_UNSPECIFIED }
                         val value = props.optString("value", "")
-                        if (props.optLong("inputRevision", 0) >= record.inputRevision && input.text.toString() != value && !hasComposition(input)) {
+                        if (affects("value", "inputRevision") && props.optLong("inputRevision", 0) >= record.inputRevision && input.text.toString() != value && !hasComposition(input)) {
                             record.applyingValue = true
                             input.setText(value)
                             input.setSelection(value.length)
@@ -968,7 +1010,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 }
             }
         }
-        if (view is TextView && record.kind in setOf("Text", "RichText")) {
+        if (view is TextView && record.kind in setOf("Text", "RichText") && affects("text", "spans", "fontSize", "fontWeight", "fontStyle", "lineHeight", "textAlign", "textDecorationLine")) {
             view.includeFontPadding = !props.has("lineHeight")
             if (props.has("lineHeight")) {
                 val text = android.text.SpannableString(view.text)
@@ -983,15 +1025,15 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 view.text = text
             }
         }
-        if (view is ScrollView) {
+        if (view is ScrollView && affects("scrollAnchorOffset", "scrollEnabled", "showsVerticalScrollIndicator")) {
             if (!appearanceOnly && view is TouchScrollView) {
                 view.anchorsEnabled = props.has("scrollAnchorOffset")
                 view.stageAnchor(props.optDouble("scrollAnchorOffset", 0.0))
             }
-            view.isEnabled = props.optBoolean("scrollEnabled", true)
+            if (affects("scrollEnabled")) { view.isEnabled = props.optBoolean("scrollEnabled", true) }
             view.isVerticalScrollBarEnabled = props.optBoolean("showsVerticalScrollIndicator", true)
         }
-        if (view is ImageView) {
+        if (view is ImageView && affects("src", "dmSrc", "placeholderSrc", "resizeMode")) {
             view.scaleType = when (props.optString("resizeMode")) {
                 "contain" -> ImageView.ScaleType.FIT_CENTER
                 "stretch" -> ImageView.ScaleType.FIT_XY
@@ -1014,11 +1056,11 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 })
             }
         }
-        if (view is AndroidVideoView && !appearanceOnly) {
+        if (view is AndroidVideoView && !appearanceOnly && affects("src", "dmSrc", "resizeMode", "controls", "autoplay", "loop", "muted", "rate", "playControl")) {
             val previous = view.props
             view.props = JSONObject(props.toString())
             view.resizeMode = props.optString("resizeMode", "cover")
-            view.clipToOutline = props.optDouble("borderRadius", 0.0) > 0
+            if (affects("overflow")) { view.clipToOutline = props.optDouble("borderRadius", 0.0) > 0 }
             view.requestLayout()
             val video = view.player
             if (previous.optBoolean("controls", true) != props.optBoolean("controls", true) || previous.length() == 0) {
@@ -1056,7 +1098,6 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             }
         }
     }
-
     private fun richTextSpans(props: JSONObject): JSONArray {
         val raw = props.opt("spans")
         if (raw is JSONArray) return raw
@@ -1132,8 +1173,8 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
     private fun deepestNodeAt(x: Float, y: Float): Pair<Long, NodeRecord>? {
         var target = deepestView(surface, x, y)
         while (target !== surface) {
-            val found = nodes.entries.firstOrNull { it.value.view === target }
-            if (found != null) return found.key to found.value
+            val found = recordsByView[target]
+            if (found != null) return found.nodeId to found
             target = target.parent as? View ?: break
         }
         return null
@@ -1215,8 +1256,10 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
         }
     }
 
-    private fun updateScrollExtents() {
-        for (record in nodes.values) if (record.view is ScrollView) {
+    private fun updateScrollExtents(ids: Set<Long>) {
+        for (id in ids) {
+            val record = nodes[id] ?: continue
+            if (record.view !is ScrollView) continue
             val content = record.content ?: continue
             var width = 0
             var height = 0

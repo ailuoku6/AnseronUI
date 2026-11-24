@@ -76,4 +76,6 @@ Web 的构建命令在[构建与运行](reference/build.md)。
 
 ## 参与开发
 
+- [自动测试与 GitHub Actions](contributing/testing.md)：平台套件、覆盖范围和设备 runner。
+
 修改框架、Renderer、CLI 或仓库示例时，从 [CONTRIBUTING.md](../CONTRIBUTING.md) 进入。设计记录在 [`internal/`](../internal/README.md)，不定义公开 API。

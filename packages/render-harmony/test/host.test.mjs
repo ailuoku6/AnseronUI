@@ -24,7 +24,7 @@ function fixture(measureText = () => ({ width: 40, height: 32 })) {
     './HarmonyMedia': {}, './HarmonyAnimation': {}, './HarmonyServices': {}, './HarmonyRadioServices': {}, './HarmonyApplicationServices': {},
     '@kit.ArkUI': { NodeContent: class {}, FontStyle: { Italic: 1, Normal: 0 }, window: { AvoidAreaType: { TYPE_SYSTEM: 0, TYPE_CUTOUT: 1, TYPE_NAVIGATION_INDICATOR: 4 } } },
     '@ohos.accessibility': { EventInfo: class { constructor(type, bundleName, triggerAction) { Object.assign(this, { type, bundleName, triggerAction }); } }, async sendAccessibilityEvent(event) { accessibilityEvents.push(event); } },
-    '@kit.IMEKit': {}, '@kit.NetworkKit': {}, '@kit.AbilityKit': {}, '@ohos.promptAction': {}, '@kit.ArkData': {}, '@kit.NotificationKit': {}, '@kit.LocalizationKit': {},
+    '@kit.ImageKit': {}, '@kit.IMEKit': {}, '@kit.NetworkKit': {}, '@kit.AbilityKit': {}, '@ohos.promptAction': {}, '@kit.ArkData': {}, '@kit.NotificationKit': {}, '@kit.LocalizationKit': {},
     '@kit.BasicServicesKit': { systemDateTime: { getUptime: () => performance.now() * 1e6, TimeType: { STARTUP: 0 } } },
     '@kit.ArkTS': { util: { TextEncoder: class { encodeInto(value) { return new TextEncoder().encode(value); } } } }, 'libanseronui.so': native,
   }, { FontStyle: { Italic: 1, Normal: 0 } });

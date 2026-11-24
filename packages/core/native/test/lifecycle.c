@@ -7,9 +7,9 @@
 
 static void *exercise(void *unused) {
   (void)unused;
-  const char *message = "{\"protocolMajor\":1,\"protocolMinor\":0,\"bundleBuildId\":\"anseronui-demo\",\"runtimeEpoch\":1,\"surfaceId\":1,\"surfaceGeneration\":1,\"sequence\":1,\"ackSequence\":0,\"payload\":{\"type\":\"Handshake\",\"requiredNodes\":[\"Text\"]}}";
-  const char *create = "{\"protocolMajor\":1,\"protocolMinor\":0,\"bundleBuildId\":\"anseronui-demo\",\"runtimeEpoch\":1,\"surfaceId\":1,\"surfaceGeneration\":1,\"sequence\":2,\"ackSequence\":0,\"payload\":{\"type\":\"CreateSurface\",\"page\":\"counter\",\"width\":390,\"height\":844}}";
-  const char *destroy = "{\"protocolMajor\":1,\"protocolMinor\":0,\"bundleBuildId\":\"anseronui-demo\",\"runtimeEpoch\":1,\"surfaceId\":1,\"surfaceGeneration\":1,\"sequence\":3,\"ackSequence\":0,\"payload\":{\"type\":\"DestroySurface\"}}";
+  const char *message = "{\"protocolMajor\":2,\"protocolMinor\":0,\"bundleBuildId\":\"anseronui-demo\",\"runtimeEpoch\":1,\"surfaceId\":1,\"surfaceGeneration\":1,\"sequence\":1,\"ackSequence\":0,\"payload\":{\"type\":\"Handshake\",\"requiredNodes\":[\"Text\"]}}";
+  const char *create = "{\"protocolMajor\":2,\"protocolMinor\":0,\"bundleBuildId\":\"anseronui-demo\",\"runtimeEpoch\":1,\"surfaceId\":1,\"surfaceGeneration\":1,\"sequence\":2,\"ackSequence\":0,\"payload\":{\"type\":\"CreateSurface\",\"page\":\"counter\",\"width\":390,\"height\":844}}";
+  const char *destroy = "{\"protocolMajor\":2,\"protocolMinor\":0,\"bundleBuildId\":\"anseronui-demo\",\"runtimeEpoch\":1,\"surfaceId\":1,\"surfaceGeneration\":1,\"sequence\":3,\"ackSequence\":0,\"payload\":{\"type\":\"DestroySurface\"}}";
   for (int round = 0; round < 50; round++) {
     AnseronUIContext *context = anseronui_open();
     assert(context && !*anseronui_error(context));

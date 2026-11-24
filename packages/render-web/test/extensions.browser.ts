@@ -23,7 +23,7 @@ export async function verifyExtensions(): Promise<void> {
   const assert = (value: unknown, message: string) => {if(!value)throw new Error(message);};
   const node = (id: string) => root.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
   const tick = async () => {for(let i=0;i<48;i++){await Promise.resolve();await host.flush();}};
-  const tap = async (title: string) => {const button=[...root.querySelectorAll('button')].find(button=>button.textContent===title);assert(button,'missing button '+title+' DOM='+root.innerHTML+' diagnostics='+JSON.stringify(host.diagnostics));button!.click();await tick();};
+  const tap = async (title: string) => {const button=[...root.querySelectorAll<HTMLElement>('[role="button"]')].find(button=>button.textContent===title);assert(button,'missing button '+title+' DOM='+root.innerHTML+' diagnostics='+JSON.stringify(host.diagnostics));button!.click();await tick();};
   await host.mount('extensions',390,844);
   await tap('读取平台信息'); assert(node('extension-platform').textContent==='平台: WebKit','module JSON result');
   const control=node('extension-switch') as HTMLInputElement;

@@ -2,7 +2,8 @@ import { debugBuildOptions, instrumentSource } from '../packages/devtools/instru
 import { readdir, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { resolve, relative, dirname, join } from 'node:path';
-import { lowerTSX } from '../packages/ui-compiler/src/index.ts';
+import ts from 'typescript';
+import { lowerTSX, createCompileProgram } from '../packages/ui-compiler/src/index.ts';
 import { originalSource, replaceMapped, sourceMapComment } from '../packages/ui-compiler/src/source-map.ts';
 import { coreSourceDirs, coreFingerprint, frameworkFingerprint, businessFingerprint } from './core-inputs.mjs';
 import { lowerTimers } from './lower-timers.mjs';
@@ -47,6 +48,10 @@ function stagedPath(path) {
  return join('__external__', identity, relative(base, absolute));
 }
 for (const plugin of config.npmPlugins ?? []) aliases.set(plugin.name, stagedPath(plugin.entry));
+const compileProgram = mode === 'business' ? createCompileProgram(coreSourceDirs(config).flatMap(dir => ts.sys.readDirectory(resolve(root, dir), ['.ts', '.tsx'], ['**/node_modules/**'])), {
+ baseUrl: root, paths: { 'anseronui': ['packages/ui/src/index.ts'], 'anseronui/ui': ['packages/ui/src/index.ts'], '@anseronui/ui': ['packages/ui/src/index.ts'] }
+}) : undefined;
+const optimizationReports = [];
 async function copy(path, outputPath = stagedPath(path)) {
  const absolute = resolve(root, path);
  for (const item of await readdir(absolute,{withFileTypes:true})) {
@@ -64,7 +69,7 @@ async function copy(path, outputPath = stagedPath(path)) {
    };
    const output=join(stage,target.replace(/\.tsx$/,'.ts'));
    if(item.name.endsWith('.tsx')) {
-    const lowered=lowerTSX(text,target,{devtools:devtools.enabled}); if(lowered.diagnostics.length) throw new Error(JSON.stringify(lowered.diagnostics)); text=lowered.source; mapped=lowered.mapped;
+    const lowered=lowerTSX(text,name,{devtools:devtools.enabled,program:compileProgram}); if(lowered.diagnostics.length) throw new Error(JSON.stringify(lowered.diagnostics)); text=lowered.source; mapped=lowered.mapped; optimizationReports.push(...lowered.optimizations);
    }
    if (mode === 'business' && !(relative(root, absolute).startsWith('packages/'))) { mapped = lowerTimers(text, output, mapped); text = mapped.source; }
    text = instrumentSource(name.replaceAll('\\', '/'), text, { ...devtools, rewrite });
@@ -87,6 +92,8 @@ const sourceFingerprint = coreFingerprint(root, configPath);
 for(const dir of coreSourceDirs(mode === 'framework' ? { sourceDirs: [] } : config)) await copy(dir);
 const imports = config.pages.map((page, i) => `import { ${page.export} as page${i} } from './${stagedPath(page.source).replace(/\.tsx$/, '.js')}';`).join('\n');
 const entry = mode === 'framework' ? `export { version, execute, dispose } from './packages/core/src/kernel.js';\n` : `import { BusinessRuntime } from './packages/core/src/business-runtime.js';
+import { BusinessWire } from './packages/core/src/wire.js';
+const wire = new BusinessWire();
 import { CORE_ABI_VERSION } from './packages/core/src/contracts.js';
 import type { CoreResult } from './packages/core/src/contracts.js';
 import type { Envelope, InputPayload, OutputPayload } from './packages/protocol/src/index.js';
@@ -98,8 +105,8 @@ export function create(): void { if (runtime !== null) throw new Error('RUNTIME_
 export function post(input: string): void { if (runtime === null) throw new Error('RUNTIME_NOT_CREATED'); runtime.post(JSON.parse(input) as Envelope<InputPayload>); }
 export function advance(): void { outputs.push(...(runtime?.step(1) ?? [])); }
 export function step(): string { outputs.push(...(runtime?.takeOutputs() ?? [])); const result = JSON.stringify(outputs); outputs = []; return result; }
-export function coreRequest(): string { const request = runtime?.takeCoreRequest(); return request ? JSON.stringify(request) : ''; }
-export function coreResult(result: string): void { runtime?.acceptCoreResult(JSON.parse(result) as CoreResult); }
+export function coreRequest(): string { return wire.next(() => { const request = runtime?.takeCoreRequest(); return request ? JSON.stringify(request) : ''; }); }
+export function coreResult(result: string): void { wire.accept(result, value => runtime?.acceptCoreResult(JSON.parse(value) as CoreResult)); }
 export function pending(): boolean { return runtime?.hasPendingWork() ?? false; }
 export function dispose(): void { runtime?.dispose(); runtime=null; }
 `;
@@ -110,4 +117,6 @@ console.log(stage);
 profile.abi.instance_per_thread = false;
 profile.abi.localize_runtime = false; // Wasm instances already isolate symbols and memory.
 await writeFile(join(stage, 'profile-wasm.json'), JSON.stringify(profile, null, 2) + '\n');
-await writeFile(join(stage, 'manifest.json'), JSON.stringify({buildId:config.buildId, protocolMajor:1, runtimeEpoch:1, pages:config.pages.map(page => ({ ...page, name: page.name ?? page.source.split('/').slice(-2, -1)[0] })), configPath, sourceFingerprint, abiVersion: 2, frameworkFingerprint: frameworkFingerprint(root), businessFingerprint: businessFingerprint(root, configPath)}, null, 2) + '\n');
+await writeFile(join(stage, 'manifest.json'), JSON.stringify({buildId:config.buildId, protocolMajor:2, runtimeEpoch:1, pages:config.pages.map(page => ({ ...page, name: page.name ?? page.source.split('/').slice(-2, -1)[0] })), configPath, sourceFingerprint, abiVersion: 3, frameworkFingerprint: frameworkFingerprint(root), businessFingerprint: businessFingerprint(root, configPath)}, null, 2) + '\n');
+
+await writeFile(join(stage, "optimization-report.json"), JSON.stringify(optimizationReports, null, 2) + "\n");

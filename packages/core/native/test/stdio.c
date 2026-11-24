@@ -2,8 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+static void report_trap(void *context, const uint8_t *message, size_t length, uint64_t address) {
+  (void)context; (void)address; fwrite(message, 1, length, stderr); fputc('\n', stderr);
+}
 int main(void) {
-  anseronui_core_init(); anseronui_core_create();
+  anseronui_core_init(); anseronui_core_sink(report_trap, NULL); anseronui_core_create();
   char *line = NULL; size_t capacity = 0; ssize_t length;
   while ((length = getline(&line, &capacity, stdin)) > 0) {
     if (line[0] != '\n') anseronui_core_post((const uint8_t *)line, (uint64_t)length);

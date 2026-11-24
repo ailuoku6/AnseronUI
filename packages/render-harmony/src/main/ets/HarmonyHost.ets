@@ -60,11 +60,13 @@ export interface Payload {
   errorName?: string;
   buildId?: string;
   commands?: Object[];
+  transactionId?: number; baseRevision?: number; chunkCount?: number; commandCount?: number; totalBytes?: number; index?: number; data?: string;
+  resetToken?: number; rejectedThroughTransactionId?: number;
   values?: Record<string, number>;
 }
 export interface DiagnosticDetails { code: string; message: string; stack?: string; errorName?: string; buildId?: string }
 
-interface RenderCommand { type: string; nodeId: number; props?: RenderProperties; }
+interface RenderCommand { type: string; nodeId: number; props?: RenderProperties; set?: RenderProperties; unset?: string[]; }
 interface RenderProperties { animation?: string; }
 interface TextProps { fontWeight?: string; fontStyle?: string; numberOfLines?: number; lineHeight?: number; }
 interface Envelope {
@@ -72,8 +74,10 @@ interface Envelope {
   runtimeEpoch: number; surfaceId: number; surfaceGeneration: number;
   sequence: number; ackSequence: number; payload: Payload;
 }
-interface Handshake { type: string; requiredNodes: string[]; }
+interface RenderLimits { messageBytes: number; transactionBytes: number; commandsPerMessage: number; commandsPerTransaction: number; }
+interface Handshake { type: string; requiredNodes: string[]; capabilities: string[]; limits: RenderLimits; }
 interface CreateSurface { type: string; page: string; width: number; height: number; visible: boolean; }
+interface EnvironmentChanged { type: string; version: number; }
 interface Resize { type: string; width: number; height: number; }
 interface Visibility { type: string; visible: boolean; }
 interface Inspection { type: string; enabled: boolean; reset: boolean; }
@@ -109,8 +113,9 @@ export class HarmonyHost {
   private netConnection: connection.NetConnection | null = null;
   private active: boolean = true;
   private dark: boolean = false;
+  private environmentVersion: number = 0;
   private keyboardListener: (height: number) => void = (height: number) => { this.events.emit('keyboard', new KeyboardValue(height > 0, this.ui.px2vp(height))); };
-  private configListener: (configuration: Configuration) => void = (configuration: Configuration) => { this.setAppearance(configuration.colorMode === 0); };
+  private configListener: (configuration: Configuration) => void = (configuration: Configuration) => { this.setAppearance(configuration.colorMode === 0); this.environmentChanged(); };
 
   private transitions: Map<number, AnimationOptions> = new Map();
   // ANSERONUI_DEVTOOLS_BEGIN
@@ -196,13 +201,13 @@ export class HarmonyHost {
     native.appearance(this.renderer, this.context.config.colorMode === 0);
     void this.startEnvironment();
     this.worker = native.open((bytes: string) => this.receive(bytes));
-    const handshake: Handshake = { type: 'Handshake', requiredNodes: ['View', 'Text', 'RichText', 'TextInput', 'ScrollView', 'Image', 'Video', 'Native'] };
+    const handshake: Handshake = { type: 'Handshake', capabilities: ['patchProps', 'detachChild', 'commitChunks', 'resetSurface', 'inputRevision'], limits: { messageBytes:1048576, transactionBytes:16777216, commandsPerMessage:4096, commandsPerTransaction:65536 }, requiredNodes: ['View', 'Text', 'RichText', 'TextInput', 'ScrollView', 'Image', 'Video', 'Native'] };
     this.send(handshake);
   }
   private send(payload: Object): void {
     if (this.closed || this.worker === 0) return;
     if (this.sequence >= 0xffffffff) { this.fail('INPUT_SEQUENCE_EXHAUSTED'); return; }
-    const envelope: Envelope = { protocolMajor: 1, protocolMinor: 5, bundleBuildId: this.buildId,
+    const envelope: Envelope = { protocolMajor: 2, protocolMinor: 0, bundleBuildId: this.buildId,
       runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: 1, sequence: this.sequence + 1,
       ackSequence: this.outputSequence, payload: payload as Payload };
     const encodeStart = this.clock();
@@ -231,7 +236,7 @@ export class HarmonyHost {
       if (this.profiling) this.metric('bridgeOutputBytes', this.encoder.encodeInto(bytes).byteLength);
       if (!Array.isArray(outputs) || outputs.length > 4096) throw new Error('INVALID_OUTPUT_BATCH');
       for (const envelope of outputs) {
-        if (envelope.protocolMajor !== 1 || envelope.protocolMinor > 5 || envelope.bundleBuildId !== this.buildId ||
+        if (envelope.protocolMajor !== 2 || envelope.protocolMinor > 0 || envelope.bundleBuildId !== this.buildId ||
           envelope.runtimeEpoch !== 1 || envelope.surfaceId !== 1 || envelope.surfaceGeneration !== 1 ||
           envelope.sequence !== this.outputSequence + 1 || envelope.ackSequence > this.sequence) throw new Error('INVALID_OUTPUT_ENVELOPE');
         this.outputSequence = envelope.sequence;
@@ -240,7 +245,46 @@ export class HarmonyHost {
       }
     } catch (error) { this.fail(String(error)); }
   }
-  private output(p: Payload): void {
+  private commitHeader: Payload | null = null;
+  private commitChunks: Map<number, string> = new Map();
+  private commitBytes: number = 0;
+  private commitCount: number = 0;
+  private rejectedThrough: number = 0;
+  private lastCommit: Payload | null = null;
+  private utf8Length(value: string): number {
+    let size = 0;
+    for (let i = 0; i < value.length; i++) { const c = value.charCodeAt(i); if (c < 128) size++; else if (c < 2048) size += 2; else if (c >= 0xd800 && c <= 0xdbff && i + 1 < value.length) { size += 4; i++; } else size += 3; }
+    return size;
+  }
+  private assemble(p: Payload): Payload | null {
+    if (p.type === 'CommitBegin') {
+      if (p.transactionId! <= this.rejectedThrough || p.chunkCount! < 1 || p.chunkCount! > 65536 || p.commandCount! > 65536 || p.totalBytes! > 16777216) throw new Error('INVALID_COMMIT_BEGIN');
+      if (this.commitHeader) { if (JSON.stringify(this.commitHeader) !== JSON.stringify(p)) throw new Error('CONFLICTING_COMMIT_BEGIN'); return null; }
+      this.commitHeader = p; this.commitChunks.clear(); this.commitBytes = 0; this.commitCount = 0; return null;
+    }
+    if (p.type === 'CommitChunk') {
+      const header = this.commitHeader;
+      if (!header || header.transactionId !== p.transactionId || p.index! < 0 || p.index! >= header.chunkCount!) throw new Error('INVALID_COMMIT_CHUNK');
+      if (this.commitChunks.has(p.index!)) { if (this.commitChunks.get(p.index!) !== p.data!) throw new Error('CONFLICTING_COMMIT_CHUNK'); return null; }
+      const commands = JSON.parse(p.data!) as Object[];
+      if (commands.length > 4096) throw new Error('COMMAND_LIMIT');
+      this.commitBytes += this.utf8Length(p.data!) - 2 + (commands.length > 0 ? 1 : 0); this.commitCount += commands.length;
+      if (this.commitBytes > header.totalBytes! || this.commitCount > header.commandCount!) throw new Error('COMMIT_BUFFER_LIMIT');
+      this.commitChunks.set(p.index!, p.data!); return null;
+    }
+    if (p.type === 'CommitEnd') {
+      if (!this.commitHeader && this.lastCommit?.revision === p.transactionId) return this.lastCommit;
+      const header = this.commitHeader;
+      if (!header || header.transactionId !== p.transactionId || this.commitChunks.size !== header.chunkCount || this.commitCount !== header.commandCount || this.commitBytes + 1 !== header.totalBytes) throw new Error('INCOMPLETE_COMMIT');
+      const chunks: string[] = []; for (let i = 0; i < header.chunkCount!; i++) { const chunk = this.commitChunks.get(i)!; chunks.push(chunk.substring(1, chunk.length - 1)); }
+      const commands = JSON.parse('[' + chunks.join(',') + ']') as Object[];
+      const result: Payload = { type: 'Commit', revision: header.revision, commands };
+      this.commitHeader = null; this.commitChunks.clear(); this.lastCommit = result; return result;
+    }
+    return p;
+  }
+  private output(incoming: Payload): void {
+    const assembled = this.assemble(incoming); if (!assembled) return; const p = assembled;
     switch (p.type) {
       case 'Ready': {
         if (this.ready) throw new Error('DUPLICATE_READY');
@@ -248,14 +292,21 @@ export class HarmonyHost {
         const create: CreateSurface = { type: 'CreateSurface', page: this.page, width: this.width, height: this.height, visible: this.visible };
         this.send(create); this.onReady(); break;
       }
+      case 'ResetSurface': {
+        this.ui.runScopedTask(() => native.commit(this.renderer, JSON.stringify(p)));
+        this.animations?.dispose(); this.animations = null; this.transitions.clear();
+        this.commitHeader = null; this.commitChunks.clear(); this.lastCommit = null; this.rejectedThrough = Math.max(this.rejectedThrough, p.rejectedThroughTransactionId!);
+        const ack: Payload = { type: 'ResetAck', resetToken: p.resetToken }; this.send(ack); break;
+      }
       case 'Commit': {
         try {
           const previous: Map<number, VisualValues> = new Map();
           const commands = p.commands as RenderCommand[];
           for (const command of commands) {
             if (command.type === 'RemoveNode') { this.animations?.cancel(command.nodeId); this.transitions.delete(command.nodeId); }
+            if (command.type === 'PatchProps' && (command.set?.animation || command.unset?.includes('animation'))) { if (command.set?.animation) this.transitions.set(command.nodeId, JSON.parse(command.set.animation) as AnimationOptions); else this.transitions.delete(command.nodeId); }
             if (command.type === 'SetProps') { if (command.props?.animation) this.transitions.set(command.nodeId, JSON.parse(command.props.animation) as AnimationOptions); else this.transitions.delete(command.nodeId); }
-            if ((command.type === 'SetProps' || command.type === 'SetFrame') && this.transitions.has(command.nodeId) && !previous.has(command.nodeId)) {
+            if ((command.type === 'SetProps' || command.type === 'PatchProps' || command.type === 'SetFrame') && this.transitions.has(command.nodeId) && !previous.has(command.nodeId)) {
               try { previous.set(command.nodeId, this.animationClock().snapshot(command.nodeId)); } catch (_error) { /* First mount is immediate. */ }
             }
           }
@@ -264,7 +315,7 @@ export class HarmonyHost {
           this.metric('rendererApplyMs', this.clock() - applyStart); this.metric('hostCommits', 1);
           previous.forEach((value: VisualValues, node: number) => { const clock = this.animationClock(); void clock.animate(node, { style: clock.snapshot(node), options: this.transitions.get(node) }, value); });
         }
-        catch (error) { const failed: Ack = { type: 'CommitFailed', revision: p.revision!, reason: String(error) }; this.send(failed); throw new Error(String(error)); }
+        catch (error) { const failed: Ack = { type: 'CommitFailed', revision: p.revision!, reason: String(error) }; this.send(failed); break; }
         const ack: Ack = { type: 'CommitAck', revision: p.revision! }; this.send(ack); break;
       }
       case 'MeasureRequest': {
@@ -511,6 +562,7 @@ export class HarmonyHost {
     } catch (error) { this.onDiagnostic('ENVIRONMENT_UNAVAILABLE', String(error)); }
   }
   setActive(active: boolean): void { if (this.active === active) return; this.active = active; this.radio?.setActive(active && this.visible); this.events.emit('appState',active ? 'active' : 'background'); }
+  private environmentChanged(): void { if (this.ready && !this.closed) { const payload: EnvironmentChanged = { type: 'EnvironmentChanged', version: ++this.environmentVersion }; this.send(payload); } }
   setAppearance(dark: boolean): void { if (this.dark === dark) return; this.dark = dark; if (this.renderer) native.appearance(this.renderer,dark); this.events.emit('appearance',dark ? 'dark' : 'light'); }
   private metrics(): WindowMetrics {
     const value = new WindowMetrics(this.width, this.height, this.ui.vp2px(1));

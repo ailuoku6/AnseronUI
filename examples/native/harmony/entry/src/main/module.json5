@@ -65,16 +65,6 @@
         }
       },
       {
-        "name": "ohos.permission.VIBRATE",
-        "reason": "$string:anseronui_permission_ohos_permission_vibrate",
-        "usedScene": {
-          "abilities": [
-            "EntryAbility"
-          ],
-          "when": "inuse"
-        }
-      },
-      {
         "name": "ohos.permission.APPROXIMATELY_LOCATION",
         "reason": "$string:anseronui_permission_ohos_permission_approximately_location",
         "usedScene": {
@@ -117,6 +107,16 @@
       {
         "name": "ohos.permission.NFC_TAG",
         "reason": "$string:anseronui_permission_ohos_permission_nfc_tag",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.VIBRATE",
+        "reason": "$string:anseronui_permission_ohos_permission_vibrate",
         "usedScene": {
           "abilities": [
             "EntryAbility"

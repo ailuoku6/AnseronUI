@@ -596,6 +596,7 @@ export class Node {
     this._children = []
     this._measureFunc = null
     this._baselineFunc = null
+    this._layoutObserver = undefined
   }
 
   /**
@@ -1724,7 +1725,13 @@ export class Node {
     return this._style
   }
 
+  // Optional per-node observer, owned by the embedding engine. Accesses include
+  // parent-side positioning of cached children; no global traversal or state.
+  private _layoutObserver: (() => void) | undefined
+  setLayoutObserver(observer: (() => void) | undefined): void { this._layoutObserver = observer }
+
   get layout(): Layout {
+    this._layoutObserver?.()
     return this._layout
   }
 

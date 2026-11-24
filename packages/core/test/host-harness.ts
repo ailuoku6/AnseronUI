@@ -1,17 +1,18 @@
 import { ReferenceRuntime } from '../src/runtime.js';
 import type { Page } from '@anseronui/ui';
 import type { Envelope, InputPayload, OutputPayload, RenderProps, Frame } from '@anseronui/protocol';
-import { validateEnvelope } from '@anseronui/protocol';
+import { validateEnvelope, patchProps, CommitAssembler } from '@anseronui/protocol';
 
 export class TestHost {
   runtime: ReferenceRuntime;
   nodes = new Map<number, { kind: string; props: RenderProps; frame?: Frame; parent?: number }>();
   outputs: OutputPayload[] = [];
+  assembler = new CommitAssembler();
   scrolls: number[] = [];
   sequence = 0; ack = 0; revision = 0;
   constructor(page: Page<any>) { this.runtime = new ReferenceRuntime({ bundleBuildId: 'test', pages: [page], profile: true }); }
   send(payload: InputPayload): void {
-    this.runtime.post({ protocolMajor: 1, protocolMinor: 5, bundleBuildId: 'test', runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: 1,
+    this.runtime.post({ protocolMajor: 2, protocolMinor: 0, bundleBuildId: 'test', runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: 1,
       sequence: ++this.sequence, ackSequence: this.ack, payload });
   }
   async settle(): Promise<OutputPayload[]> {
@@ -23,8 +24,9 @@ export class TestHost {
       if (!messages.length && !this.runtime.hasPendingWork()) { if (++idle >= 5) return collected; } else idle = 0;
       for (const message of messages) {
         validateEnvelope<OutputPayload>(message); this.ack = message.sequence;
-        const p = message.payload; this.outputs.push(p); collected.push(p);
-        if (p.type === 'Diagnostic') throw new Error(JSON.stringify(p));
+        const p = this.assembler.accept(message.payload); if (!p) continue; this.outputs.push(p); collected.push(p);
+        if (p.type === 'ResetSurface') { this.nodes.clear(); this.revision = 0; this.assembler.reset(p.rejectedThroughTransactionId); this.send({ type: 'ResetAck', resetToken: p.resetToken }); }
+        if (p.type === 'Diagnostic' && p.code !== 'RENDERER_LOST') throw new Error(JSON.stringify(p));
         if (p.type === 'MeasureRequest') {
           const lines = p.text.split('\n').reduce((count, line) => count + Math.max(1, Math.ceil(line.length * p.fontSize * 0.6 / Math.max(1, p.maxWidth))), 0);
           const visibleLines = p.props?.numberOfLines ? Math.min(lines, Number(p.props.numberOfLines)) : lines;
@@ -36,6 +38,8 @@ export class TestHost {
           for (const c of p.commands) {
             if (c.type === 'CreateNode') this.nodes.set(c.nodeId, { kind: c.kind, props: {} });
             if (c.type === 'RemoveNode') remove(c.nodeId);
+            if (c.type === 'DetachChild') this.nodes.get(c.nodeId)!.parent = undefined;
+            if (c.type === 'PatchProps') this.nodes.get(c.nodeId)!.props = patchProps(this.nodes.get(c.nodeId)!.props, c.set, c.unset);
             if (c.type === 'SetProps') this.nodes.get(c.nodeId)!.props = c.props;
             if (c.type === 'SetFrame') this.nodes.get(c.nodeId)!.frame = c.frame;
             if (c.type === 'InsertChild' || c.type === 'MoveChild') this.nodes.get(c.nodeId)!.parent = c.parentId;

@@ -61,7 +61,7 @@ private final class CoreWorker {
             self.pendingSurface = (page, width, height)
             self.core = try self.createCore()
             guard let core = self.core, !core.bundleBuildId.isEmpty, core.bundleBuildId.utf8.count <= 128 else { throw HostError.invalidOutput }
-            try self.sendNow(["type": "Handshake", "requiredNodes": ["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video"]])
+            try self.sendNow(["type": "Handshake", "capabilities": ["patchProps", "detachChild", "commitChunks", "resetSurface", "inputRevision"], "limits": ["messageBytes":1048576, "transactionBytes":16777216, "commandsPerMessage":4096, "commandsPerTransaction":65536], "requiredNodes": ["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video"]])
         }
     }
 
@@ -129,7 +129,7 @@ private final class CoreWorker {
         guard inputSequence < UInt32.max else { throw HostError.sequenceOverflow }
         inputSequence += 1
         let envelope: [String: Any] = [
-            "protocolMajor": 1, "protocolMinor": 5, "bundleBuildId": core.bundleBuildId,
+            "protocolMajor": 2, "protocolMinor": 0, "bundleBuildId": core.bundleBuildId,
             "runtimeEpoch": core.runtimeEpoch, "surfaceId": 1, "surfaceGeneration": 1,
             "sequence": inputSequence, "ackSequence": outputSequence, "payload": payload
         ]
@@ -190,7 +190,7 @@ private final class CoreWorker {
         guard data.count <= 1_048_576,
               let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let core,
-              (envelope["protocolMajor"] as? Int) == 1,
+              (envelope["protocolMajor"] as? Int) == 2,
               let minor = envelope["protocolMinor"] as? Int, minor >= 0,
               (envelope["bundleBuildId"] as? String) == core.bundleBuildId,
               (envelope["runtimeEpoch"] as? UInt32) == core.runtimeEpoch,
@@ -211,7 +211,7 @@ private final class CoreWorker {
             ready = true
             try sendNow(["type": "CreateSurface", "page": surface.page, "width": surface.width, "height": surface.height, "visible": visible])
             emitUI(payload)
-        case "Commit", "MeasureRequest": emitUI(payload)
+        case "Commit", "CommitBegin", "CommitChunk", "CommitEnd", "ResetSurface", "MeasureRequest": emitUI(payload)
         case "RuntimeStats":
             var enriched = payload
             var values = payload["values"] as? [String: Double] ?? [:]
@@ -369,7 +369,13 @@ private final class CoreWorker {
         worker.setVisibility(visible)
     }
 
-    public func environmentChanged() { renderer.appearanceChanged(); standardServices.changed() }
+    private var environmentVersion: UInt32 = 0
+    public func environmentChanged() {
+        guard started && !destroyed else { return }
+        renderer.appearanceChanged(); standardServices.changed()
+        environmentVersion += 1
+        worker.send(["type": "EnvironmentChanged", "version": environmentVersion])
+    }
     public func wake() { worker.wake() }
     /// Synchronously asks Core whether the current TSX page consumed system back.
     public func handleBackPress() -> Bool { worker.backPress() }
@@ -443,12 +449,19 @@ private final class CoreWorker {
         } catch { completion(.failure(error)) }
     }
 
-    private func deliver(_ payload: [String: Any]) {
+    private let commitBuffer = RenderCommitBuffer()
+    private func deliver(_ incoming: [String: Any]) {
+        let payload: [String: Any]
+        do { guard let assembled = try commitBuffer.accept(incoming) else { return }; payload = assembled }
+        catch { worker.send(["type": "CommitFailed", "revision": incoming["revision"] ?? incoming["transactionId"] ?? 0, "reason": String(describing: error)]); return }
         guard let type = payload["type"] as? String, !destroyed || type == "SurfaceDisposed" else { return }
         switch type {
         case "InvokeModule": invokeExtension(payload)
         case "CancelRequest":
             if let id = payload["requestId"] as? UInt32 { extensionRequests.removeValue(forKey: id)?() }
+        case "ResetSurface":
+            guard let token = payload["resetToken"] as? UInt32, let through = payload["rejectedThroughTransactionId"] as? UInt32 else { return }
+            renderer.clear(); commitBuffer.reset(through); worker.send(["type": "ResetAck", "resetToken": token])
         case "Ready": onReady?()
         case "Commit":
             guard let revision = payload["revision"] as? UInt32 else { return }

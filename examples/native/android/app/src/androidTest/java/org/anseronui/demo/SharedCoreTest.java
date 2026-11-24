@@ -203,8 +203,16 @@ public final class SharedCoreTest {
             tap("基础组件"); waitFor("基础组件实验室");
         } finally { instrumentation.runOnMainSync(() -> activity.finish()); }
     }
-    private void assertVideoPixels() {
+    private void assertVideoPixels() throws Exception {
         final android.graphics.Rect bounds = new android.graphics.Rect();
+        instrumentation.runOnMainSync(() -> {
+            View video = findTag(activity.getWindow().getDecorView(), "component-video");
+            assertNotNull(video);
+            video.requestRectangleOnScreen(new android.graphics.Rect(0, 0, video.getWidth(), video.getHeight()), true);
+        });
+        instrumentation.waitForIdleSync();
+        // SurfaceView composition follows the UI thread's scroll/layout pass.
+        Thread.sleep(500);
         instrumentation.runOnMainSync(() -> {
             View video = findTag(activity.getWindow().getDecorView(), "component-video");
             assertNotNull(video);

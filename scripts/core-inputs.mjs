@@ -38,13 +38,13 @@ function fingerprint(root, paths) {
 /** No app config or business source participates in the framework identity. */
 export function frameworkFingerprint(root) {
   return fingerprint(root, [...buildInputs, 'packages/core/native/framework.profile.json',
-    'packages/core/src/kernel.ts', 'packages/core/src/contracts.ts', 'packages/layout/src/',
+    'packages/core/src/kernel.ts', 'packages/core/src/transaction-kernel.ts', 'packages/core/src/wire.ts', 'packages/core/src/layout-style.ts', 'packages/core/src/contracts.ts', 'packages/layout/src/',
     'packages/flexily/src/', 'packages/protocol/src/', 'packages/ui/src/']);
 }
 export function businessFingerprint(root, configPath = 'anseronui.config.json') {
   const config = JSON.parse(readFileSync(resolve(root, configPath), 'utf8'));
   return fingerprint(root, [...buildInputs, configPath, 'scripts/lower-timers.mjs',
-    'packages/core/native/business.profile.json', 'packages/core/src/business-runtime.ts',
+    'packages/core/native/business.profile.json', 'packages/core/src/business-runtime.ts', 'packages/core/src/wire.ts',
     'packages/core/src/contracts.ts', 'packages/ui/src/', 'packages/protocol/src/',
     'packages/ui-compiler/src/', ...config.sourceDirs.map(dir => dir + '/')]);
 }

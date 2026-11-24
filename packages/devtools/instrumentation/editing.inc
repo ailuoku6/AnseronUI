@@ -1,4 +1,15 @@
   private devtoolsOverrides = new Map<number, Map<string, Record<string, unknown>>>();
+  private devtoolsForced = new Map<number, Set<string>>();
+  private devtoolsInvalidate(surface: Surface, path: string): void {
+    let owner: ComponentFrame | undefined;
+    for (const frame of surface.frames.values()) if ((path === frame.path || path.startsWith(frame.path + '/')) && (!owner || frame.path.length > owner.path.length)) owner = frame;
+    if (owner) {
+      let forced = this.devtoolsForced.get(surface.id);
+      if (!forced) { forced = new Set(); this.devtoolsForced.set(surface.id, forced); }
+      forced.add(owner.path); surface.dirtyOwners.add(owner.path);
+    }
+    surface.dirty = true;
+  }
   private devtoolsWaiters = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: number }>();
   private devtoolsOverlay(surface: Surface, path: string, props: object): Record<string, unknown> {
     const override = this.devtoolsOverrides.get(surface.id)?.get(path);
@@ -7,6 +18,7 @@
     return { ...original, ...override, style: { ...(original.style as object ?? {}), ...(override.style as object ?? {}) } };
   }
   private devtoolsDidCommit(surface: Surface): void {
+    this.devtoolsForced.delete(surface.id);
     const waiter = this.devtoolsWaiters.get(surface.id);
     if (waiter) { this.devtoolsWaiters.delete(surface.id); clearTimeout(waiter.timer); waiter.resolve(); }
     const paths = new Set([...surface.frames.keys(), ...this.flatten(surface.tree).map(node => node.path)]);
@@ -87,7 +99,7 @@
       if (id > 0 && ('__STYLE_NUMBERS__,__STYLE_STRINGS__').split(',').includes(key)) override.style = {...(override.style as object ?? {}), [key]:command.value};
       else override[key] = command.value;
       overrides.set(node.path, override);
-      surface.dirty = true;
+      this.devtoolsInvalidate(surface, node.path);
     } else throw new Error('READ_ONLY_FIELD');
     const timeout = Math.max(1, Math.min(5000, (command.expiresAt ?? Date.now() + 5000) - Date.now()));
     try { await new Promise<void>((resolve, reject) => {
@@ -98,7 +110,7 @@
       const overrides = this.devtoolsOverrides.get(surface.id);
       if (previousOverride) overrides?.set(node.path, previousOverride); else overrides?.delete(node.path);
       if (editedSlot) editedSlot.pending = editedSlot.pending.filter(update => update.id !== updateId);
-      if (this.surfaces.get(surface.id) === surface) {surface.dirty = true; this.onWake?.();}
+      if (this.surfaces.get(surface.id) === surface) {this.devtoolsInvalidate(surface, node.path); this.onWake?.();}
       throw error;
     }
     const readback = this.devtoolsNodes(surface).find(n => n.id === id);

@@ -20,7 +20,7 @@ test('Core stamp detects protocol, page, compiler and config changes without dep
       'internal/toolchain/harmony-api21.patch', 'packages/core/native/profile.json',
       'packages/core/native/framework.profile.json', 'packages/core/native/business.profile.json', 'scripts/prepare-compiler.mjs',
       'packages/core/native/split_bridge.c', 'scripts/lower-timers.mjs', 'packages/devtools/instrumentation/index.mjs',
-      'packages/devtools/instrumentation/runtime.inc', 'packages/devtools/instrumentation/editing.inc', 'packages/core/src/kernel.ts',
+      'packages/devtools/instrumentation/runtime.inc', 'packages/devtools/instrumentation/editing.inc', 'packages/core/src/kernel.ts', 'packages/core/src/transaction-kernel.ts', 'packages/core/src/layout-style.ts', 'packages/core/src/wire.ts',
       'packages/core/src/business-runtime.ts', 'packages/core/src/contracts.ts']) write(path, 'original');
     for (const dir of [...coreSourceDirs(config), 'packages/ui-compiler/src']) write(`${dir}/index.ts`, 'original');
     for (const name of ['core-inputs.mjs', 'check-ios-core.mjs']) write('scripts/' + name, readFileSync(new URL(name, import.meta.url)));

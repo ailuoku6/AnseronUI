@@ -160,7 +160,7 @@ describe('persistent surface layout', () => {
   it('frees persistent trees when ReferenceRuntime is disposed before a mount ACK', () => {
     const dispose = vi.spyOn(LayoutEngine.prototype, 'dispose');
     const runtime = new ReferenceRuntime({ bundleBuildId: 'persistent', pages: [definePage('home', () => View({ style: { width: 100, height: 20 } }))] });
-    runtime.post({ protocolMajor: 1, protocolMinor: 0, bundleBuildId: 'persistent', runtimeEpoch: 1,
+    runtime.post({ protocolMajor: 2, protocolMinor: 0, bundleBuildId: 'persistent', runtimeEpoch: 1,
       surfaceId: 1, surfaceGeneration: 1, sequence: 1, ackSequence: 0,
       payload: { type: 'CreateSurface', page: 'home', width: 320, height: 480 } });
     expect(runtime.step()[0].payload.type).toBe('Commit');

@@ -11,29 +11,6 @@ import AVKit
     public required init?(coder:NSCoder) { super.init(coder:coder); autoresizesSubviews = false }
 }
 
-// Keep material clipping independent of business content overflow and shadows.
-@MainActor final class DesktopBackgroundBlurView: FlippedView {
-    let effectView = NSVisualEffectView()
-    let contentView = FlippedView()
-    override init(frame:NSRect) {
-        super.init(frame:frame)
-        clipsToBounds = false; contentView.clipsToBounds = false
-        effectView.blendingMode = .withinWindow; effectView.state = .active
-        effectView.wantsLayer = true
-        effectView.clipsToBounds = true; effectView.layer?.masksToBounds = true
-        for child in [effectView,contentView] {
-            child.frame = bounds; child.autoresizingMask = [.width,.height]
-            addSubview(child)
-        }
-        autoresizesSubviews = true
-    }
-    required init?(coder:NSCoder) { fatalError("init(coder:) is unavailable") }
-    func updateCornerRadius(_ radius:CGFloat) {
-        effectView.layer?.cornerRadius = radius
-        effectView.clipsToBounds = true; effectView.layer?.masksToBounds = true
-    }
-}
-
 private final class DesktopScrollView: NSScrollView {
     var allowsScroll = true
     override func scrollWheel(with event: NSEvent) { if allowsScroll { super.scrollWheel(with:event) } }
@@ -186,20 +163,35 @@ private final class DesktopScrollView: NSScrollView {
         if let windowObserver { NotificationCenter.default.removeObserver(windowObserver) }
     }
     public func applyJSON(_ data: Data) throws { try apply(JSONDecoder().decode(RenderCommit.self, from: data)) }
+    private let topology = RenderTopology()
+    private var lastCommands: Data?
     public func apply(_ commit: RenderCommit) throws {
-        guard commit.type == "Commit", commit.revision > revision, commit.commands.count <= 4096 else { throw RenderError.invalidCommit }
-        try validate(commit.commands)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let signature = try encoder.encode(commit.commands)
+        if commit.revision == revision { guard signature == lastCommands else { throw RenderError.invalidCommit }; return }
+        guard commit.type == "Commit", commit.revision > revision, commit.commands.count <= 65536 else { throw RenderError.invalidCommit }
+        let publishTopology = try topology.prepare(commit.commands)
+        for c in commit.commands where c.type == "CreateNode" && c.kind == "Native" { guard let name = c.nativeName, extensions.components[name] != nil else { throw RenderError.invalidCommand } }
         do {
+            let geometry = commit.commands.filter { ["CreateNode", "RemoveNode", "InsertChild", "MoveChild", "DetachChild", "SetFrame"].contains($0.type) || $0.changedFields.contains("scrollAnchorOffset") }
+            var affectedScroll = Set<UInt32>()
+            for c in geometry { affectedScroll.formUnion(topology.ancestors(c.nodeId)); if let parent = c.parentId { affectedScroll.formUnion(topology.ancestors(parent)) } }
             for command in commit.commands { try applyOne(command) }
-            for record in nodes.values {
+            let touched = Set(commit.commands.map { $0.nodeId })
+            for id in touched {
+                guard let record = nodes[id] else { continue }
                 record.animation.setActive(pageActive); record.animation.commit()
                 if record.widget !== record.view { record.widget.frame = record.view.bounds }
                 record.glassHost?.frame = record.view.bounds
                 record.glassContent?.frame = record.glassHost?.bounds ?? .zero
             }
-            revision = commit.revision
-            updateScrollExtents()
-            onPageBackgroundColor?(nodes.values.first { $0.view === root.subviews.first }?.background ?? .clear)
+            publishTopology(); lastCommands = signature; revision = commit.revision
+            let geometryChanged = commit.commands.contains { ["CreateNode", "RemoveNode", "InsertChild", "MoveChild", "DetachChild", "SetFrame"].contains($0.type) || $0.changedFields.contains("scrollAnchorOffset") }
+            if geometryChanged {
+                for c in geometry { affectedScroll.formUnion(topology.ancestors(c.nodeId)); if let parent = c.parentId { affectedScroll.formUnion(topology.ancestors(parent)) } }
+                updateScrollExtents(affectedScroll)
+            }
+            if geometryChanged || commit.commands.contains(where: { $0.type == "SetProps" || $0.changedFields.contains("backgroundColor") || $0.changedFields.contains("dmBackgroundColor") }) { onPageBackgroundColor?(topology.rootIds.first.flatMap { nodes[$0] }?.background ?? .clear) }
         } catch { clear(); throw error }
     }
     public func appearanceChanged() {
@@ -221,46 +213,14 @@ private final class DesktopScrollView: NSScrollView {
                 field.placeholderAttributedString = p.placeholder.map { NSAttributedString(string:$0,attributes:[.foregroundColor:parseColor(p.placeholderTextColor) ?? .placeholderTextColor]) }
             }
         }
-        onPageBackgroundColor?(nodes.values.first { $0.view === root.subviews.first }?.background ?? .clear)
+        onPageBackgroundColor?(topology.rootIds.first.flatMap { nodes[$0] }?.background ?? .clear)
     }
 
     public func clear() {
+        topology.clear(); lastCommands = nil
         let records = Array(nodes.values); nodes.removeAll()
         for record in records { release(record) }
         pointer = nil; nodes.removeAll(); root.subviews.forEach { $0.removeFromSuperview() }; revision = 0
-    }
-    private func validate(_ commands: [RenderCommand]) throws {
-        var parents = nodes.mapValues { $0.parent }
-        for c in commands {
-            guard c.nodeId != 0 else { throw RenderError.invalidCommand }
-            switch c.type {
-            case "CreateNode":
-                guard parents[c.nodeId] == nil, ["View","Text","RichText","TextInput","ScrollView","Image","Video","Native"].contains(c.kind ?? "") else { throw RenderError.invalidCommand }
-                parents[c.nodeId] = 0
-            case "RemoveNode":
-                guard parents[c.nodeId] != nil else { throw RenderError.invalidCommand }
-                var removed: Set<UInt32> = [c.nodeId]
-                while true {
-                    let next = Set(parents.filter { removed.contains($0.value) }.keys).union(removed)
-                    if next == removed { break }; removed = next
-                }
-                for id in removed { parents.removeValue(forKey: id) }
-            case "InsertChild", "MoveChild":
-                guard parents[c.nodeId] != nil, let parent = c.parentId, parent == 0 || parents[parent] != nil,
-                      let index = c.index, index >= 0 else { throw RenderError.invalidCommand }
-                var ancestor = parent
-                while ancestor != 0 {
-                    guard ancestor != c.nodeId else { throw RenderError.invalidCommand }
-                    ancestor = parents[ancestor] ?? 0
-                }
-                parents[c.nodeId] = parent
-            case "SetFrame":
-                guard parents[c.nodeId] != nil, let f = c.frame, [f.x,f.y,f.width,f.height].allSatisfy({ $0.isFinite }), f.width >= 0, f.height >= 0 else { throw RenderError.invalidCommand }
-            case "SetProps": guard parents[c.nodeId] != nil, c.props != nil else { throw RenderError.invalidCommand }
-            case "BindEvent": guard parents[c.nodeId] != nil, ["tap","changeText","longPress","backPress","focus","blur","submit","scroll","scrollEnd","layout","touchDown","touchMove","touchUp","touchCancel","spanClick","loadSuccess","loadFailure","playStateDidChanged","playTimeDidChanged","firstFrameDidDisplay","nativeComponent"].contains(c.event ?? ""), c.enabled != nil else { throw RenderError.invalidCommand }
-            default: throw RenderError.invalidCommand
-            }
-        }
     }
     private func applyOne(_ c: RenderCommand) throws {
         if c.type == "CreateNode" { try create(c); return }
@@ -288,6 +248,23 @@ private final class DesktopScrollView: NSScrollView {
             if index < target.subviews.count { target.addSubview(record.view, positioned:.below, relativeTo:target.subviews[index]) }
             else { target.addSubview(record.view) }
             record.parent = parent
+        case "DetachChild": record.view.removeFromSuperview(); record.parent = 0
+        case "PatchProps":
+            let base = try record.declaredProps ?? RenderProps.empty()
+            let props = try base.patched(c.set!, c.unset!)
+            let changed = c.changedFields
+            if changed.isSubset(of: Set(["opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius"])) {
+                record.declaredProps = props
+                var values: [String: Double] = [:]
+                if changed.contains("opacity") { values["opacity"] = props.opacity ?? 1 }
+                if changed.contains("translateX") { values["translateX"] = props.translateX ?? 0 }
+                if changed.contains("translateY") { values["translateY"] = props.translateY ?? 0 }
+                if changed.contains("scaleX") { values["scaleX"] = props.scaleX ?? 1 }
+                if changed.contains("scaleY") { values["scaleY"] = props.scaleY ?? 1 }
+                if changed.contains("rotate") { values["rotate"] = props.rotate ?? 0 }
+                if changed.contains("borderRadius") { values["borderRadius"] = props.borderRadius ?? 0 }
+                record.animation.stage(values)
+            } else { try setProps(record, props, changed: changed) }
         case "SetProps": try setProps(record, c.props!)
         case "SetFrame":
             let f = c.frame!
@@ -378,27 +355,32 @@ private final class DesktopScrollView: NSScrollView {
             press.view?.removeGestureRecognizer(press); r.pressRecognizer = nil
         }
     }
-    private func setProps(_ r: NodeRecord, _ raw: RenderProps) throws {
+    private func setProps(_ r: NodeRecord, _ raw: RenderProps, changed: Set<String>? = nil) throws {
+        func affects(_ keys: String...) -> Bool { changed == nil || keys.contains { changed!.contains($0) } }
         r.declaredProps = raw
         let dark = root.effectiveAppearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua
         let nativeGlass: Bool
         if #available(macOS 26.0, *) { nativeGlass = true } else { nativeGlass = false }
         let p = raw.themed(dark).glassFallback(dark, nativeGlass: nativeGlass)
-        r.touchAction = p.touchAction ?? "auto"
+        if affects("touchAction") { r.touchAction = p.touchAction ?? "auto" }
         r.background = parseColor(p.backgroundColor) ?? .clear
-        try setGlassEffect(r, props: p)
+        if affects("glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing", "disabled", "backgroundBlurRadius") { try setGlassEffect(r, props: p) }
+        if affects("animation") {
         if let config = p.animation { guard let options = try decodeNativeJSON(config) as? [String:Any] else { throw NativeExtensionError.invalidArguments }; r.animation.options = try TSAnimationOptions(options) }
         else { r.animation.options = nil }
+        }
         let color = r.background.usingColorSpace(.sRGB) ?? .clear
+        if affects("opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius", "backgroundColor", "dmBackgroundColor", "glassEffect", "glassEffectStyle", "glassEffectContainer") {
         r.animation.stage(["opacity":p.opacity ?? 1,"translateX":p.translateX ?? 0,"translateY":p.translateY ?? 0,"scaleX":p.scaleX ?? 1,"scaleY":p.scaleY ?? 1,"rotate":p.rotate ?? 0,"borderRadius":p.borderRadius ?? 0,"r":color.redComponent*255,"g":color.greenComponent*255,"b":color.blueComponent*255,"a":color.alphaComponent])
-        r.view.layer?.borderWidth = p.borderWidth ?? 0; r.view.layer?.borderColor = parseColor(p.borderColor)?.cgColor
-        r.view.clipsToBounds = p.overflow == "hidden" || r.kind == "ScrollView"
-        r.view.layer?.masksToBounds = r.view.clipsToBounds
-        r.view.layer?.shadowColor = (parseColor(p.shadowColor) ?? .black).cgColor
-        r.view.layer?.shadowOpacity = Float(p.shadowOpacity ?? 0)
-        r.view.layer?.shadowRadius = CGFloat(p.shadowRadius ?? 0)
-        r.view.layer?.shadowOffset = CGSize(width:p.shadowOffsetX ?? 0, height:p.shadowOffsetY ?? 0)
-        r.view.isHidden = p.visibility == "hidden"
+        }
+        if affects("borderWidth", "borderColor", "dmBorderColor") { r.view.layer?.borderWidth = p.borderWidth ?? 0; r.view.layer?.borderColor = parseColor(p.borderColor)?.cgColor }
+        if affects("overflow") { r.view.clipsToBounds = p.overflow == "hidden" || r.kind == "ScrollView" }
+        if affects("overflow") { r.view.layer?.masksToBounds = r.view.clipsToBounds }
+        if affects("shadowColor", "dmShadowColor") { r.view.layer?.shadowColor = (parseColor(p.shadowColor) ?? .black).cgColor }
+        if affects("shadowOpacity") { r.view.layer?.shadowOpacity = Float(p.shadowOpacity ?? 0) }
+        if affects("shadowRadius") { r.view.layer?.shadowRadius = CGFloat(p.shadowRadius ?? 0) }
+        if affects("shadowOffsetX", "shadowOffsetY") { r.view.layer?.shadowOffset = CGSize(width:p.shadowOffsetX ?? 0, height:p.shadowOffsetY ?? 0) }
+        if affects("visibility") { r.view.isHidden = p.visibility == "hidden" }
         if r.kind == "TextInput", let field = r.widget as? NSTextField, (field is NSSecureTextField) != (p.secureTextEntry == true) {
             let wasEditing = field.currentEditor() != nil
             if wasEditing { root.window?.makeFirstResponder(nil) }
@@ -409,26 +391,26 @@ private final class DesktopScrollView: NSScrollView {
             field.removeFromSuperview(); r.view.addSubview(replacement); r.widget = replacement; r.content = replacement
             if wasEditing { root.window?.makeFirstResponder(replacement) }
         }
-        r.widget.identifier = p.testID.map { NSUserInterfaceItemIdentifier($0) }
-        r.widget.setAccessibilityIdentifier(p.testID)
+        if affects("testID") { r.widget.identifier = p.testID.map { NSUserInterfaceItemIdentifier($0) } }
+        if affects("testID") { r.widget.setAccessibilityIdentifier(p.testID) }
         let font = textFont(size:p.fontSize ?? 14, weight:p.fontWeight, style:p.fontStyle)
-        if let label = r.widget as? NSTextField, r.kind == "Text" || r.kind == "RichText" {
+        if affects("text", "spans", "fontSize", "fontWeight", "fontStyle", "color", "dmColor", "lineHeight", "textAlign", "textDecorationLine", "numberOfLines", "ellipsizeMode"), let label = r.widget as? NSTextField, r.kind == "Text" || r.kind == "RichText" {
             r.spans = p.spans.flatMap { try? JSONSerialization.jsonObject(with:Data($0.utf8)) as? [[String:Any]] } ?? []
             label.attributedStringValue = attributed(text:p.text ?? "", font:font, props:p)
             label.maximumNumberOfLines = p.numberOfLines ?? 0
             label.lineBreakMode = lineBreak(p)
         }
-        if let field = r.widget as? NSTextField, r.kind == "TextInput" {
-            r.maxLength = p.maxLength
-            field.font = font; field.textColor = parseColor(p.color) ?? .labelColor
-            field.isEditable = p.editable != false && p.disabled != true
-            field.isSelectable = p.disabled != true
-            field.isEnabled = p.disabled != true; field.placeholderString = p.placeholder
-            field.placeholderAttributedString = p.placeholder.map { NSAttributedString(string:$0,attributes:[.font:font,.foregroundColor:parseColor(p.placeholderTextColor) ?? .placeholderTextColor]) }
-            r.inputAutoCorrect = p.autoCorrect ?? false
+        if affects("value", "inputRevision", "placeholder", "placeholderTextColor", "dmPlaceholderTextColor", "fontSize", "fontWeight", "fontStyle", "color", "dmColor", "editable", "disabled", "secureTextEntry", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "maxLength"), let field = r.widget as? NSTextField, r.kind == "TextInput" {
+            if affects("maxLength") { r.maxLength = p.maxLength }
+            if affects("fontSize", "fontWeight", "fontStyle", "color", "dmColor") { field.font = font; field.textColor = parseColor(p.color) ?? .labelColor }
+            if affects("editable", "disabled") { field.isEditable = p.editable != false && p.disabled != true }
+            if affects("disabled") { field.isSelectable = p.disabled != true }
+            if affects("disabled", "placeholder") { field.isEnabled = p.disabled != true; field.placeholderString = p.placeholder }
+            if affects("placeholder", "placeholderTextColor", "dmPlaceholderTextColor", "fontSize") { field.placeholderAttributedString = p.placeholder.map { NSAttributedString(string:$0,attributes:[.font:font,.foregroundColor:parseColor(p.placeholderTextColor) ?? .placeholderTextColor]) } }
+            if affects("autoCorrect") { r.inputAutoCorrect = p.autoCorrect ?? false }
             let editor = field.currentEditor() as? NSTextView
-            editor?.isAutomaticSpellingCorrectionEnabled = r.inputAutoCorrect
-            if editor?.hasMarkedText() != true, p.inputRevision == nil || p.inputRevision! >= r.inputRevision {
+            if affects("autoCorrect") { editor?.isAutomaticSpellingCorrectionEnabled = r.inputAutoCorrect }
+            if affects("value", "inputRevision"), editor?.hasMarkedText() != true, p.inputRevision == nil || p.inputRevision! >= r.inputRevision {
                 let value = p.value ?? ""
                 if field.stringValue != value {
                     let selection = editor?.selectedRange()
@@ -440,19 +422,18 @@ private final class DesktopScrollView: NSScrollView {
             // Preserve the native editor while applying controlled values outside composition.
             if let cell = field.cell as? NSTextFieldCell { cell.wraps = false; cell.isScrollable = true }
         }
-        if let scroll = r.widget as? DesktopScrollView { scroll.allowsScroll = p.scrollEnabled != false; scroll.hasVerticalScroller = p.showsVerticalScrollIndicator != false; scroll.verticalScrollElasticity = p.scrollEnabled == false ? .none : .automatic }
-        if let image = r.widget as? DesktopImageView {
+        if affects("scrollEnabled", "showsVerticalScrollIndicator"), let scroll = r.widget as? DesktopScrollView { scroll.allowsScroll = p.scrollEnabled != false; scroll.hasVerticalScroller = p.showsVerticalScrollIndicator != false; scroll.verticalScrollElasticity = p.scrollEnabled == false ? .none : .automatic }
+        if affects("src", "dmSrc", "placeholderSrc", "resizeMode", "controls", "autoplay", "loop", "muted", "rate", "playControl"), let image = r.widget as? DesktopImageView {
             image.resizeMode = p.resizeMode ?? "contain"
             try loadImage(r, image:image, source:p.src ?? "", placeholder:p.placeholderSrc)
         }
-        if let video = r.widget as? AVPlayerView { try configureVideo(r, view:video, props:p) }
-        if let native = r.native {
+        if affects("src", "dmSrc", "placeholderSrc", "resizeMode", "controls", "autoplay", "loop", "muted", "rate", "playControl"), let video = r.widget as? AVPlayerView { try configureVideo(r, view:video, props:p) }
+        if affects("nativeProps"), let native = r.native {
             guard let props = try decodeNativeJSON(p.nativeProps ?? "{}") as? [String:Any] else { throw NativeExtensionError.invalidArguments }
             try native.setProps(props)
         }
-        updateAccessibility(r)
+        if affects("accessible", "accessibilityHidden", "accessibilityRole", "accessibilityLabel", "accessibilityHint", "accessibilityValue", "accessibilityChecked", "accessibilitySelected", "accessibilityClickable", "accessibilityLongClickable", "disabled") { updateAccessibility(r) }
     }
-
     private func setGlassEffect(_ r: NodeRecord, props: RenderProps) throws {
         guard r.kind == "View" else { return }
         let nativeGlass: Bool
@@ -467,11 +448,11 @@ private final class DesktopScrollView: NSScrollView {
         }
         if !nativeGlass || (props.glassEffect != true && props.glassEffectContainer != true) {
             if let host = r.glassHost as? DesktopBackgroundBlurView {
-                host.effectView.material = (props.backgroundBlurRadius ?? 0) <= 12 ? .underWindowBackground : .contentBackground
+                host.updateBlurRadius(props.backgroundBlurRadius ?? 0)
                 return
             }
             let host = DesktopBackgroundBlurView(frame:r.view.bounds)
-            host.effectView.material = (props.backgroundBlurRadius ?? 0) <= 12 ? .underWindowBackground : .contentBackground
+            host.updateBlurRadius(props.backgroundBlurRadius ?? 0)
             host.autoresizingMask = [.width,.height]
             let contentView = host.contentView
             let old = r.glassHost
@@ -591,8 +572,9 @@ private final class DesktopScrollView: NSScrollView {
         }
         completion(.success(NSNull())); return nil
     }
-    private func updateScrollExtents() {
-        for r in nodes.values where r.kind == "ScrollView" {
+    private func updateScrollExtents(_ ids: Set<UInt32>) {
+        for id in ids {
+            guard let r = nodes[id], r.kind == "ScrollView" else { continue }
             let anchor = r.declaredProps?.scrollAnchorOffset ?? 0
             let delta = anchor - r.anchorOffset
             r.anchorOffset = anchor

@@ -1,0 +1,31 @@
+{
+  "buildId": "fine-aot",
+  "sourceDirs": [
+    "internal/fixtures/fine-grained"
+  ],
+  "performance": {
+    "enabled": true
+  },
+  "pages": [
+    {
+      "name": "fine-100",
+      "source": "internal/fixtures/fine-grained/page.tsx",
+      "export": "fine100"
+    },
+    {
+      "name": "fine-1000",
+      "source": "internal/fixtures/fine-grained/page.tsx",
+      "export": "fine1000"
+    },
+    {
+      "name": "fine-10000",
+      "source": "internal/fixtures/fine-grained/page.tsx",
+      "export": "fine10000"
+    },
+    {
+      "name": "fine-template",
+      "source": "internal/fixtures/fine-grained/template.tsx",
+      "export": "fineTemplate"
+    }
+  ]
+}

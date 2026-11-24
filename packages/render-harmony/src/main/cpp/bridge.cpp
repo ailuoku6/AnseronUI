@@ -10,6 +10,8 @@
 #include "extensions.h"
 #include "touch_policy.h"
 #include "input_queue.h"
+#include "render_topology.h"
+#include "scroll_anchor.h"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -46,7 +48,7 @@ napi_value undefined(napi_env e) { napi_value v; napi_get_undefined(e,&v); retur
 void check(bool ok,const char *reason) { if (!ok) throw std::runtime_error(reason); }
 napi_value property(napi_env e,napi_value o,const char *key) { napi_value v; check(napi_get_named_property(e,o,key,&v)==napi_ok,"INVALID_PROPERTY"); return v; }
 bool has(napi_env e,napi_value o,const char *key) { bool b=false; napi_has_named_property(e,o,key,&b); return b; }
-std::string str(napi_env e,napi_value v) { size_t n=0; check(napi_get_value_string_utf8(e,v,nullptr,0,&n)==napi_ok&&n<=MAX_BYTES,"INVALID_STRING"); std::string s(n+1,'\0'); napi_get_value_string_utf8(e,v,s.data(),s.size(),&n); s.resize(n); return s; }
+std::string str(napi_env e,napi_value v,size_t maximum=MAX_BYTES) { size_t n=0; check(napi_get_value_string_utf8(e,v,nullptr,0,&n)==napi_ok&&n<=maximum,"INVALID_STRING"); std::string s(n+1,'\0'); napi_get_value_string_utf8(e,v,s.data(),s.size(),&n); s.resize(n); return s; }
 double number(napi_env e,napi_value v) { double d; check(napi_get_value_double(e,v,&d)==napi_ok&&std::isfinite(d),"INVALID_NUMBER"); return d; }
 uint32_t integer(napi_env e,napi_value v,bool zero=false) { double d=number(e,v); check(d==std::floor(d)&&d>=(zero?0:1)&&d<=4294967295.,"INVALID_ID"); return static_cast<uint32_t>(d); }
 bool boolean(napi_env e,napi_value v) { bool b; check(napi_get_value_bool(e,v,&b)==napi_ok,"INVALID_BOOLEAN"); return b; }
@@ -119,15 +121,22 @@ struct TouchSession {
   uint32_t target=0; anseronui::TouchPolicy policy; bool cancelled=false;
   float x=0,y=0,pageX=0,pageY=0,localOriginX=0,localOriginY=0,rootOriginX=0,rootOriginY=0;
 };
-struct Node { std::shared_ptr<bool> alive=std::make_shared<bool>(true); Surface *surface=nullptr;uint32_t id=0,parent=0,inputRevision=0;ArkUI_NodeHandle handle=nullptr,container=nullptr;std::string kind;std::string mediaSource;anseronui::NativeComponent custom;std::set<std::string> events;std::vector<uint32_t> children;bool updating=false;std::string touchAction="auto";std::string accessibilityProps="{}";ArkUI_AccessibilityState *accessibilityState=nullptr;ArkUI_AccessibilityValue *accessibilityValue=nullptr;~Node(){if(accessibilityState)OH_ArkUI_AccessibilityState_Dispose(accessibilityState);if(accessibilityValue)OH_ArkUI_AccessibilityValue_Dispose(accessibilityValue);}bool enabled=true;float x=0,y=0,width=0,height=0,anchor=0,nextAnchor=0,appliedAnchor=0; std::map<std::string,std::string> strings; std::map<std::string,double> numbers; std::set<std::string> declared; std::vector<ArkUI_NodeHandle> spans;std::vector<std::pair<std::string,std::string>> spanColors; ArkUI_GestureRecognizer *longPress=nullptr;ArkUI_NodeHandle mediaNode=nullptr; };
+struct Node { std::shared_ptr<bool> alive=std::make_shared<bool>(true); Surface *surface=nullptr;uint32_t id=0,parent=0,inputRevision=0;ArkUI_NodeHandle handle=nullptr,container=nullptr;std::string kind;std::string declaredJSON="{}";std::string mediaSource;anseronui::NativeComponent custom;std::set<std::string> events;std::vector<uint32_t> children;bool updating=false;std::string touchAction="auto";std::string accessibilityProps="{}";ArkUI_AccessibilityState *accessibilityState=nullptr;ArkUI_AccessibilityValue *accessibilityValue=nullptr;~Node(){if(accessibilityState)OH_ArkUI_AccessibilityState_Dispose(accessibilityState);if(accessibilityValue)OH_ArkUI_AccessibilityValue_Dispose(accessibilityValue);}bool enabled=true;float x=0,y=0,width=0,height=0,anchor=0,nextAnchor=0;anseronui::ScrollAnchor scrollAnchor; std::map<std::string,std::string> strings; std::map<std::string,double> numbers; std::set<std::string> declared; std::vector<ArkUI_NodeHandle> spans;std::vector<std::pair<std::string,std::string>> spanColors; ArkUI_GestureRecognizer *longPress=nullptr;ArkUI_NodeHandle mediaNode=nullptr; };
 std::map<ArkUI_NodeHandle,Node*> rendererNodes;
-struct Surface { napi_env env; napi_ref event; napi_ref media;ArkUI_NodeContentHandle content;ArkUI_NodeHandle root;uint32_t revision=0;std::map<uint32_t,std::unique_ptr<Node>> nodes;bool dark=false,visible=true;float density=1;std::vector<uint32_t> roots;std::map<uint32_t,TouchSession> touches;
+#ifdef ANSERONUI_SCROLL_TRACE
+void removeScrollTrace(Node &n);
+#endif
+struct Surface { napi_env env; napi_ref event; napi_ref media;ArkUI_NodeContentHandle content;ArkUI_NodeHandle root;uint32_t revision=0;std::string lastCommands;std::map<uint32_t,std::unique_ptr<Node>> nodes;bool dark=false,visible=true;float density=1;std::vector<uint32_t> roots;std::map<uint32_t,TouchSession> touches;
   Surface(napi_env e,napi_value c,napi_value fn,napi_value factory,float scale):env(e),density(scale){napi_create_reference(e,factory,1,&media);check(OH_ArkUI_GetNodeContentFromNapiValue(e,c,&content)==0,"INVALID_NODE_CONTENT");napi_create_reference(e,fn,1,&event);root=api->createNode(ARKUI_NODE_STACK);floats(root,NODE_WIDTH_PERCENT,{1});floats(root,NODE_HEIGHT_PERCENT,{1});ints(root,NODE_ALIGNMENT,{0});check(OH_ArkUI_NodeContent_AddNode(content,root)==0,"ATTACH_FAILED");}
   void notify(napi_value value){napi_value fn,result;napi_get_reference_value(env,event,&fn);napi_call_function(env,undefined(env),fn,1,&value,&result);}
   napi_value mediaCall(const char *method,size_t count,napi_value *args){napi_value object,fn,result;napi_get_reference_value(env,media,&object);fn=property(env,object,method);check(napi_call_function(env,object,fn,count,args,&result)==napi_ok,"MEDIA_CALLBACK_FAILED");return result;}
   Node &get(uint32_t id){auto i=nodes.find(id);check(i!=nodes.end(),"NODE_NOT_FOUND");return *i->second;}
   void detach(Node &n){auto parent=n.parent?get(n.parent).container:root;api->removeChild(parent,n.handle);auto &v=n.parent?get(n.parent).children:roots;v.erase(std::remove(v.begin(),v.end(),n.id),v.end());n.parent=0;}
-  void remove(uint32_t id){Node &n=get(id);*n.alive=false;for(auto it=touches.begin();it!=touches.end();)if(it->second.target==id)it=touches.erase(it);else ++it;if(n.longPress){gestures->removeGestureFromNode(n.handle,n.longPress);gestures->dispose(n.longPress);}for(auto span:n.spans){rendererNodes.erase(span);api->removeChild(n.handle,span);api->disposeNode(span);}auto children=n.children;for(auto child:children)remove(child);detach(n);if(n.mediaNode){api->removeChild(n.handle,n.mediaNode);napi_value arg;napi_create_uint32(env,n.id,&arg);mediaCall("remove",1,&arg);}rendererNodes.erase(n.handle);if(n.custom.dispose)n.custom.dispose();else api->disposeNode(n.handle);if(n.container&&n.container!=n.handle&&!n.custom.dispose)api->disposeNode(n.container);nodes.erase(id);}
+  void remove(uint32_t id){Node &n=get(id);
+#ifdef ANSERONUI_SCROLL_TRACE
+    removeScrollTrace(n);
+#endif
+    *n.alive=false;for(auto it=touches.begin();it!=touches.end();)if(it->second.target==id)it=touches.erase(it);else ++it;if(n.longPress){gestures->removeGestureFromNode(n.handle,n.longPress);gestures->dispose(n.longPress);}for(auto span:n.spans){rendererNodes.erase(span);api->removeChild(n.handle,span);api->disposeNode(span);}auto children=n.children;for(auto child:children)remove(child);detach(n);if(n.mediaNode){api->removeChild(n.handle,n.mediaNode);napi_value arg;napi_create_uint32(env,n.id,&arg);mediaCall("remove",1,&arg);}rendererNodes.erase(n.handle);if(n.custom.dispose)n.custom.dispose();else api->disposeNode(n.handle);if(n.container&&n.container!=n.handle&&!n.custom.dispose)api->disposeNode(n.container);nodes.erase(id);}
   ~Surface(){while(!nodes.empty())remove(nodes.begin()->first);OH_ArkUI_NodeContent_RemoveNode(content,root);api->disposeNode(root);napi_delete_reference(env,event);napi_delete_reference(env,media);}
 };
 struct Environment {
@@ -138,11 +147,64 @@ struct Environment {
 };
 Environment &state(napi_env env){void *data=nullptr;napi_get_instance_data(env,&data);check(data,"ENVIRONMENT_CLOSED");return *static_cast<Environment*>(data);}
 
+float scrollOffset(Node &n) {
+  auto *offset=api->getAttribute(n.handle,NODE_SCROLL_OFFSET);
+  return offset&&offset->size>1?offset->value[1].f32:0;
+}
+std::vector<anseronui::ScrollAnchorRow> scrollRows(Node &n) {
+  std::vector<anseronui::ScrollAnchorRow> rows;
+  if(n.children.empty())return rows;
+  auto &document=n.surface->get(n.children.front());
+  for(auto id:document.children){auto &row=n.surface->get(id);rows.push_back({id,document.y+row.y,row.height});}
+  return rows;
+}
+void anchorTransform(Node &n) {
+  floats(n.container,NODE_TRANSLATE,{0,-n.scrollAnchor.pending,0});
+}
+void flushAnchor(Node &n) {
+  if(n.scrollAnchor.pending==0)return;
+  auto *offset=api->getAttribute(n.handle,NODE_SCROLL_OFFSET);
+  float x=offset&&offset->size>0?offset->value[0].f32:0,y=scrollOffset(n);
+  const float delta=n.scrollAnchor.consume();anchorTransform(n);
+  // Only an idle correction may use the controller: it stops native inertia.
+  const bool updating=n.updating;n.updating=true;
+  ArkUI_NumberValue values[3]{};values[0].f32=x;values[1].f32=y+delta;values[2].i32=0;
+  ArkUI_AttributeItem item{values,3,nullptr,nullptr};api->setAttribute(n.handle,NODE_SCROLL_OFFSET,&item);n.updating=updating;
+}
+
+#ifdef ANSERONUI_SCROLL_TRACE
+struct ScrollTraceFrame { float travel=0;std::map<uint32_t,float> rows; };
+std::map<Node*,ScrollTraceFrame> scrollTraceFrames;
+void removeScrollTrace(Node &n) {if(n.kind=="ScrollView")OH_ArkUI_UnregisterDrawCallbackOnNodeHandle(n.handle);scrollTraceFrames.erase(&n);}
+void traceScrollLayout(void *data) {
+  auto &n=*static_cast<Node*>(data);if(!n.declared.count("scrollAnchorOffset"))return;
+  auto &previous=scrollTraceFrames[&n];ScrollTraceFrame frame;
+  // The controller offset can already belong to the NEXT layout during a
+  // callback. Sample the drawn viewport/content positions from the same frame.
+  ArkUI_IntOffset viewport{},content{};
+  if(OH_ArkUI_NodeUtils_GetPositionWithTranslateInWindow(n.handle,&viewport)!=0||OH_ArkUI_NodeUtils_GetPositionWithTranslateInWindow(n.container,&content)!=0)return;
+  const float logical=(viewport.y-content.y)/n.surface->density;
+  frame.travel=logical-n.scrollAnchor.applied;
+  float error=0,gap=0,cursor=logical;uint32_t matched=0;bool sample=false;
+  auto rows=scrollRows(n);std::sort(rows.begin(),rows.end(),[](const auto &a,const auto &b){return a.top<b.top;});
+  for(const auto &row:rows)if(row.top+row.height>logical&&row.top<logical+n.height){
+    gap=std::max(gap,row.top-cursor);cursor=std::max(cursor,row.top+row.height);
+    ArkUI_IntOffset position{};
+    if(OH_ArkUI_NodeUtils_GetPositionWithTranslateInWindow(n.surface->get(row.id).handle,&position)!=0)continue;
+    const float screen=position.y/n.surface->density;frame.rows[row.id]=screen;
+    if(!sample&&previous.rows.count(row.id)){error=screen-previous.rows.at(row.id)+frame.travel-previous.travel;matched=row.id;sample=true;}
+  }
+  gap=std::max(gap,logical+n.height-cursor);
+  OH_LOG_Print(LOG_APP,LOG_WARN,0,"AnseronScroll","frame node=%{public}u y=%{public}.3f travel=%{public}.3f error=%{public}.3f matched=%{public}u rows=%{public}zu gap=%{public}.3f",n.id,logical,frame.travel,error,matched,frame.rows.size(),gap);
+  previous=std::move(frame);
+}
+#endif
+
 void origin(Node &n,float &x,float &y) {
   x=n.x;y=n.y;
   for(auto id=n.parent;id;id=n.surface->get(id).parent) {
     auto &parent=n.surface->get(id);x+=parent.x;y+=parent.y;
-    if(parent.kind=="ScrollView") {auto *offset=api->getAttribute(parent.handle,NODE_SCROLL_OFFSET);if(offset&&offset->size>=2){x-=offset->value[0].f32;y-=offset->value[1].f32;}}
+    if(parent.kind=="ScrollView") {auto *offset=api->getAttribute(parent.handle,NODE_SCROLL_OFFSET);if(offset&&offset->size>=2){x-=offset->value[0].f32;y-=offset->value[1].f32+parent.scrollAnchor.pending;}}
   }
 }
 bool descendsFrom(Surface &s,uint32_t target,uint32_t ancestor) {
@@ -213,8 +275,27 @@ void bindScrollGesture(Node &node) {
 void eventReceiver(ArkUI_NodeEvent *event){
   // Plugin events carry plugin-owned userData, not a renderer Node.
   const auto kind=OH_ArkUI_NodeEvent_GetEventType(event);
-  if(kind!=NODE_ON_CLICK&&kind!=NODE_IMAGE_ON_COMPLETE&&kind!=NODE_IMAGE_ON_ERROR&&kind!=NODE_TOUCH_EVENT&&kind!=NODE_TEXT_INPUT_ON_CHANGE&&kind!=NODE_ON_FOCUS&&kind!=NODE_ON_BLUR&&kind!=NODE_TEXT_INPUT_ON_SUBMIT&&kind!=NODE_SCROLL_EVENT_ON_DID_SCROLL&&kind!=NODE_SCROLL_EVENT_ON_SCROLL_STOP)return;
-  auto found=rendererNodes.find(OH_ArkUI_NodeEvent_GetNodeHandle(event));if(found==rendererNodes.end())return;auto *n=found->second;if(!n||n->updating||!n->surface->visible)return;Surface &s=*n->surface;napi_env e=s.env;napi_value p;napi_create_object(e,&p);putnum(e,p,"nodeId",n->id);putnum(e,p,"revision",s.revision);
+  if(kind!=NODE_ON_CLICK&&kind!=NODE_IMAGE_ON_COMPLETE&&kind!=NODE_IMAGE_ON_ERROR&&kind!=NODE_TOUCH_EVENT&&kind!=NODE_TEXT_INPUT_ON_CHANGE&&kind!=NODE_ON_FOCUS&&kind!=NODE_ON_BLUR&&kind!=NODE_TEXT_INPUT_ON_SUBMIT&&kind!=NODE_SCROLL_EVENT_ON_DID_SCROLL&&kind!=NODE_SCROLL_EVENT_ON_SCROLL_STOP&&kind!=NODE_SCROLL_EVENT_ON_SCROLL_START&&kind!=NODE_SCROLL_EVENT_ON_WILL_SCROLL)return;
+  auto found=rendererNodes.find(OH_ArkUI_NodeEvent_GetNodeHandle(event));if(found==rendererNodes.end())return;auto *n=found->second;if(!n||n->updating||!n->surface->visible)return;if(kind==NODE_SCROLL_EVENT_ON_SCROLL_START){n->scrollAnchor.scrolling=true;
+#ifdef ANSERONUI_SCROLL_TRACE
+    if(n->declared.count("scrollAnchorOffset"))OH_LOG_Print(LOG_APP,LOG_WARN,0,"AnseronScroll","start node=%{public}u",n->id);
+#endif
+    return;}
+  if(kind==NODE_SCROLL_EVENT_ON_WILL_SCROLL){
+    // Return the correction through ArkUI's native frame callback. Calling a
+    // controller here would abort the drag/fling instead of preserving it.
+#ifdef ANSERONUI_SCROLL_TRACE
+    if(n->scrollAnchor.pending!=0)OH_LOG_Print(LOG_APP,LOG_WARN,0,"AnseronScroll","consume node=%{public}u delta=%{public}.3f",n->id,n->scrollAnchor.pending);
+#endif
+    if(n->scrollAnchor.pending!=0){auto *data=OH_ArkUI_NodeEvent_GetNodeComponentEvent(event);if(data){data->data[1].f32+=n->scrollAnchor.consume();anchorTransform(*n);}}
+    return;
+  }
+  if(kind==NODE_SCROLL_EVENT_ON_SCROLL_STOP){n->scrollAnchor.scrolling=false;flushAnchor(*n);
+#ifdef ANSERONUI_SCROLL_TRACE
+    if(n->declared.count("scrollAnchorOffset"))OH_LOG_Print(LOG_APP,LOG_WARN,0,"AnseronScroll","stop node=%{public}u",n->id);
+#endif
+  }
+  Surface &s=*n->surface;napi_env e=s.env;napi_value p;napi_create_object(e,&p);putnum(e,p,"nodeId",n->id);putnum(e,p,"revision",s.revision);
   std::string type="NativeEvent",name;
   if(kind==NODE_ON_CLICK){auto target=OH_ArkUI_NodeEvent_GetTargetId(event);if(target>=1000){name="spanClick";put(e,p,"value",jsstr(e,std::to_string(target-1000)));}else{type="Tap";name="tap";}}
   else if(kind==NODE_IMAGE_ON_COMPLETE||kind==NODE_IMAGE_ON_ERROR){name=kind==NODE_IMAGE_ON_COMPLETE?"loadSuccess":"loadFailure";put(e,p,"source",jsstr(e,n->strings.count(n->surface->dark&&n->strings.count("dmSrc")?"dmSrc":"src")?n->strings.at(n->surface->dark&&n->strings.count("dmSrc")?"dmSrc":"src"):""));if(kind==NODE_IMAGE_ON_ERROR){auto *data=OH_ArkUI_NodeEvent_GetNodeComponentEvent(event);putnum(e,p,"errorCode",data?data->data[0].i32:0);}}
@@ -223,7 +304,7 @@ void eventReceiver(ArkUI_NodeEvent *event){
   else if(kind==NODE_ON_FOCUS)name="focus";
   else if(kind==NODE_ON_BLUR)name="blur";
   else if(kind==NODE_TEXT_INPUT_ON_SUBMIT){name="submit";auto *v=api->getAttribute(n->handle,NODE_TEXT_INPUT_TEXT);put(e,p,"value",jsstr(e,v&&v->string?v->string:""));}
-  else if(kind==NODE_SCROLL_EVENT_ON_DID_SCROLL||kind==NODE_SCROLL_EVENT_ON_SCROLL_STOP){name=kind==NODE_SCROLL_EVENT_ON_SCROLL_STOP?"scrollEnd":"scroll";auto *v=api->getAttribute(n->handle,NODE_SCROLL_OFFSET);putnum(e,p,"x",v&&v->size>0?v->value[0].f32:0);putnum(e,p,"y",v&&v->size>1?v->value[1].f32:0);putnum(e,p,"scrollAdjustment",n->appliedAnchor);float w=n->width,h=n->height;for(auto id:n->children){auto &c=s.get(id);w=std::max(w,c.x+c.width);h=std::max(h,c.y+c.height);}putnum(e,p,"contentWidth",w);putnum(e,p,"contentHeight",h);}
+  else if(kind==NODE_SCROLL_EVENT_ON_DID_SCROLL||kind==NODE_SCROLL_EVENT_ON_SCROLL_STOP){name=kind==NODE_SCROLL_EVENT_ON_SCROLL_STOP?"scrollEnd":"scroll";auto *v=api->getAttribute(n->handle,NODE_SCROLL_OFFSET);putnum(e,p,"x",v&&v->size>0?v->value[0].f32:0);putnum(e,p,"y",(v&&v->size>1?v->value[1].f32:0)+n->scrollAnchor.pending);putnum(e,p,"scrollAdjustment",n->scrollAnchor.applied);float w=n->width,h=n->height;for(auto id:n->children){auto &c=s.get(id);w=std::max(w,c.x+c.width);h=std::max(h,c.y+c.height);}putnum(e,p,"contentWidth",w);putnum(e,p,"contentHeight",h);}
   if(name.empty()||!n->events.count(name))return;put(e,p,"type",jsstr(e,type));if(type=="NativeEvent")put(e,p,"event",jsstr(e,name));s.notify(p);
 }
 void registerEvents(Node &n){
@@ -232,7 +313,11 @@ void registerEvents(Node &n){
   api->registerNodeEvent(n.handle,NODE_ON_FOCUS,0,&n);api->registerNodeEvent(n.handle,NODE_ON_BLUR,0,&n);
   if(n.kind=="Image"){api->registerNodeEvent(n.handle,NODE_IMAGE_ON_COMPLETE,0,&n);api->registerNodeEvent(n.handle,NODE_IMAGE_ON_ERROR,0,&n);}
   if(n.kind=="TextInput"){api->registerNodeEvent(n.handle,NODE_TEXT_INPUT_ON_CHANGE,0,&n);api->registerNodeEvent(n.handle,NODE_TEXT_INPUT_ON_SUBMIT,0,&n);}
-  if(n.kind=="ScrollView"){api->registerNodeEvent(n.handle,NODE_SCROLL_EVENT_ON_DID_SCROLL,0,&n);api->registerNodeEvent(n.handle,NODE_SCROLL_EVENT_ON_SCROLL_STOP,0,&n);bindScrollGesture(n);}
+  if(n.kind=="ScrollView"){api->registerNodeEvent(n.handle,NODE_SCROLL_EVENT_ON_SCROLL_START,0,&n);api->registerNodeEvent(n.handle,NODE_SCROLL_EVENT_ON_WILL_SCROLL,0,&n);api->registerNodeEvent(n.handle,NODE_SCROLL_EVENT_ON_DID_SCROLL,0,&n);api->registerNodeEvent(n.handle,NODE_SCROLL_EVENT_ON_SCROLL_STOP,0,&n);bindScrollGesture(n);
+#ifdef ANSERONUI_SCROLL_TRACE
+    check(OH_ArkUI_RegisterDrawCallbackOnNodeHandle(n.handle,&n,traceScrollLayout)==0,"SCROLL_TRACE_CALLBACK_FAILED");
+#endif
+  }
 
 }
 void bindLongPress(Node &n) {
@@ -348,12 +433,13 @@ void accessibility(Node &n){
     ArkUI_AttributeItem item{};item.object=n.accessibilityValue;check(api->setAttribute(h,NODE_ACCESSIBILITY_VALUE,&item)==0,"ACCESSIBILITY_VALUE_FAILED");
   }else api->resetAttribute(h,NODE_ACCESSIBILITY_VALUE);
 }
-void props(napi_env e,Node &n,napi_value p){
+void props(napi_env e,Node &n,napi_value p,const std::set<std::string> *changed=nullptr){
+  auto affects=[&](const std::set<std::string> &fields){if(!changed)return true;for(const auto &key:fields)if(changed->count(key))return true;return false;};
   n.accessibilityProps=stringify(e,p);
   n.updating=true;
   struct Reset {Node &n;~Reset(){n.updating=false;}} reset{n};
-  if(n.kind=="Video"){napi_value args[2];napi_create_uint32(e,n.id,&args[0]);args[1]=jsstr(e,stringify(e,p));n.surface->mediaCall("update",2,args);}
-  if(n.kind=="Native"&&has(e,p,"nativeProps")&&n.custom.setProps)n.custom.setProps(str(e,property(e,p,"nativeProps")));
+  if(n.kind=="Video"&&affects({"src","dmSrc","resizeMode","controls","autoplay","loop","muted","rate","playControl"})){napi_value args[2];napi_create_uint32(e,n.id,&args[0]);args[1]=jsstr(e,stringify(e,p));n.surface->mediaCall("update",2,args);}
+  if(n.kind=="Native"&&affects({"nativeProps"})&&n.custom.setProps)n.custom.setProps(has(e,p,"nativeProps")?str(e,property(e,p,"nativeProps")):"{}");
   const std::set<std::string> visualNumbers={"fontSize","lineHeight","translateX","translateY","scaleX","scaleY","rotate","opacity","borderRadius","borderWidth","shadowOpacity","shadowRadius","shadowOffsetX","shadowOffsetY","backgroundBlurRadius"};
   const std::set<std::string> visualStrings={"backgroundColor","color","borderColor","placeholderTextColor","shadowColor","dmBackgroundColor","dmColor","dmBorderColor","dmPlaceholderTextColor","dmShadowColor","src","dmSrc","glassEffectStyle"};
   n.numbers.clear();n.strings.clear();
@@ -363,6 +449,7 @@ void props(napi_env e,Node &n,napi_value p){
     if(k=="glassEffect"||k=="glassEffectContainer"){n.numbers[k]=boolean(e,v)?1:0;continue;}
     if(visualNumbers.count(k)){n.numbers[k]=number(e,v);continue;}
     if(visualStrings.count(k)){n.strings[k]=str(e,v);continue;}
+    if(changed&&!changed->count(k))continue;
     if(k=="text"||k=="value") {if(n.kind=="TextInput"&&k=="value"){uint32_t rev=has(e,p,"inputRevision")?integer(e,property(e,p,"inputRevision"),true):0;if(rev<n.inputRevision)continue;auto existing=api->getAttribute(h,NODE_TEXT_INPUT_TEXT);if(existing&&existing->string&&str(e,v)==existing->string)continue;}text(h,n.kind=="TextInput"?NODE_TEXT_INPUT_TEXT:NODE_TEXT_CONTENT,str(e,v));}
     else if(k=="placeholder")text(h,NODE_TEXT_INPUT_PLACEHOLDER,str(e,v));
     else if(k=="testID")text(h,NODE_ID,str(e,v));
@@ -391,7 +478,7 @@ void props(napi_env e,Node &n,napi_value p){
     else if(k=="showsVerticalScrollIndicator")ints(h,NODE_SCROLL_BAR_DISPLAY_MODE,{boolean(e,v)?1:0});
     else if(k=="spans"&&n.kind=="RichText"){
       for(auto span:n.spans){rendererNodes.erase(span);api->removeChild(h,span);api->disposeNode(span);}n.spans.clear();n.spanColors.clear();
-      auto spans=parse(e,v);uint32_t length;check(napi_get_array_length(e,spans,&length)==napi_ok&&length<=4096,"INVALID_SPANS");
+      auto spans=parse(e,v);uint32_t length;check(napi_get_array_length(e,spans,&length)==napi_ok&&length<=65536,"INVALID_SPANS");
       for(uint32_t j=0;j<length;j++){napi_value span;napi_get_element(e,spans,j,&span);auto child=api->createNode(ARKUI_NODE_SPAN);check(child,"SPAN_CREATE_FAILED");n.spans.push_back(child);rendererNodes[child]=&n;n.spanColors.push_back({has(e,span,"color")?str(e,property(e,span,"color")):"",has(e,span,"dmColor")?str(e,property(e,span,"dmColor")):""});text(child,NODE_SPAN_CONTENT,str(e,property(e,span,"text")));
         if(has(e,span,"fontSize"))floats(child,NODE_FONT_SIZE,{static_cast<float>(number(e,property(e,span,"fontSize")))});
         if(has(e,span,"color"))ints(child,NODE_FONT_COLOR,{static_cast<int32_t>(color(str(e,property(e,span,n.surface->dark&&has(e,span,"dmColor")?"dmColor":"color"))))});
@@ -423,11 +510,32 @@ void props(napi_env e,Node &n,napi_value p){
     if(!has(e,p,"showsVerticalScrollIndicator"))api->resetAttribute(n.handle,NODE_SCROLL_BAR_DISPLAY_MODE);
   }
   if(n.kind=="Image"&&!has(e,p,"placeholderSrc"))api->resetAttribute(n.handle,NODE_IMAGE_ALT);
-  accessibility(n);
-  visual(n);
+  if(affects({"accessible","accessibilityLabel","accessibilityRole","accessibilityHint","accessibilityValue","accessibilityHidden","accessibilityChecked","accessibilitySelected","accessibilityClickable","accessibilityLongClickable","disabled"}))accessibility(n);
+  if(!changed||affects(visualNumbers)||affects(visualStrings)||affects({"glassEffect","glassEffectContainer","glassEffectInteractive","glassEffectSpacing"}))visual(n);
 }
 void apply(napi_env e,Surface &s,napi_value p){
-  uint32_t revision=integer(e,property(e,p,"revision"));check(revision==s.revision+1,"COMMIT_REVISION_MISMATCH");auto commands=property(e,p,"commands");uint32_t length;check(napi_get_array_length(e,commands,&length)==napi_ok&&length<=4096,"COMMAND_LIMIT");
+  if(str(e,property(e,p,"type"))=="ResetSurface"){while(!s.nodes.empty())s.remove(s.nodes.begin()->first);s.revision=0;s.lastCommands.clear();s.touches.clear();return;}
+  uint32_t revision=integer(e,property(e,p,"revision"));auto commands=property(e,p,"commands");const auto signature=stringify(e,commands);if(revision==s.revision){check(signature==s.lastCommands,"CONFLICTING_COMMIT");return;}check(revision>s.revision,"COMMIT_REVISION_MISMATCH");uint32_t length;check(napi_get_array_length(e,commands,&length)==napi_ok&&length<=65536,"COMMAND_LIMIT");
+  anseronui::TopologyDraft topology([&](uint32_t id){return s.nodes.count(id)>0;},[&](uint32_t id){if(!id)return anseronui::TopologyEntry{"View",0,s.roots};auto &n=s.get(id);return anseronui::TopologyEntry{n.kind,n.parent,n.children};});
+  const std::set<std::string> supported={"View","Text","TextInput","RichText","ScrollView","Image","Video","Native"};
+  for(uint32_t i=0;i<length;i++){
+    napi_value c;napi_get_element(e,commands,i,&c);auto kind=str(e,property(e,c,"type"));auto id=integer(e,property(e,c,"nodeId"));
+    if(kind=="CreateNode"){auto nodeKind=str(e,property(e,c,"kind"));check(supported.count(nodeKind),"UNSUPPORTED_NODE");topology.create(id,nodeKind);if(nodeKind=="Native")check(anseronui::factories().count(str(e,property(e,c,"nativeName"))),"NATIVE_COMPONENT_UNREGISTERED");continue;}
+    topology.check(id);
+    if(kind=="InsertChild"||kind=="MoveChild")topology.attach(id,integer(e,property(e,c,"parentId"),true),integer(e,property(e,c,"index"),true));
+    else if(kind=="DetachChild")topology.detach(id);
+    else if(kind=="RemoveNode")topology.remove(id);
+    else if(kind=="SetFrame"){auto frame=property(e,c,"frame");number(e,property(e,frame,"x"));number(e,property(e,frame,"y"));check(number(e,property(e,frame,"width"))>=0&&number(e,property(e,frame,"height"))>=0,"INVALID_FRAME");}
+    else if(kind=="PatchProps"){
+      auto set=property(e,c,"set"),unset=property(e,c,"unset");check(has(e,set,"value")==has(e,set,"inputRevision"),"INVALID_INPUT_PAIR");uint32_t count;check(napi_get_array_length(e,unset,&count)==napi_ok,"INVALID_UNSET");std::set<std::string> keys;
+      for(uint32_t j=0;j<count;j++){napi_value key;napi_get_element(e,unset,j,&key);auto name=str(e,key);check(!has(e,set,name.c_str())&&keys.insert(name).second,"INVALID_UNSET");}check(keys.count("value")==keys.count("inputRevision"),"INVALID_INPUT_PAIR");
+    }else if(kind=="BindEvent"){boolean(e,property(e,c,"enabled"));str(e,property(e,c,"event"));}
+    else check(kind=="SetProps","UNKNOWN_COMMAND");
+  }
+  // Core may be behind the native viewport. Retain the rows actually visible
+  // before this transaction, rather than applying a stale Core anchor blindly.
+  for(auto &entry:s.nodes){auto &n=*entry.second;if(n.kind=="ScrollView"&&n.declared.count("scrollAnchorOffset"))n.scrollAnchor.capture(scrollRows(n),scrollOffset(n)+n.scrollAnchor.pending,n.height);}
+  std::set<uint32_t> touchedScroll;
   for(uint32_t i=0;i<length;i++){
     napi_value c;napi_get_element(e,commands,i,&c);std::string kind=str(e,property(e,c,"type"));uint32_t id=integer(e,property(e,c,"nodeId"));
     if(kind=="CreateNode"){
@@ -445,32 +553,52 @@ void apply(napi_env e,Surface &s,napi_value p){
       if(n->kind=="TextInput"){ints(n->handle,NODE_FOCUSABLE,{1});}
       if(n->kind=="ScrollView"){n->container=api->createNode(ARKUI_NODE_STACK);ints(n->container,NODE_ALIGNMENT,{0});api->addChild(n->handle,n->container);}
       registerEvents(*n);s.nodes[id]=std::move(n);
-    }else if(kind=="RemoveNode")s.remove(id);
+    }else if(kind=="RemoveNode"){for(auto ancestor=s.get(id).parent;ancestor;ancestor=s.get(ancestor).parent)if(s.get(ancestor).kind=="ScrollView")touchedScroll.insert(ancestor);s.remove(id);}
     else {
       Node &n=s.get(id);
+      bool anchorChanged=false;
+      if(kind=="SetProps")anchorChanged=has(e,property(e,c,"props"),"scrollAnchorOffset")||n.declared.count("scrollAnchorOffset");
+      if(kind=="PatchProps"){anchorChanged=has(e,property(e,c,"set"),"scrollAnchorOffset");auto unset=property(e,c,"unset");uint32_t count;napi_get_array_length(e,unset,&count);for(uint32_t j=0;j<count;j++){napi_value key;napi_get_element(e,unset,j,&key);if(str(e,key)=="scrollAnchorOffset")anchorChanged=true;}}
+      if(kind=="SetFrame"||kind=="InsertChild"||kind=="MoveChild"||kind=="DetachChild"||anchorChanged) { if(n.kind=="ScrollView")touchedScroll.insert(id); for(auto ancestor=n.parent;ancestor;ancestor=s.get(ancestor).parent)if(s.get(ancestor).kind=="ScrollView")touchedScroll.insert(ancestor); }
       if(kind=="InsertChild"||kind=="MoveChild"){
         uint32_t parent=integer(e,property(e,c,"parentId"),true),index=integer(e,property(e,c,"index"),true);check(parent!=id,"CHILD_CYCLE");for(auto ancestor=parent;ancestor;ancestor=s.get(ancestor).parent)check(ancestor!=id,"CHILD_CYCLE");
         auto &existing=n.parent?s.get(n.parent).children:s.roots;
         if(n.parent==parent&&index<existing.size()&&existing[index]==id)continue;
         s.detach(n);auto &children=parent?s.get(parent).children:s.roots;check(index<=children.size(),"CHILD_INDEX");auto h=parent?s.get(parent).container:s.root;check(h,"NATIVE_CHILDREN_UNSUPPORTED");check(api->insertChildAt(h,n.handle,index)==0,"INSERT_FAILED");children.insert(children.begin()+index,id);n.parent=parent;
+        for(auto ancestor=parent;ancestor;ancestor=s.get(ancestor).parent)if(s.get(ancestor).kind=="ScrollView")touchedScroll.insert(ancestor);
       }else if(kind=="SetFrame"){
         auto f=property(e,c,"frame");float x=number(e,property(e,f,"x")),y=number(e,property(e,f,"y")),w=number(e,property(e,f,"width")),h=number(e,property(e,f,"height"));check(w>=0&&h>=0,"INVALID_FRAME");n.x=x;n.y=y;n.width=w;n.height=h;
         // Public layout attributes request ArkUI's normal measure/layout pass.
         // Never call measureNode/layoutNode outside a custom layout callback.
         floats(n.handle,NODE_POSITION,{x,y});floats(n.handle,NODE_WIDTH,{w});floats(n.handle,NODE_HEIGHT,{h});
-        if(n.parent&&s.get(n.parent).kind=="ScrollView"){auto &parent=s.get(n.parent);float cw=0,ch=0;for(auto child:parent.children){auto &cn=s.get(child);cw=std::max(cw,cn.x+cn.width);ch=std::max(ch,cn.y+cn.height);}floats(parent.container,NODE_WIDTH,{cw});floats(parent.container,NODE_HEIGHT,{ch});}
+      }else if(kind=="DetachChild")s.detach(n);
+      else if(kind=="PatchProps"){
+        auto merged=parse(e,jsstr(e,n.declaredJSON)),set=property(e,c,"set"),unset=property(e,c,"unset");
+        napi_value keys;napi_get_property_names(e,set,&keys);uint32_t count;napi_get_array_length(e,keys,&count);
+        for(uint32_t j=0;j<count;j++){napi_value key,value;napi_get_element(e,keys,j,&key);napi_get_property(e,set,key,&value);napi_set_property(e,merged,key,value);}
+        napi_get_array_length(e,unset,&count);for(uint32_t j=0;j<count;j++){napi_value key;bool removed;napi_get_element(e,unset,j,&key);napi_delete_property(e,merged,key,&removed);}
+        napi_value global,json,fn,bytes;napi_get_global(e,&global);json=property(e,global,"JSON");fn=property(e,json,"stringify");napi_call_function(e,json,fn,1,&merged,&bytes);n.declaredJSON=str(e,bytes);
+        bool visualOnly=true;std::set<std::string> changed;const std::set<std::string> visualKeys={"opacity","translateX","translateY","scaleX","scaleY","rotate","borderRadius"};
+        napi_get_property_names(e,set,&keys);napi_get_array_length(e,keys,&count);
+        for(uint32_t j=0;j<count;j++){napi_value key;napi_get_element(e,keys,j,&key);auto name=str(e,key);changed.insert(name);if(!visualKeys.count(name))visualOnly=false;}
+        napi_get_array_length(e,unset,&count);for(uint32_t j=0;j<count;j++){napi_value key;napi_get_element(e,unset,j,&key);auto name=str(e,key);changed.insert(name);if(!visualKeys.count(name))visualOnly=false;}
+        if(visualOnly){for(const auto &key:visualKeys){if(has(e,merged,key.c_str()))n.numbers[key]=number(e,property(e,merged,key.c_str()));else n.numbers.erase(key);}visual(n);}else props(e,n,merged,&changed);
       }else if(kind=="SetProps")props(e,n,property(e,c,"props"));
       else if(kind=="BindEvent"){auto name=str(e,property(e,c,"event"));if(boolean(e,property(e,c,"enabled")))n.events.insert(name);else n.events.erase(name);if(name=="tap"){api->unregisterNodeEvent(n.handle,NODE_ON_CLICK);if(n.events.count(name))api->registerNodeEvent(n.handle,NODE_ON_CLICK,0,&n);}if(name=="longPress"){bindLongPress(n);if(n.longPress)OH_ArkUI_SetGestureRecognizerEnabled(n.longPress,n.events.count(name)>0);}accessibility(n);}
       else check(false,"UNKNOWN_COMMAND");
     }
   }
-  s.revision=revision;
-  // Recompute after all removals, moves and frames, including absolute children.
-  for(auto &entry:s.nodes) {auto &n=*entry.second;if(n.kind!="ScrollView")continue;
+  s.revision=revision;s.lastCommands=signature;
+  for(auto id:touchedScroll) {if(!s.nodes.count(id))continue;auto &n=s.get(id);if(n.kind!="ScrollView")continue;
     float w=n.width,h=n.height;for(auto id:n.children){auto &c=s.get(id);w=std::max(w,c.x+c.width);h=std::max(h,c.y+c.height);}
     floats(n.container,NODE_WIDTH,{w});floats(n.container,NODE_HEIGHT,{h});
     float delta=n.nextAnchor-n.anchor;n.anchor=n.nextAnchor;
-    if(delta!=0){auto *offset=api->getAttribute(n.handle,NODE_SCROLL_OFFSET);float x=offset?offset->value[0].f32:0,y=offset?offset->value[1].f32:0;float next=std::max(0.f,std::min(y+delta,h-n.height));n.appliedAnchor+=next-y;floats(n.handle,NODE_SCROLL_OFFSET,{x,next});}
+    if(n.declared.count("scrollAnchorOffset"))delta=n.scrollAnchor.reconcile(scrollRows(n),delta);
+#ifdef ANSERONUI_SCROLL_TRACE
+    if(delta!=0)OH_LOG_Print(LOG_APP,LOG_WARN,0,"AnseronScroll","anchor node=%{public}u delta=%{public}.3f active=%{public}d",n.id,delta,n.scrollAnchor.scrolling);
+#endif
+    if(delta!=0)n.scrollAnchor.stage(delta,scrollOffset(n),h-n.height);
+    if(n.scrollAnchor.scrolling)anchorTransform(n);else flushAnchor(n);
   }
 }
 
@@ -489,7 +617,7 @@ napi_value profile(napi_env e,napi_callback_info i){auto a=arguments(e,i,3);auto
 napi_value performance(napi_env e,napi_callback_info i){auto a=arguments(e,i,1);auto &workers=state(e).workers;auto id=integer(e,a[0]);check(workers.count(id),"WORKER_NOT_FOUND");auto m=workers.at(id)->metrics;napi_value result;napi_create_object(e,&result);putnum(e,result,"adapterStepMs",m->stepNs.load()/1000000.);putnum(e,result,"uiQueueMs",m->queueNs.load()/1000000.);return result;}
 napi_value close(napi_env e,napi_callback_info i){auto a=arguments(e,i,1);auto &workers=state(e).workers;auto it=workers.find(integer(e,a[0]));if(it!=workers.end()){it->second->stop();workers.erase(it);}return undefined(e);}
 napi_value mount(napi_env e,napi_callback_info i){auto a=arguments(e,i,4);float density=number(e,a[3]);check(density>0,"INVALID_DENSITY");auto &s=state(e);check(s.nextSurface!=0,"SURFACE_ID_EXHAUSTED");uint32_t id=s.nextSurface++;s.surfaces[id]=std::make_unique<Surface>(e,a[0],a[1],a[2],density);napi_value v;napi_create_uint32(e,id,&v);return v;}
-napi_value commit(napi_env e,napi_callback_info i){auto a=arguments(e,i,2);uint32_t id=integer(e,a[0]);auto &surfaces=state(e).surfaces;check(surfaces.count(id),"SURFACE_NOT_FOUND");auto bytes=str(e,a[1]);check(bytes.size()<=MAX_BYTES,"MESSAGE_LIMIT");apply(e,*surfaces.at(id),parse(e,a[1]));return undefined(e);}
+napi_value commit(napi_env e,napi_callback_info i){auto a=arguments(e,i,2);uint32_t id=integer(e,a[0]);auto &surfaces=state(e).surfaces;check(surfaces.count(id),"SURFACE_NOT_FOUND");auto bytes=str(e,a[1],16777216);check(bytes.size()<=16777216,"MESSAGE_LIMIT");apply(e,*surfaces.at(id),parse(e,a[1]));return undefined(e);}
 napi_value unmount(napi_env e,napi_callback_info i){auto a=arguments(e,i,1);state(e).surfaces.erase(integer(e,a[0]));return undefined(e);}
 napi_value invokeView(napi_env e,napi_callback_info i){auto a=arguments(e,i,4);auto &surfaces=state(e).surfaces;uint32_t surface=integer(e,a[0]);check(surfaces.count(surface),"SURFACE_NOT_FOUND");auto &n=surfaces.at(surface)->get(integer(e,a[1]));std::string method=str(e,a[2]);auto value=parse(e,a[3]);
   if(method=="accessibilityAnnounce")return undefined(e); // Existence check; ArkTS sends the system event.
@@ -500,8 +628,15 @@ napi_value invokeView(napi_env e,napi_callback_info i){auto a=arguments(e,i,4);a
     return jsstr(e,target);
   }
   if(method=="focus"||method=="blur"){if(n.kind!="TextInput"&&n.custom.invoke)return n.custom.invoke(e,method,str(e,a[3]));check(n.kind=="TextInput","NOT_FOCUSABLE");if(method=="focus"){auto result=OH_ArkUI_FocusRequest(n.handle);check(result==0,("FOCUS_REQUEST_FAILED: "+std::to_string(result)).c_str());}else ints(n.handle,NODE_FOCUS_STATUS,{0});return undefined(e);}
-  if(method=="scrollTo"){if(n.kind!="ScrollView"&&n.custom.invoke)return n.custom.invoke(e,method,str(e,a[3]));check(n.kind=="ScrollView","NOT_SCROLLABLE");ArkUI_NumberValue values[3]{};values[0].f32=number(e,property(e,value,"x"));values[1].f32=number(e,property(e,value,"y"));values[2].i32=has(e,value,"animated")&&boolean(e,property(e,value,"animated"))?250:0;ArkUI_AttributeItem item{values,3,nullptr,nullptr};check(api->setAttribute(n.handle,NODE_SCROLL_OFFSET,&item)==0,"SCROLL_FAILED");return undefined(e);}
-  if(method=="measure"){napi_value result;napi_create_object(e,&result);float x=n.x,y=n.y;for(uint32_t id=n.parent;id;id=n.surface->get(id).parent){auto &p=n.surface->get(id);x+=p.x;y+=p.y;if(p.kind=="ScrollView"){auto *offset=api->getAttribute(p.handle,NODE_SCROLL_OFFSET);if(offset&&offset->size>=2){x-=offset->value[0].f32;y-=offset->value[1].f32;}}}putnum(e,result,"x",x);putnum(e,result,"y",y);putnum(e,result,"width",n.width);putnum(e,result,"height",n.height);return result;}
+  if(method=="scrollTo"){if(n.kind!="ScrollView"&&n.custom.invoke)return n.custom.invoke(e,method,str(e,a[3]));check(n.kind=="ScrollView","NOT_SCROLLABLE");n.scrollAnchor.consume();anchorTransform(n);n.scrollAnchor.scrolling=false;
+#ifdef ANSERONUI_SCROLL_TRACE
+  scrollTraceFrames.erase(&n);
+#endif
+#ifdef ANSERONUI_SCROLL_TRACE
+  OH_LOG_Print(LOG_APP,LOG_WARN,0,"AnseronScroll","jump node=%{public}u target=%{public}.3f",n.id,number(e,property(e,value,"y")));
+#endif
+  ArkUI_NumberValue values[3]{};values[0].f32=number(e,property(e,value,"x"));values[1].f32=number(e,property(e,value,"y"));values[2].i32=has(e,value,"animated")&&boolean(e,property(e,value,"animated"))?250:0;ArkUI_AttributeItem item{values,3,nullptr,nullptr};check(api->setAttribute(n.handle,NODE_SCROLL_OFFSET,&item)==0,"SCROLL_FAILED");return undefined(e);}
+  if(method=="measure"){napi_value result;napi_create_object(e,&result);float x,y;origin(n,x,y);putnum(e,result,"x",x);putnum(e,result,"y",y);putnum(e,result,"width",n.width);putnum(e,result,"height",n.height);return result;}
   if(method=="getVisual"){napi_value result;napi_create_object(e,&result);for(auto &v:n.numbers)putnum(e,result,v.first.c_str(),v.second);for(auto &v:n.strings)put(e,result,v.first.c_str(),jsstr(e,v.second));auto *position=api->getAttribute(n.handle,NODE_POSITION);float x=position?position->value[0].f32:n.x,y=position?position->value[1].f32:n.y;auto *width=api->getAttribute(n.handle,NODE_WIDTH);float w=width?width->value[0].f32:n.width;auto *height=api->getAttribute(n.handle,NODE_HEIGHT);float h=height?height->value[0].f32:n.height;putnum(e,result,"x",x);putnum(e,result,"y",y);putnum(e,result,"width",w);putnum(e,result,"height",h);return result;}
   if(method=="setVisual"){napi_value keys;napi_get_property_names(e,value,&keys);uint32_t size;napi_get_array_length(e,keys,&size);check(size<=32,"VISUAL_LIMIT");for(uint32_t j=0;j<size;j++){napi_value key;napi_get_element(e,keys,j,&key);auto k=str(e,key);auto v=property(e,value,k.c_str());if(k=="backgroundColor")n.strings[k]=str(e,v);else if(k=="x"||k=="y"){auto *pos=api->getAttribute(n.handle,NODE_POSITION);float x=pos?pos->value[0].f32:n.x,y=pos?pos->value[1].f32:n.y;floats(n.handle,NODE_POSITION,{k=="x"?static_cast<float>(number(e,v)):x,k=="y"?static_cast<float>(number(e,v)):y});}else if(k=="width"||k=="height")floats(n.handle,k=="width"?NODE_WIDTH:NODE_HEIGHT,{static_cast<float>(number(e,v))});else n.numbers[k]=number(e,v);}visual(n);return undefined(e);}
   if(n.custom.invoke)return n.custom.invoke(e,method,str(e,a[3]));

@@ -5,6 +5,8 @@
 ## 设计记录
 
 - [AnseronUI 框架设计](design/anseronui-framework.md)：框架目标和主要设计决策。
+- [保持 TSX 写法的细粒度更新](design/fine-grained-reactivity.md)：现有 Hooks、编译模板、增量 Core 和跨端提交的实现合同。
+- [细粒度更新设计审查](design/fine-grained-reactivity-review.md)：历史反例与核对证据；处理结果见最终设计。
 - [HarmonyOS 原生支持](design/harmonyos-native-support.md)：平台架构、实现计划和验收边界。
 - [macOS 与 HarmonyOS 支持方案](design/macos-harmony-support.md)：平台方案和实施记录。
 - [Flexily 与 scriptc 适配](design/flexily-scriptc-adaptation.md)：布局源码的静态编译适配证据。
@@ -17,6 +19,8 @@
 - [HarmonyOS Runtime 实验](experiments/harmony-runtime/README.md)：原生运行时验证记录。
 
 ## 验证报告
+
+- [2026-11-23 细粒度更新](verification/fine-grained-reactivity-2026-11-23.md)
 
 - [HarmonyOS API 21 报告](verification/harmony-api21-report.md)
 - [HarmonyOS 视觉与组合验证](verification/harmony-visuals-and-composition.md)

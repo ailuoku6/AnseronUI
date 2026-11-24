@@ -177,6 +177,28 @@ it('mounts a bounded window of 5000 unequal rows, scrolls to distant indices and
     expect(h.runtime.getStats().nodes).toBeLessThan(100);
   } finally { h.runtime.dispose(); }
 });
+
+it('rejects invalid list configuration and imperative scroll targets', async () => {
+  for (const [suffix, overscan] of [['negative', -1], ['nan', Number.NaN], ['infinite', Number.POSITIVE_INFINITY]] as const) {
+    const pageName = 'invalid-list-' + suffix;
+    const h = new TestHost(definePage(pageName, () => <VirtualList data={[1]} keyExtractor={item => item}
+      overscan={overscan} renderItem={item => <Text>{item}</Text>} />));
+    await expect(h.mount(pageName)).rejects.toThrow('INVALID_LIST_OVERSCAN');
+    h.runtime.dispose();
+  }
+  const ref = createRef<VirtualListHandle>();
+  const h = new TestHost(definePage('invalid-targets', () => <VirtualList data={[1, 2]} keyExtractor={item => item} ref={ref}
+    renderItem={item => <Text>{item}</Text>} />));
+  try {
+    await h.mount('invalid-targets');
+    await expect(ref.current!.scrollToOffset(Number.NaN)).rejects.toThrow('INVALID_LIST_OFFSET');
+    await expect(ref.current!.scrollToOffset(Number.POSITIVE_INFINITY)).rejects.toThrow('INVALID_LIST_OFFSET');
+    await expect(ref.current!.scrollToIndex(-1)).rejects.toThrow('INVALID_LIST_INDEX');
+    await expect(ref.current!.scrollToIndex(2)).rejects.toThrow('INVALID_LIST_INDEX');
+    await expect(ref.current!.scrollToIndex(1.5)).rejects.toThrow('INVALID_LIST_INDEX');
+  } finally { h.runtime.dispose(); }
+});
+
 it('uses wrapped text height and invalidates measurements when viewport width changes', async () => {
   const data = Array.from({ length: 100 }, (_, id) => ({ id, text: 'variable height content '.repeat(id % 4 + 1) }));
   const h = new TestHost(definePage('text-list', () => <VirtualList data={data} keyExtractor={item => item.id} renderItem={item => <Text testID={'text-' + item.id}>{item.text}</Text>} />));

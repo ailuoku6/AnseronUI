@@ -53,6 +53,8 @@ pageView.destroy()
 
 已实现 View、Text、Button、单行 TextInput（含 secureTextEntry）、ScrollView、Image、RichText、Video、原生组件与 Module 的 AppKit 映射；支持布局/点击/输入/焦点/提交/滚动/长按、鼠标拖动映射 touch 协议，以及宿主侧过渡/ref 动画。逻辑坐标使用 point 和左上原点，自定义容器采用 flipped 坐标。
 
+macOS 的独立 `backgroundBlurRadius` 使用 `NSVisualEffectView` 实时合成窗口内背景。半径映射到半透明材质档位；前景内容独立放在材质上方，圆角裁切仅作用于模糊层。
+
 真实 AOT 集成测试覆盖计数器、表单输入、路由、窗口尺寸、Promise/计时器取消、平台 Module、原生组件/ref、滚动内容与销毁。AppKit 回归还覆盖 RichText 点击命中、混合字号排版、文本省略、IME 组合输入、输入焦点、图片 contain/cover/占位、鼠标拖动取消、滚动销毁、动画变换/取消/卸载、视频首帧/进度/结束和无效媒体错误；仍需在目标发布系统上补做无障碍审查和兼容性验收。
 
 当前限制：单窗口、arm64；TextInput 只提供单行编辑，移动端 keyboardType/returnKeyType 等提示不做一一对应；图片和原生控件外观与移动端可能不同；鼠标拖动支持 touchAction 的 auto/none/pan-x/pan-y 方向仲裁，完整多指触摸尚未对齐。动画使用主 RunLoop 的 60 Hz Timer 驱动，不承诺显示刷新率同步；完整无障碍语义和 macOS 14/Intel 仍需目标环境验收。

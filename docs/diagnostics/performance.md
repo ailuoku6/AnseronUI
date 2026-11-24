@@ -40,7 +40,7 @@ controller.inspectRuntime(false);
 
 Harmony 的 adapterStepMs 在固定 C++ worker 上计时，uiQueueMs 从输出入队到 ArkTS 主线程开始接收；开关默认关闭。统计不包含屏幕合成/GPU 时间，当前没有鸿蒙 FPS 或 RSS 基准结论。
 
-独立 BusinessRuntime 可设置 `profile: true` 并读取 `getStats()`。生成 AOT 入口支持构建配置 `performance: { enabled: true }`；应用仍可通过宿主检查入口开关。诊断协议使用 `InspectRuntime` 和 `RuntimeStats`，协议版本为 1.5。内部 ABI 2 的 profile/timings 是可选扩展；升级后应重新构建并验证 Framework 与 Business。
+独立 BusinessRuntime 可设置 `profile: true` 并读取 `getStats()`。生成 AOT 入口支持构建配置 `performance: { enabled: true }`；应用仍可通过宿主检查入口开关。诊断使用宿主协议 2.0 的 `InspectRuntime` 和 `RuntimeStats`。Framework 与 Business 使用内部 ABI 3，必须与宿主匹配构建。
 
 | 指标 | 含义 |
 | --- | --- |
@@ -48,6 +48,12 @@ Harmony 的 adapterStepMs 在固定 C++ worker 上计时，uiQueueMs 从输出�
 | `syncMs` / `layoutMs` / `diffMs` | 持久布局树同步、布局计算和命令 diff 的累计时间 |
 | `serializeMs` / `coreRequestUnits` | 诊断开启时 Core 请求 JSON 序列化时间及 UTF-16 字符单元数；后者不是字节数 |
 | `layoutRounds` / `measureRequests` | 布局轮数与跨端文本测量次数 |
+| `logicalEvaluations` / `scopeVisits` | 组件逻辑求值数与输出作用域访问数 |
+| `dynamicSlotsChecked` / `reconciledNodes` | 模板动态槽检查数与节点协调数 |
+| `coreSyncNodes` / `layoutVisited` | 同步到 Core 的节点数与布局候选访问数 |
+| `frameCandidates` / `frameChanged` | 跨测量轮的几何候选数与最终变化数 |
+| `commitLogEntries` | ACK 发布时处理的增量记录数 |
+| `aborts` / `resets` / `transactionRetries` | 事务中止、宿主重建与超时重传数 |
 | `coreRoundTripMs` | Business 发出布局请求到拿到 Framework 结果的累计时间 |
 | `commands` / `commits` / `commitRoundTripMs` | 命令数、完成提交数与等待 ACK 的累计时间 |
 | `nodes` / `frames` / `measureCacheEntries` | 当前宿主节点、组件帧及文本测量缓存数量 |
@@ -63,6 +69,19 @@ Harmony 的 adapterStepMs 在固定 C++ worker 上计时，uiQueueMs 从输出�
 耗时单位均为毫秒。Core 使用毫秒时钟，短阶段可能为 0；宿主使用平台高精度时钟。指标是累计值，阶段之间有包含关系，不能直接相加为总时间。例如 `adapterStepMs` 已包含 Core 运行时间。`RuntimeStats` 与 UI ACK 异步传输，繁忙时各计数可能处于相邻提交的快照；比较前应先等待交互稳定。数据用于定位瓶颈，不直接等于屏幕呈现耗时或 FPS。
 
 ## 可复跑基准
+
+细粒度更新使用实际挂载的 100、1000、10000 个独立分支，预热后只改变一个叶组件的 opacity：
+
+```sh
+node scripts/build-core.mjs native internal/fixtures/fine-grained/config.json
+node --import tsx scripts/test-fine-grained-aot.mjs native
+node scripts/build-core.mjs wasm internal/fixtures/fine-grained/config.json
+node --import tsx scripts/test-fine-grained-aot.mjs wasm
+```
+
+这两个构建使用独立测试页面配置。运行普通示例前，执行相应的默认 `build:core:*` 重建业务包。报告写入 `.verification/performance/fine-native.json` 和 `fine-wasm.json`。硬断言包括：1 次组件求值、2 次作用域访问、1 个 Core 节点 patch、1 条宿主 `PatchProps`、0 次布局，以及 4 条 ACK 发布记录。挂载数量增加不得扩大这些工作量。另一个场景使用 1001 个静态宿主节点，页面自身更新时只检查 2 个动态槽并协调 1 个节点。每次更新输出小于 8 KiB。延迟包含标准输入输出通信；Renderer 为合成实现，不能代表原生视图耗时。
+
+虚拟列表基准另外验证数据规模、真实挂载规模、测量和滚动：
 
 ```sh
 npm run bench:render

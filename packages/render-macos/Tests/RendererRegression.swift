@@ -298,9 +298,14 @@ import AVKit
         try materialFixture.create(2,"Text",["text":"Sharp content","testID":"material-label"],NSRect(x:5,y:5,width:100,height:20),parent:1)
         let materialChild = materialFixture.widget("material-label")
         let materialRoot = materialFixture.root.subviews.first!
-        Integration.check(Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView },"background material is installed")
+        Integration.check(Integration.descendants(materialRoot).contains { $0 is DesktopBackgroundBlurView },"background material is installed")
         Integration.check(Integration.descendants(materialRoot).contains(materialChild),"material retains content in flipped coordinates")
         let backdrop = materialRoot.subviews.compactMap { $0 as? DesktopBackgroundBlurView }.first!
+        Integration.check(backdrop.effectView.blendingMode == .withinWindow && backdrop.effectView.state == .active,"native backdrop composites within the window")
+        Integration.check(backdrop.effectView.material == .popover,"regular blur uses a translucent native material")
+        Integration.check(!Integration.descendants(backdrop.effectView).contains(materialChild),"foreground stays outside the vibrant effect subtree")
+        Integration.check(backdrop.blurRadius == 20,"plain blur uses the declared Gaussian radius")
+
         Integration.check(backdrop.effectView.layer?.cornerRadius == 12 && backdrop.effectView.layer?.masksToBounds == true,"material clips its own rounded background")
         Integration.check(!backdrop.clipsToBounds && !backdrop.contentView.clipsToBounds && Integration.descendants(backdrop.contentView).contains(materialChild),"material does not clip business overflow")
         var rounded = false
@@ -312,11 +317,30 @@ import AVKit
         Integration.check(backdrop.effectView.layer?.cornerRadius == 20 && backdrop.effectView.frame.size == materialRoot.bounds.size,"material follows changed radius and dimensions")
         Integration.check(materialRoot.layer?.masksToBounds == false && materialRoot.layer?.shadowOpacity == 0.4,"rounded blur keeps outer shadows")
         try materialFixture.apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":0]]])
-        Integration.check(!Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView } && Integration.descendants(materialRoot).contains(materialChild),"zero blur removes material and retains child")
+        Integration.check(!Integration.descendants(materialRoot).contains { $0 is DesktopBackgroundBlurView } && Integration.descendants(materialRoot).contains(materialChild),"zero blur removes material and retains child")
         try materialFixture.apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":7]]])
-        Integration.check(Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView } && materialRoot.alphaValue == 1,"standalone blur re-enables without fallback opacity")
+        Integration.check(Integration.descendants(materialRoot).contains { $0 is DesktopBackgroundBlurView } && materialRoot.alphaValue == 1,"standalone blur re-enables without fallback opacity")
         try materialFixture.apply([["type":"SetProps","nodeId":1,"props":[:]]])
-        Integration.check(!Integration.descendants(materialRoot).contains { $0 is NSVisualEffectView } && Integration.descendants(materialRoot).contains(materialChild),"removing standalone blur removes material and retains child")
+        Integration.check(!Integration.descendants(materialRoot).contains { $0 is DesktopBackgroundBlurView } && Integration.descendants(materialRoot).contains(materialChild),"removing standalone blur removes material and retains child")
+        try materialFixture.apply([["type":"SetProps","nodeId":1,"props":["backgroundBlurRadius":12]]])
+        let thin = materialRoot.subviews.compactMap { $0 as? DesktopBackgroundBlurView }.first!
+        Integration.check(thin.effectView.material == .menu,"thin blur uses a translucent native material")
+        try materialFixture.apply([["type":"PatchProps","nodeId":1,"set":["backgroundBlurRadius":24],"unset":[]]])
+        Integration.check(materialRoot.subviews.contains(thin) && thin.effectView.material == .popover,"radius patch retains the live native backdrop")
+        try materialFixture.apply([["type":"PatchProps","nodeId":1,"set":[:],"unset":["backgroundBlurRadius"]]])
+        Integration.check(!materialRoot.subviews.contains(thin) && Integration.descendants(materialRoot).contains(materialChild),"unsetting blur removes the native effect and retains content")
+        // System composition must not change focus, selection or marked text.
+        let focusFixture = Fixture(); defer { focusFixture.close() }
+        try focusFixture.create(1,"View",["backgroundBlurRadius":12],NSRect(x:0,y:0,width:200,height:100))
+        try focusFixture.create(2,"TextInput",["testID":"blur-input","value":""],NSRect(x:10,y:10,width:180,height:30),parent:1)
+        focusFixture.window.makeKeyAndOrderFront(nil)
+        let field = focusFixture.widget("blur-input") as! NSTextField
+        Integration.check(focusFixture.window.makeFirstResponder(field),"blur input gets focus")
+        let editor = field.currentEditor() as! NSTextView
+        editor.setMarkedText("ni",selectedRange:NSRange(location:2,length:0),replacementRange:NSRange(location:NSNotFound,length:0))
+        try focusFixture.apply([["type":"PatchProps","nodeId":1,"set":["backgroundBlurRadius":20,"borderRadius":18],"unset":[]]])
+        Integration.check(focusFixture.window.firstResponder === editor && editor.hasMarkedText(),"native backdrop updates preserve focused IME composition")
+        print("PASS: macOS native backdrop materials, retained foreground and IME")
         guard #available(macOS 26.0, *) else { return }
         let f = Fixture(); defer { f.close() }
         try f.create(1,"View",["testID":"glass","glassEffect":true,"glassEffectStyle":"clear","glassEffectTintColor":"#5599cc","glassEffectInteractive":true,"borderRadius":28],NSRect(x:20,y:20,width:200,height:100))

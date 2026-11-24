@@ -8,7 +8,7 @@ assert.equal(manifest.devtools?.enabled,true,'build a Debug Wasm Core first');
 const runtime=await WasmRuntime.load(new Uint8Array(await readFile('.verification/core-wasm/entry.wasm')),new Uint8Array(await readFile('.verification/core-wasm/framework.wasm')));
 let sequence=0,ack=0,snapshot,pollTimer,captureFailed=false;
 const commands=[],results=new Map(),assembler=new SnapshotAssembler(),committedProps=new Map();
-const send=payload=>runtime.post({protocolMajor:1,protocolMinor:5,bundleBuildId:runtime.bundleBuildId,runtimeEpoch:runtime.runtimeEpoch,surfaceId:1,surfaceGeneration:1,sequence:++sequence,ackSequence:ack,payload});
+const send=payload=>runtime.post({protocolMajor:2,protocolMinor:0,bundleBuildId:runtime.bundleBuildId,runtimeEpoch:runtime.runtimeEpoch,surfaceId:1,surfaceGeneration:1,sequence:++sequence,ackSequence:ack,payload});
 async function settle() {
   for(let i=0;i<1000;i++) {
     await Promise.resolve();
@@ -17,7 +17,7 @@ async function settle() {
       ack=message.sequence;const p=message.payload;
       if(p.type==='Diagnostic') assert.fail(JSON.stringify(p));
       if(p.type==='Commit') {
-        for(const c of p.commands)if(c.type==='SetProps')committedProps.set(c.nodeId,c.props);
+        for(const c of p.commands){if(c.type==='SetProps')committedProps.set(c.nodeId,c.props);if(c.type==='PatchProps'){const props={...(committedProps.get(c.nodeId)??{}),...c.set};for(const key of c.unset)delete props[key];committedProps.set(c.nodeId,props);}}
         send({type:'CommitAck',revision:p.revision});
       }
       if(p.type==='MeasureRequest')send({type:'MeasureResult',requestId:p.requestId,nodeId:p.nodeId,width:Math.min(p.maxWidth,Math.max(1,p.text.length*p.fontSize*.6)),height:p.fontSize*1.3,baseline:p.fontSize});

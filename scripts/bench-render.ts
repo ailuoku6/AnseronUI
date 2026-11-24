@@ -22,7 +22,7 @@ let applyMs = 0, measureMs = 0, maxNodes = 0, phases: Record<string, number> = {
 const nodes = new Map<number, { kind: string; parent: number; props: RenderProps; frame: Frame }>();
 const timers = new Set<number>();
 const exchange = async (payload?: InputPayload): Promise<OutputPayload[]> => {
-  const envelope: Envelope<InputPayload> | undefined = payload ? { protocolMajor: 1, protocolMinor: 5, bundleBuildId: 'anseronui-demo', runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: generation, sequence: ++sequence, ackSequence: ack, payload } : undefined;
+  const envelope: Envelope<InputPayload> | undefined = payload ? { protocolMajor: 2, protocolMinor: 0, bundleBuildId: 'anseronui-demo', runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: generation, sequence: ++sequence, ackSequence: ack, payload } : undefined;
   const encoded = envelope ? JSON.stringify(envelope) : '';
   inputBytes += Buffer.byteLength(encoded);
   let outputs: Envelope<OutputPayload>[];
@@ -65,6 +65,7 @@ async function settle(payload?: InputPayload): Promise<void> {
         if (c.type === 'CreateNode') nodes.set(c.nodeId, { kind: c.kind, parent: 0, props: {}, frame: { x: 0, y: 0, width: 0, height: 0 } });
         if (c.type === 'RemoveNode') remove(c.nodeId);
         if (c.type === 'SetProps') nodes.get(c.nodeId)!.props = c.props;
+        if (c.type === 'PatchProps') { const props = nodes.get(c.nodeId)!.props; Object.assign(props, c.set); for (const key of c.unset) delete props[key]; }
         if (c.type === 'SetFrame') nodes.get(c.nodeId)!.frame = c.frame;
         if (c.type === 'InsertChild' || c.type === 'MoveChild') nodes.get(c.nodeId)!.parent = c.parentId;
       }

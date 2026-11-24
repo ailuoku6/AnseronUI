@@ -38,7 +38,7 @@ void anseronui_core_sink(PanicSink fn, void *context) {
 }
 void anseronui_core_init(void) {
   anseronui_framework_init(); anseronui_business_init();
-  if (anseronui_framework_version() != 2 || anseronui_business_version() != 2) fail("CORE_ABI_MISMATCH");
+  if (anseronui_framework_version() != 3 || anseronui_business_version() != 3) fail("CORE_ABI_MISMATCH");
 }
 void anseronui_core_create(void) { anseronui_business_create(); }
 void anseronui_core_post(const uint8_t *input, uint64_t length) { anseronui_business_post(input, length); }

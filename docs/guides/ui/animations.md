@@ -89,7 +89,7 @@ async function play() {
 
 这是常用属性动画的首版：暂不提供子树动画作用域、单节点独立多轨时间线、关键帧、3D 变换、路径动画、暂停/恢复/seek，以及声明式结束回调。需要准确编排完成、取消与串行操作时使用 ref Promise API。布局宽高动画通过更新原生 view 的布局实现，比纯透明度/变换动画更昂贵，大列表中应优先使用变换。
 
-协议 minor 已更新为 1.3；新增 `animation` 配置以 JSON 字符串放入 `SetProps`，新增变换为数值属性；命令式调用沿用 `__view` 模块，不新增逐帧协议消息。更新业务 bundle 时需要同时更新三端 renderer。
+宿主协议为 2.0。`animation` 配置以 JSON 字符串进入 `PatchProps.set`，变换使用数值属性；命令式调用沿用 `__view` 模块，不新增逐帧协议消息。Framework、Business 和 Renderer 必须使用匹配版本。
 
 ## 验证
 

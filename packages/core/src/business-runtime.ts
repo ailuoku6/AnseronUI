@@ -1,9 +1,11 @@
+import { templateNode } from "../../ui/src/template.js";
+import type { TemplateElement, HostTemplate } from "../../ui/src/template.js";
 import { registerTimerScope, unregisterTimerScope, withTimerScope, timeoutInScope, clearTimeout, forgetTimeout } from "../../ui/src/timers.js";
 import type { TimerScope } from "../../ui/src/timers.js";
 import { CORE_ABI_VERSION } from "./contracts.js";
-import type { RenderNode, RenderRequest, CoreRequest, CoreResult } from "./contracts.js";
+import type { RenderNode, BeginRenderRequest, NodeMutation, CoreRequest, CoreResult } from "./contracts.js";
 import {
-  PROTOCOL_MAJOR, PROTOCOL_MINOR, isU32, validateEnvelope, validateAnimationOptions, validateAnimationStyle,
+  PROTOCOL_MAJOR, PROTOCOL_MINOR, RENDER_CAPABILITIES, RENDER_LIMITS, splitCommit, propPatch, isU32, validateEnvelope, validateAnimationOptions, validateAnimationStyle,
 } from "@anseronui/protocol";
 import type {
   Envelope, Frame, InputPayload, NativeEvent, EventKind, NodeKind, OutputPayload, RenderCommand, RenderProps,
@@ -14,7 +16,7 @@ import type {
 } from "@anseronui/ui";
 
 type PendingUpdate = { id: number; value: unknown };
-type StateSlot = { kind: "state" | "reducer"; value: unknown; pending: PendingUpdate[]; dispatch: (value: unknown) => void; active: boolean; reducer?: (state: unknown, action: unknown) => unknown };
+type StateSlot = { owner: string; kind: "state" | "reducer"; value: unknown; pending: PendingUpdate[]; dispatch: (value: unknown) => void; active: boolean; reducer?: (state: unknown, action: unknown) => unknown };
 type RefSlot = { kind: "ref"; ref: RefCell };
 type MemoSlot = { kind: "memo"; value: unknown; deps: readonly unknown[] };
 type EffectSlot = { kind: "effect"; setup: EffectSetup; deps?: readonly unknown[]; cleanup?: () => void };
@@ -26,9 +28,9 @@ type DraftSlot =
   | { kind: "memo"; slot: MemoSlot; value: unknown; deps: readonly unknown[] }
   | { kind: "effect"; slot: EffectSlot; setup: EffectSetup; deps?: readonly unknown[]; changed: boolean }
   | { kind: "services"; slot: ServiceSlot };
-type ContextRead = { context: Context<any>; value: unknown };
-type ComponentFrame = { path: string; component: Component<any>; props: object; rendered: UIElement | null; contexts: Map<number, ContextRead>; slots: Slot[]; depth: number };
-type DraftFrame = { path: string; component: Component<any>; base: ComponentFrame | null; props: object; rendered: UIElement | null; contexts: Map<number, ContextRead>; slots: DraftSlot[]; depth: number; reused?: ComponentFrame };
+type ContextRead = { context: Context<any>; value: unknown; provider: string };
+type ComponentFrame = { regionPath: string; path: string; component: Component<any>; props: object; rendered: UIElement | null; contexts: Map<number, ContextRead>; slots: Slot[]; depth: number };
+type DraftFrame = { regionPath: string; path: string; component: Component<any>; base: ComponentFrame | null; props: object; rendered: UIElement | null; contexts: Map<number, ContextRead>; slots: DraftSlot[]; depth: number; reused?: ComponentFrame };
 type EventCallbacks = {
   nativeComponent?: (event: import("@anseronui/ui").NativeComponentEvent) => void | Promise<void>;
   tap?: () => void | Promise<void>; changeText?: (value: string) => void | Promise<void>;
@@ -56,10 +58,15 @@ type UIInput = Extract<InputPayload, { type: "Tap" | "InputChange" | "NativeEven
 const EVENT_NAMES: EventKind[] = ["nativeComponent", "tap", "changeText", "longPress", "backPress", "focus", "blur", "submit", "scroll", "scrollEnd", "layout", "touchDown", "touchMove", "touchUp", "touchCancel", "spanClick", "loadSuccess", "loadFailure", "playStateDidChanged", "playTimeDidChanged", "firstFrameDidDisplay"];
 type HostNode = { id: number; path: string; kind: NodeKind; props: RenderProps; style: Style; children: HostNode[]; frame: Frame; events: EventCallbacks; nativeName?: string; ref?: import("@anseronui/ui").RefTarget<import("@anseronui/ui").NodeHandle> };
 type MeasureQuery = { requestId: number; nodeId: number; kind: "Text" | "RichText" | "TextInput"; text: string; fontSize: number; maxWidth: number; props: RenderProps; key: string };
-type Draft = { revision: number; tree: HostNode[]; frames: Map<string, DraftFrame>; measures: Map<number, MeasureQuery>; measureRound: number; readyForAck: boolean; corePending: boolean; coreStarted?: number; commitStarted?: number };
+type TemplateInstance = { plan: HostTemplate; values: unknown[]; paths: string[]; root: import("@anseronui/ui").HostElement };
+type OutputRegion = { template?: TemplateInstance; path: string; parent: string | null; element: UIElement; context: Map<number, unknown>; depth: number; children: string[]; output: HostNode[]; hostId?: number; framePath?: string };
+type Draft = { contextOwners: Set<string>; lastRequest?: CoreRequest; commitPayloads: OutputPayload[]; staticChildren: Map<string, HostNode[]>; watermark: number; regions: Map<string, OutputRegion>; hosts: Map<number, HostNode>; removedRegions: Set<string>; removedHosts: Set<number>; removedFrames: Set<string>; inputTokens: Map<number, number>; measurements: { requestId: number; nodeId: number; key: string; width: number; height: number; baseline: number }[]; finalizing: boolean; revision: number; tree: HostNode[]; frames: Map<string, DraftFrame>; measures: Map<number, MeasureQuery>; measureRound: number; readyForAck: boolean; corePending: boolean; coreStarted?: number; commitStarted?: number };
 type Surface = {
   visible: boolean; timerScope: TimerScope; timers: Map<number, { id: number; callback: () => void; remaining: number; started: number; suspended: boolean }>;
   id: number; generation: number; page: Page<any>; width: number; height: number;
+  recovering: boolean; recoveryAttempts: number; resetToken: number; coreResetAck: boolean; hostResetAck: boolean; recoveryNodes: HostNode[] | null;
+  watchdog: number | null; retries: number; contextConsumers: Map<string, Set<string>>; backHandlers: Set<number>; backOrder: number[] | null; positions: Map<number, number>;
+  nextRevision: number; dirtyOwners: Set<string>; regions: Map<string, OutputRegion>; nodes: Map<number, HostNode>; parents: Map<number, number>; inputSyncDirty: Set<number>; environmentVersion: number;
   revision: number; frames: Map<string, ComponentFrame>; tree: HostNode[];
   pending: Draft | null; dirty: boolean; nodeIds: Map<string, number>;
   nextNodeId: number; nextRequestId: number; nextUpdateId: number;
@@ -114,7 +121,7 @@ export class BusinessRuntime {
   getStats(): Record<string, number> {
     let nodes = 0, frames = 0, timers = 0, modules = 0, measurements = 0, hidden = 0, pendingRenders = 0;
     for (const surface of this.surfaces.values()) {
-      nodes += this.flatten(surface.tree).length; frames += surface.frames.size; timers += surface.timers.size;
+      nodes += surface.nodes.size; frames += surface.frames.size; timers += surface.timers.size;
       modules += surface.modules.size; measurements += surface.measureCache.size; if (!surface.visible) hidden++; if (surface.pending) pendingRenders++;
     }
     return { ...this.metrics, pendingRenders, surfaces: this.surfaces.size, hiddenSurfaces: hidden, nodes, frames, timers, modules,
@@ -163,7 +170,7 @@ export class BusinessRuntime {
     let count = 0;
     while (this.incoming.length > 0 && count++ < maxMessages) this.handle(this.incoming.shift()!);
     for (const surface of this.surfaces.values()) {
-      if (surface.visible && !surface.pending && surface.deferredEvents.length > 0) {
+      if (surface.visible && !surface.recovering && !surface.pending && surface.deferredEvents.length > 0) {
         const events = surface.deferredEvents;
         surface.deferredEvents = [];
         let blocked = false;
@@ -176,7 +183,8 @@ export class BusinessRuntime {
           else this.invokeEvent(surface, { ...event, revision: surface.revision });
         }
       }
-      if (surface.visible && surface.dirty && !surface.pending) this.beginRender(surface);
+      if (surface.visible && surface.dirty && !surface.pending && (!surface.recovering || surface.coreResetAck && surface.hostResetAck)) this.beginRender(surface);
+      this.ensureWatchdog(surface);
     }
     return this.takeOutputs();
   }
@@ -234,10 +242,13 @@ export class BusinessRuntime {
   private handle(input: Envelope<InputPayload>): void {
     const payload = input.payload;
     if (payload.type === "Handshake") {
+      if (payload.capabilities && !RENDER_CAPABILITIES.every(capability => payload.capabilities!.includes(capability)) || payload.limits && (payload.limits.messageBytes < RENDER_LIMITS.messageBytes || payload.limits.transactionBytes < RENDER_LIMITS.transactionBytes || payload.limits.commandsPerMessage < RENDER_LIMITS.commandsPerMessage || payload.limits.commandsPerTransaction < RENDER_LIMITS.commandsPerTransaction)) {
+        this.emit({ id: input.surfaceId, generation: input.surfaceGeneration }, { type: "Diagnostic", code: "RENDER_CAPABILITY_MISMATCH", message: "Host does not support the required render commands and transaction limits" }); return;
+      }
       const supportedNodes: NodeKind[] = ["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video", "Native"];
       if (payload.requiredNodes.some(kind => !supportedNodes.includes(kind))) {
         this.emit({ id: input.surfaceId, generation: input.surfaceGeneration }, { type: "Diagnostic", code: "UNSUPPORTED_NODE", message: "Required node is unavailable" });
-      } else this.emit({ id: input.surfaceId, generation: input.surfaceGeneration }, { type: "Ready", supportedNodes });
+      } else this.emit({ id: input.surfaceId, generation: input.surfaceGeneration }, { type: "Ready", supportedNodes, capabilities: RENDER_CAPABILITIES, limits: RENDER_LIMITS });
       return;
     }
     if (payload.type === "CreateSurface") {
@@ -273,7 +284,7 @@ export class BusinessRuntime {
         visible: payload.visible !== false, timerScope, timers: new Map(),
         id: input.surfaceId, generation: input.surfaceGeneration, page,
         width: payload.width, height: payload.height, revision: 0,
-        frames: new Map(), tree: [], pending: null, dirty: true,
+        frames: new Map(), tree: [], pending: null, dirty: true, watchdog: null, retries: 0, contextConsumers: new Map(), backHandlers: new Set(), backOrder: null, positions: new Map(), recovering: false, recoveryAttempts: 0, resetToken: 0, coreResetAck: false, hostResetAck: false, recoveryNodes: null, nextRevision: 1, dirtyOwners: new Set(), regions: new Map(), nodes: new Map(), parents: new Map(), inputSyncDirty: new Set(), environmentVersion: 0,
         nodeIds: new Map(), nextNodeId: 1, nextRequestId: 1, nextUpdateId: 1,
         measureCache: new Map(), modules: new Map(), handles: new Map(), deferredEvents: [], inputRevisions: new Map(),
       });
@@ -296,6 +307,10 @@ export class BusinessRuntime {
       this.setVisibility(surface, payload.visible);
     } else if (payload.type === "BackPress") {
       this.emit(surface, { type: "BackPressResult", consumed: this.invokeBackPress(surface) });
+    } else if (payload.type === "EnvironmentChanged") {
+      if (payload.version > surface.environmentVersion) { surface.environmentVersion = payload.version; surface.dirty = true; }
+    } else if (payload.type === "ResetAck") {
+      if (surface.recovering && payload.resetToken === surface.resetToken) { this.progress(surface); surface.hostResetAck = true; this.resumeRecovery(surface); }
     } else if (payload.type === "Resize") {
       if (!finiteDimension(payload.width) || !finiteDimension(payload.height)) return;
       surface.width = payload.width; surface.height = payload.height; surface.dirty = true;
@@ -305,9 +320,7 @@ export class BusinessRuntime {
       this.ack(surface, payload.revision);
     } else if (payload.type === "CommitFailed") {
       if (surface.pending?.revision === payload.revision) {
-        for (const node of this.flatten(surface.tree)) { this.assignRef(surface, node.ref, null); this.retireHandle(surface, node.id); }
-        surface.pending = null; surface.tree = []; surface.dirty = true;
-        this.emit(surface, { type: "Diagnostic", code: "RENDERER_LOST", message: payload.reason });
+        this.recoverSurface(surface, payload.reason);
       }
     } else if (payload.type === "Tap" || payload.type === "InputChange" || payload.type === "NativeEvent") {
       if (!surface.visible) return;
@@ -322,6 +335,7 @@ export class BusinessRuntime {
       else if (surface.pending && payload.revision === surface.pending.revision) this.deferEvent(surface, payload);
       else this.invokeEvent(surface, payload);
     } else if (payload.type === "ModuleResult") {
+      if (payload.requestId === surface.watchdog) { surface.watchdog = null; this.retryTransaction(surface); return; }
       const timer = surface.timers.get(payload.requestId);
       if (timer) {
         if (timer.suspended) return;
@@ -399,11 +413,11 @@ export class BusinessRuntime {
     withTimerScope(surface.timerScope, () => this.invokeScopedEvent(surface, event));
   }
   private invokeScopedEvent(surface: Surface, event: UIInput): void {
-    if (!surface.visible) return;
+    if (!surface.visible || surface.recovering) return;
     if (event.type !== "InputChange" && event.revision !== surface.revision) return;
     if (event.type === "InputChange" && (event.revision > surface.revision || event.inputRevision <= (surface.inputRevisions.get(event.nodeId) ?? 0))) return;
     const touchInput = event.type === "NativeEvent" && ["touchDown", "touchMove", "touchUp", "touchCancel"].includes(event.event);
-    const node = this.flatten(surface.tree).find(item => item.id === (touchInput ? event.targetId ?? event.nodeId : event.nodeId));
+    const node = surface.nodes.get(touchInput ? event.targetId ?? event.nodeId : event.nodeId);
     if (!node || node.props.disabled === true || node.style.visibility === "hidden") return;
     try {
       let result: void | Promise<void> = undefined;
@@ -431,6 +445,7 @@ export class BusinessRuntime {
       } else {
         if (!node.events.changeText || node.props.editable === false) return;
         surface.inputRevisions.set(event.nodeId, event.inputRevision);
+        surface.inputSyncDirty.add(event.nodeId); surface.dirty = true;
         result = node.events.changeText(event.value);
       }
       if (result instanceof Promise) result.catch(error => {
@@ -447,8 +462,22 @@ export class BusinessRuntime {
     return withTimerScope(surface.timerScope, () => this.invokeScopedBackPress(surface));
   }
   private invokeScopedBackPress(surface: Surface): boolean {
-    const nodes = this.flatten(surface.tree).reverse();
-    for (const node of nodes) {
+    if (!surface.backOrder) {
+      const order = (id: number): number[] => {
+        const result: number[] = [];
+        while (id) { result.push(surface.positions.get(id) ?? 0); id = surface.parents.get(id) ?? 0; }
+        return result.reverse();
+      };
+      const paths = new Map<number, number[]>();
+      for (const id of surface.backHandlers) paths.set(id, order(id));
+      surface.backOrder = [...surface.backHandlers].sort((a, b) => {
+        const left = paths.get(a)!, right = paths.get(b)!;
+        for (let i = 0; i < Math.min(left.length, right.length); i++) if (left[i] !== right[i]) return right[i] - left[i];
+        return right.length - left.length;
+      });
+    }
+    for (const id of surface.backOrder) {
+      const node = surface.nodes.get(id)!;
       if (!node.events.backPress) continue;
       try {
         if (node.events.backPress()) return true;
@@ -461,15 +490,9 @@ export class BusinessRuntime {
 
   private dispatchTouch(surface: Surface, target: HostNode, event: NativeEvent): void {
     const path: HostNode[] = [];
-    const findPath = (nodes: HostNode[], ancestors: HostNode[]): boolean => {
-      for (const item of nodes) {
-        const next = [...ancestors, item];
-        if (item.id === target.id) { path.push(...next); return true; }
-        if (findPath(item.children, next)) return true;
-      }
-      return false;
-    };
-    if (!findPath(surface.tree, [])) return;
+    let current: HostNode | undefined = target;
+    while (current) { path.push(current); current = surface.nodes.get(surface.parents.get(current.id) ?? 0); }
+    path.reverse();
     const phase: "touchDown" | "touchMove" | "touchUp" | "touchCancel" = event.event === "touchDown" ? "touchDown" : event.event === "touchMove" ? "touchMove" : event.event === "touchUp" ? "touchUp" : "touchCancel";
     let stopped = false;
     const invoke = (node: HostNode, capture: boolean): void => {
@@ -505,17 +528,57 @@ export class BusinessRuntime {
 
   private beginRender(surface: Surface): void {
     surface.dirty = false;
-    const draft: Draft = { revision: surface.revision + 1, tree: [], frames: new Map(), measures: new Map(), measureRound: 0, readyForAck: false, corePending: false };
+    const draft: Draft = { contextOwners: new Set(), commitPayloads: [], staticChildren: new Map(), watermark: surface.nextUpdateId - 1, regions: new Map(), hosts: new Map(), removedRegions: new Set(), removedHosts: new Set(), removedFrames: new Set(), inputTokens: new Map(), measurements: [], finalizing: false,
+      revision: surface.nextRevision++, tree: surface.tree, frames: new Map(), measures: new Map(), measureRound: 0, readyForAck: false, corePending: false };
+    if (!isU32(draft.revision)) throw new Error("REVISION_OVERFLOW");
+    const owners = [...surface.dirtyOwners].sort((a, b) => (surface.frames.get(a)?.depth ?? 0) - (surface.frames.get(b)?.depth ?? 0));
+    surface.dirtyOwners.clear();
     try {
-      const root: UIElement = { kind: "component", component: surface.page.component, props: {}, key: null };
       const started = this.profiling ? Date.now() : 0;
-      draft.tree = this.visit(surface, draft, root, "root", new Map(), 0);
+      if (surface.recoveryNodes) {
+        for (const node of surface.recoveryNodes) draft.hosts.set(node.id, node);
+        for (const base of surface.frames.values()) {
+          const slots: DraftSlot[] = base.slots.map(slot => {
+            if (slot.kind === "state" || slot.kind === "reducer") return { kind: slot.kind, slot, value: slot.value, watermark: 0 };
+            if (slot.kind === "memo") return { kind: "memo", slot, value: slot.value, deps: slot.deps };
+            if (slot.kind === "effect") return { kind: "effect", slot, setup: slot.setup, deps: slot.deps, changed: true };
+            if (slot.kind === "ref") return { kind: "ref", slot };
+            return { kind: "services", slot: slot as ServiceSlot };
+          });
+          draft.frames.set(base.path, { ...base, base, slots });
+        }
+      } else if (!surface.regions.has("root")) {
+        const root: UIElement = { kind: "component", component: surface.page.component, props: {}, key: null };
+        draft.tree = this.visit(surface, draft, root, "root", new Map(), 0);
+      } else {
+      const queue = new Set(owners);
+      while (queue.size || draft.contextOwners.size) {
+        for (const owner of draft.contextOwners) queue.add(owner);
+        draft.contextOwners.clear();
+        const owner = [...queue].sort((a, b) => (surface.frames.get(a)?.depth ?? 0) - (surface.frames.get(b)?.depth ?? 0))[0];
+        queue.delete(owner);
+        if (draft.frames.has(owner) || draft.removedFrames.has(owner)) continue;
+        const frame = surface.frames.get(owner);
+        const region = frame && (draft.regions.get(frame.regionPath) ?? surface.regions.get(frame.regionPath));
+        if (!region || draft.removedRegions.has(region.path)) continue;
+        const output = this.visit(surface, draft, region.element, region.path, this.contextFor(surface, draft, region), region.depth);
+        if (!this.sameOutput(region.output, output)) this.propagateOutput(surface, draft, region.path);
+      }
+      }
+      for (const id of surface.inputSyncDirty) {
+        const node = draft.hosts.get(id) ?? surface.nodes.get(id);
+        if (node && !draft.removedHosts.has(id)) {
+          const token = surface.inputRevisions.get(id) ?? 0;
+          draft.hosts.set(id, { ...node, props: { ...node.props, inputRevision: token } }); draft.inputTokens.set(id, token);
+        }
+      }
       this.countMetric("evaluateMs", this.profiling ? Date.now() - started : 0);
       this.countMetric("renders");
       surface.pending = draft;
       this.layout(surface, draft);
     } catch (error) {
       surface.pending = null;
+      this.discardDraft(surface, draft);
       this.emitError(surface, "RENDER_ERROR", error);
     }
   }
@@ -536,9 +599,94 @@ export class BusinessRuntime {
     return result;
   }
 
+  private contextFor(surface: Surface, draft: Draft, region: OutputRegion): Map<number, unknown> {
+    const result = new Map<number, unknown>();
+    let parent = region.parent;
+    while (parent) {
+      const ancestor = draft.regions.get(parent) ?? surface.regions.get(parent);
+      if (!ancestor) break;
+      if (ancestor.element.kind === "provider" && !result.has(ancestor.element.contextId)) result.set(ancestor.element.contextId, ancestor.element.value);
+      parent = ancestor.parent;
+    }
+    return result;
+  }
+  private providerFor(surface: Surface, draft: Draft, id: number): string {
+    let ancestor = this.activeRegion;
+    while (ancestor) {
+      if (ancestor.element.kind === "provider" && ancestor.element.contextId === id) return ancestor.path + ":" + id;
+      ancestor = ancestor.parent ? draft.regions.get(ancestor.parent) ?? surface.regions.get(ancestor.parent) ?? null : null;
+    }
+    return "default:" + id;
+  }
+  private unbindContexts(surface: Surface, frame: ComponentFrame): void {
+    for (const read of frame.contexts.values()) {
+      const consumers = surface.contextConsumers.get(read.provider);
+      consumers?.delete(frame.path);
+      if (consumers?.size === 0) surface.contextConsumers.delete(read.provider);
+    }
+  }
+  private activeRegion: OutputRegion | null = null;
+  private sameOutput(a: HostNode[], b: HostNode[]): boolean { return a.length === b.length && a.every((node, i) => node.id === b[i].id); }
+  private retireRegion(surface: Surface, draft: Draft, path: string): void {
+    if (draft.removedRegions.has(path)) return;
+    const region = draft.regions.get(path) ?? surface.regions.get(path);
+    if (!region) return;
+    draft.removedRegions.add(path); draft.regions.delete(path);
+    for (const child of region.children) this.retireRegion(surface, draft, child);
+    if (region.hostId) { draft.removedHosts.add(region.hostId); draft.hosts.delete(region.hostId); }
+    if (region.framePath) { draft.removedFrames.add(region.framePath); draft.frames.delete(region.framePath); }
+  }
+  private propagateOutput(surface: Surface, draft: Draft, path: string): void {
+    const region = draft.regions.get(path) ?? surface.regions.get(path)!;
+    if (!region.parent) { draft.tree = region.output; return; }
+    const old = draft.regions.get(region.parent) ?? surface.regions.get(region.parent)!;
+    const output: HostNode[] = [];
+    for (const child of old.children) output.push(...(draft.regions.get(child) ?? surface.regions.get(child))!.output);
+    if (old.hostId) {
+      const host = draft.hosts.get(old.hostId) ?? surface.nodes.get(old.hostId)!;
+      if (!this.sameOutput(host.children, output)) draft.hosts.set(host.id, { ...host, children: output });
+      return;
+    }
+    if (this.sameOutput(old.output, output)) return;
+    draft.regions.set(old.path, { ...old, output }); this.propagateOutput(surface, draft, old.path);
+  }
+  private discardDraft(surface: Surface, draft: Draft): void {
+    for (const frame of draft.frames.values()) if (!frame.base) for (const hook of frame.slots) {
+      if (hook.kind === "state" || hook.kind === "reducer") hook.slot.active = false;
+      if (hook.kind === "services") hook.slot.active = false;
+    }
+    for (const node of draft.hosts.values()) if (!surface.nodes.has(node.id)) surface.nodeIds.delete(node.path);
+  }
   private visit(surface: Surface, draft: Draft, element: UIElement, path: string, context: Map<number, unknown>, depth: number): HostNode[] {
+    this.countMetric("scopeVisits");
+    const old = draft.regions.get(path) ?? surface.regions.get(path);
+    const parent = this.activeRegion;
+    if (parent) parent.children.push(path);
+    const region: OutputRegion = { path, parent: parent?.path ?? old?.parent ?? null, element, context, depth, children: [], output: [] };
+    if (draft.staticChildren.has(path) && old) region.children = old.children;
+    draft.regions.set(path, region);
+    this.activeRegion = region;
+    try { region.output = this.visitElement(surface, draft, element, path, context, depth); }
+    finally { this.activeRegion = parent; }
+    if (element.kind === "component") region.framePath = path + "/component:" + this.typeId(element.component);
+    if (element.kind === "host" || element.kind === "template") region.hostId = region.output[0]?.id;
+    if (old) {
+      const children = new Set(region.children);
+      for (const child of old.children) if (!children.has(child)) this.retireRegion(surface, draft, child);
+      if (old.framePath && old.framePath !== region.framePath) draft.removedFrames.add(old.framePath);
+      if (old.hostId && old.hostId !== region.hostId) draft.removedHosts.add(old.hostId);
+    }
+    draft.regions.set(path, region);
+    return region.output;
+  }
+  private visitElement(surface: Surface, draft: Draft, element: UIElement, path: string, context: Map<number, unknown>, depth: number): HostNode[] {
+    if (element.kind === "template") return this.visitTemplate(surface, draft, element, path, context, depth);
     if (element.kind === "fragment") return this.visitChildren(surface, draft, element.children, path + "/fragment", context, depth);
     if (element.kind === "provider") {
+      const previous = surface.regions.get(path)?.element;
+      if (previous?.kind === "provider" && !Object.is(previous.value, element.value)) {
+        for (const owner of surface.contextConsumers.get(path + ":" + element.contextId) ?? []) draft.contextOwners.add(owner);
+      }
       const next = new Map(context);
       next.set(element.contextId, element.value);
       return this.visitChildren(surface, draft, element.children, path + "/provider", next, depth);
@@ -550,10 +698,11 @@ export class BusinessRuntime {
       const hasPendingState = base?.slots.some(slot => (slot.kind === "state" || slot.kind === "reducer") && slot.pending.length > 0) ?? false;
       const contextsUnchanged = base && [...base.contexts].every(([id, read]) => Object.is(context.has(id) ? context.get(id) : read.context.defaultValue, read.value));
       if (base && base.component === element.component && sameProps(base.props, props) && contextsUnchanged && !hasPendingState) {
-        draft.frames.set(framePath, { path: framePath, component: element.component, base, props, rendered: base.rendered, contexts: base.contexts, slots: [], depth, reused: base });
-        return base.rendered ? this.visit(surface, draft, base.rendered, framePath, context, depth + 1) : [];
+        const region = surface.regions.get(path)!;
+        this.activeRegion!.children = region.children; return region.output;
       }
-      const frame: DraftFrame = { path: framePath, component: element.component, base, props, rendered: null, contexts: new Map(), slots: [], depth };
+      const frame: DraftFrame = { regionPath: path, path: framePath, component: element.component, base, props, rendered: null, contexts: new Map(), slots: [], depth };
+      draft.frames.set(framePath, frame);
       let cursor = 0;
       const next = (): number => cursor++;
       const dispatcher: HookDispatcher = {
@@ -561,8 +710,8 @@ export class BusinessRuntime {
           const slotIndex = next();
           const old = base?.slots[slotIndex];
           if (old && old.kind !== "state") throw new Error("HOOK_ORDER_CHANGED");
-          const slot = old as StateSlot | undefined ?? this.newStateSlot(surface, "state", typeof initial === "function" ? (initial as () => unknown)() : initial);
-          const watermark = slot.pending.at(-1)?.id ?? 0;
+          const slot = old as StateSlot | undefined ?? this.newStateSlot(surface, framePath, "state", typeof initial === "function" ? (initial as () => unknown)() : initial);
+          const watermark = draft.watermark;
           let value = slot.value;
           for (const update of slot.pending) if (update.id <= watermark) value = typeof update.value === "function" ? (update.value as (v: unknown) => unknown)(value) : update.value;
           frame.slots.push({ kind: "state", slot, value, watermark });
@@ -572,12 +721,12 @@ export class BusinessRuntime {
           const slotIndex = next();
           const old = base?.slots[slotIndex];
           if (old && old.kind !== "reducer") throw new Error("HOOK_ORDER_CHANGED");
-          const slot = old as StateSlot | undefined ?? this.newStateSlot(surface, "reducer", initial);
-          const watermark = slot.pending.at(-1)?.id ?? 0;
+          const slot = old as StateSlot | undefined ?? this.newStateSlot(surface, framePath, "reducer", initial);
+          const watermark = draft.watermark;
           let value = slot.value as S;
           for (const update of slot.pending) if (update.id <= watermark) value = reducer(value, update.value as A);
           frame.slots.push({ kind: "reducer", slot, value, watermark });
-          slot.reducer = reducer as (state: unknown, action: unknown) => unknown;
+
           return [value, slot.dispatch as (action: A) => void];
         },
         ref: <T>(initial: T): Ref<T> => {
@@ -601,7 +750,7 @@ export class BusinessRuntime {
         },
         context: <T>(requested: Context<T>): T => {
           const value = context.has(requested.id) ? context.get(requested.id) as T : requested.defaultValue;
-          frame.contexts.set(requested.id, { context: requested as Context<any>, value });
+          frame.contexts.set(requested.id, { context: requested as Context<any>, value, provider: this.providerFor(surface, draft, requested.id) });
           return value;
         },
         services: (): Services => {
@@ -612,6 +761,7 @@ export class BusinessRuntime {
         },
       };
       let rendered: UIElement | null;
+      this.countMetric("logicalEvaluations");
       setHookDispatcher(dispatcher);
       this.rendering = true;
       try { rendered = withTimerScope(surface.timerScope, () => element.component(element.props)); }
@@ -715,19 +865,62 @@ export class BusinessRuntime {
     if (typeof props.onFirstFrame === "function") events.firstFrameDidDisplay = props.onFirstFrame as EventCallbacks["firstFrameDidDisplay"];
     if (typeof props.onNativeEvent === "function") events.nativeComponent = props.onNativeEvent as EventCallbacks["nativeComponent"];
     const children = element.tag === "Text" || element.tag === "RichText" || element.tag === "TextInput" || element.tag === "Image" || element.tag === "Video"
-      ? [] : this.visitChildren(surface, draft, element.children, hostPath, context, depth + 1);
-    return [{ id, path: hostPath, kind: element.tag, props: outputProps, style, children, frame: { x: 0, y: 0, width: 0, height: 0 }, events, nativeName: element.tag === "Native" ? String(props.name) : undefined, ref: props.ref as HostNode["ref"] }];
+      ? [] : draft.staticChildren.get(path) ?? this.visitChildren(surface, draft, element.children, hostPath, context, depth + 1);
+    const base = surface.nodes.get(id);
+    const node: HostNode = { id, path: hostPath, kind: element.tag, props: outputProps, style, children, frame: base?.frame ?? { x: 0, y: 0, width: 0, height: 0 }, events, nativeName: element.tag === "Native" ? String(props.name) : undefined, ref: props.ref as HostNode["ref"] };
+    draft.hosts.set(id, node); this.countMetric("reconciledNodes");
+    return [base ?? node];
   }
 
-  private newStateSlot(surface: Surface, kind: "state" | "reducer", value: unknown): StateSlot {
-    const slot: StateSlot = { kind, value, pending: [], active: true, dispatch: () => {} };
+  private visitTemplate(surface: Surface, draft: Draft, element: TemplateElement, path: string, context: Map<number, unknown>, depth: number): HostNode[] {
+    const oldRegion = surface.regions.get(path), old = oldRegion?.template;
+    const plan = element.plan, values = element.values;
+    if (old && old.plan === plan) {
+      this.activeRegion!.children = oldRegion!.children;
+      let root = old.root;
+      const changed = new Set<number>();
+      for (const field of plan.fields) { this.countMetric("dynamicSlotsChecked"); if (!Object.is(old.values[field.input], values[field.input])) changed.add(field.node); }
+      const owner = this.activeRegion;
+      for (const index of changed) {
+        const target = old.paths[index], region = surface.regions.get(target)!;
+        const base = index === 0 ? old.root : region.element as import("@anseronui/ui").HostElement;
+        const node = templateNode(plan, index, values, base.children);
+        const host = draft.hosts.get(region.hostId!) ?? surface.nodes.get(region.hostId!)!;
+        const structural = plan.nodes[index].tag !== "Text" && plan.fields.some(field => field.node === index && field.field === "children");
+        if (!structural) draft.staticChildren.set(target, host.children);
+        else if (index === 0) this.activeRegion!.children = [];
+        if (index === 0) { root = node; this.visitElement(surface, draft, node, target, context, depth); }
+        else {
+          this.activeRegion = null;
+          try { this.visit(surface, draft, node, target, region.context, region.depth); }
+          finally { this.activeRegion = owner; }
+        }
+        draft.staticChildren.delete(target);
+      }
+      this.activeRegion!.template = { plan, values, paths: old.paths, root };
+      this.countMetric("computeRegionsReused", plan.nodes.length - changed.size);
+      return oldRegion!.output;
+    }
+    const paths: string[] = [];
+    const materialize = (index: number, target: string): import("@anseronui/ui").HostElement => {
+      const descriptor = plan.nodes[index]; paths[index] = target;
+      const children = descriptor.children.map((child, position) => materialize(child, target + "/host:" + descriptor.tag + "/" + (plan.nodes[child].key === null ? "i:" + position : "k:" + String(plan.nodes[child].key))));
+      return templateNode(plan, index, values, children);
+    };
+    const root = materialize(0, path);
+    this.activeRegion!.template = { plan, values, paths, root };
+    return this.visitElement(surface, draft, root, path, context, depth);
+  }
+
+  private newStateSlot(surface: Surface, owner: string, kind: "state" | "reducer", value: unknown): StateSlot {
+    const slot: StateSlot = { owner, kind, value, pending: [], active: true, dispatch: () => {} };
     slot.dispatch = (next: unknown) => {
       if (!slot.active || this.disposed) return;
       if (this.rendering) throw new Error("STATE_UPDATE_DURING_RENDER");
       const id = surface.nextUpdateId++;
       if (!isU32(id)) throw new Error("UPDATE_ID_OVERFLOW");
       slot.pending.push({ id, value: next });
-      surface.dirty = true;
+      surface.dirtyOwners.add(slot.owner); surface.dirty = true;
       this.onWake?.();
     };
     return slot;
@@ -833,68 +1026,91 @@ export class BusinessRuntime {
   }
   private rendering = false;
 
-  private renderNodes(tree: HostNode[]): RenderNode[] {
-    return tree.map(node => ({ id: node.id, kind: node.kind, nativeName: node.nativeName,
-      props: node.props, style: node.style, frame: node.frame,
-      events: EVENT_NAMES.filter(event => this.hasEvent(node, event)), children: this.renderNodes(node.children) }));
+  private sendCore(request: CoreRequest): void {
+    if (this.profiling) this.countMetric("coreRequestUnits", JSON.stringify(request).length);
+    const surface = this.surfaces.get(request.surfaceId);
+    if (surface?.pending) surface.pending.lastRequest = request;
+    if (this.renderCore) {
+      let result: CoreResult;
+      try { result = this.renderCore(request); }
+      catch (error) {
+        if (surface?.pending) this.failCore(surface, String(error)); else throw error;
+        return;
+      }
+      this.acceptCoreResult(result);
+    } else this.coreRequests.push(request);
   }
   private layout(surface: Surface, draft: Draft): void {
-    if (draft.measureRound >= MAX_MEASURE_ROUNDS) {
-      surface.pending = null;
-      this.emit(surface, { type: "Diagnostic", code: "LAYOUT_NOT_CONVERGED", message: "Text measurement exceeded " + MAX_MEASURE_ROUNDS + " rounds" });
-      return;
-    }
-    draft.measureRound++;
     draft.corePending = true;
-    draft.measures.clear();
     if (this.profiling) draft.coreStarted = Date.now();
-    const request: RenderRequest = { type: "Render", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation,
-      revision: draft.revision, round: draft.measureRound, width: surface.width, height: surface.height,
-      profile: this.profiling, tree: this.renderNodes(draft.tree), previous: this.renderNodes(surface.tree), nextRequestId: surface.nextRequestId,
-      measureCache: [...surface.measureCache].map(([key, value]) => ({key, ...value})) };
-    if (this.profiling) {
-      const started = Date.now(); this.countMetric("coreRequestUnits", JSON.stringify(request).length);
-      this.countMetric("serializeMs", Date.now() - started); this.countMetric("layoutRounds");
+    if (draft.measureRound > 0) {
+      this.sendCore({ type: "ContinueRender", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation,
+        transactionId: draft.revision, round: draft.measureRound, measurements: draft.measurements });
+      draft.measurements = []; return;
     }
-    if (this.renderCore) this.acceptCoreResult(this.renderCore(request));
-    else this.coreRequests.push(request);
+    const mutations: NodeMutation[] = [];
+    for (const id of draft.removedHosts) mutations.push({ type: "Delete", nodeId: id });
+    for (const node of draft.hosts.values()) {
+      const base = surface.nodes.get(node.id), events = EVENT_NAMES.filter(event => this.hasEvent(node, event));
+      if (!base) mutations.push({ type: "Create", nodeId: node.id, kind: node.kind, nativeName: node.nativeName, props: node.props, style: node.style, events });
+      else {
+        const props = propPatch(base.props, node.props), styles = propPatch(base.style as RenderProps, node.style as RenderProps);
+        const oldEvents = EVENT_NAMES.filter(event => this.hasEvent(base, event));
+        const eventsChanged = !sameDeps(events, oldEvents);
+        if (Object.keys(props.set).length || props.unset.length || Object.keys(styles.set).length || styles.unset.length || eventsChanged) mutations.push({ type: "Patch", nodeId: node.id,
+          propsSet: props.set, propsUnset: props.unset, styleSet: styles.set as Style, styleUnset: styles.unset, ...(eventsChanged ? { events } : {}) });
+      }
+      if ((!base && node.children.length) || (base && !this.sameOutput(base.children, node.children))) mutations.push({ type: "Children", parentId: node.id, children: node.children.map(child => child.id) });
+    }
+    if (surface.recoveryNodes || !this.sameOutput(surface.tree, draft.tree)) mutations.push({ type: "Children", parentId: 0, children: draft.tree.map(node => node.id) });
+    const request: BeginRenderRequest = { type: "BeginRender", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation,
+      transactionId: draft.revision, baseRevision: surface.revision, targetRevision: draft.revision, width: surface.width, height: surface.height,
+      environmentVersion: surface.environmentVersion, nextRequestId: surface.nextRequestId, mutations, profile: this.profiling };
+    this.sendCore(request);
   }
   acceptCoreResult(result: CoreResult): void {
     if (result.abi !== CORE_ABI_VERSION) throw new Error("CORE_ABI_MISMATCH");
-    if (result.type === "SurfaceReleased") return;
-    const surface = this.surfaces.get(result.surfaceId);
-    const draft = surface?.pending;
-    if (!surface || surface.generation !== result.generation || !draft || !draft.corePending || draft.revision !== result.revision || draft.measureRound !== result.round) return;
-    draft.corePending = false;
+    if (result.type === "SurfaceReleased" || result.type === "Aborted") return;
+    if (result.type === "SurfaceReset") {
+      const surface = this.surfaces.get(result.surfaceId);
+      if (surface?.generation === result.generation && surface.recovering && surface.resetToken === result.resetToken) { this.progress(surface); surface.coreResetAck = true; this.resumeRecovery(surface); }
+      return;
+    }
+    if (result.type === "RenderResult") throw new Error("UNEXPECTED_LEGACY_CORE_RESULT");
+    const surface = this.surfaces.get(result.surfaceId), draft = surface?.pending;
+    if (!surface || surface.generation !== result.generation || !draft || draft.revision !== result.transactionId) return;
+    if (result.type === "CoreFailure") { this.failCore(surface, result.code); return; }
+    this.progress(surface);
+    if (result.type === "Finalized") { if (draft.finalizing) this.publish(surface, result.revision); return; }
+    if (result.type !== "Prepared" || !draft.corePending) return;
+    draft.corePending = false; draft.measureRound = result.round;
     if (draft.coreStarted !== undefined) this.countMetric("coreRoundTripMs", Date.now() - draft.coreStarted);
     this.countMetric("measureRequests", result.measures.length);
-    if (result.timings) { this.countMetric("syncMs", result.timings.syncMs); this.countMetric("layoutMs", result.timings.layoutMs); this.countMetric("diffMs", result.timings.diffMs); }
+    for (const [name, value] of Object.entries(result.stats)) this.countMetric(name, value);
     surface.nextRequestId = Math.max(surface.nextRequestId, result.nextRequestId);
-    const frames = new Map(result.frames.map(item => [item.nodeId, item.frame]));
-    for (const host of this.flatten(draft.tree)) {
-      const frame = frames.get(host.id);
-      if (!frame) throw new Error("CORE_MISSING_FRAME");
-      host.frame = frame;
+    for (const item of result.frames) {
+      const node = draft.hosts.get(item.nodeId) ?? surface.nodes.get(item.nodeId);
+      if (!node) throw new Error("CORE_UNKNOWN_FRAME");
+      if (!surface.nodes.has(item.nodeId)) { node.frame = item.frame; draft.hosts.set(item.nodeId, node); }
+      else draft.hosts.set(item.nodeId, { ...node, frame: item.frame });
     }
     for (const query of result.measures) {
       draft.measures.set(query.requestId, query);
       this.emit(surface, { type: "MeasureRequest", requestId: query.requestId, nodeId: query.nodeId, kind: query.kind, text: query.text, fontSize: query.fontSize, maxWidth: query.maxWidth, props: query.props });
     }
-    if (draft.measures.size === 0) {
+    if (result.ready) {
       draft.readyForAck = true;
       if (this.profiling) draft.commitStarted = Date.now();
       this.countMetric("commands", result.commands.length);
-      this.emit(surface, { type: "Commit", revision: draft.revision, commands: result.commands });
+      draft.commitPayloads = splitCommit(draft.revision, surface.revision, result.commands);
+      for (const payload of draft.commitPayloads) this.emit(surface, payload);
     }
   }
-
   private acceptMeasure(surface: Surface, result: Extract<InputPayload, { type: "MeasureResult" }>): void {
-    const draft = surface.pending;
-    const query = draft?.measures.get(result.requestId);
+    const draft = surface.pending, query = draft?.measures.get(result.requestId);
     if (!draft || !query || query.nodeId !== result.nodeId || !finiteDimension(result.width) || !finiteDimension(result.height)) return;
-    surface.measureCache.delete(query.key);
-    surface.measureCache.set(query.key, { width: result.width, height: result.height, baseline: result.baseline });
-    draft.measures.delete(result.requestId);
+    this.progress(surface);
+    draft.measurements.push({ ...result, key: query.key }); draft.measures.delete(result.requestId);
     if (draft.measures.size === 0) this.layout(surface, draft);
   }
 
@@ -914,13 +1130,16 @@ export class BusinessRuntime {
 
   private ack(surface: Surface, revision: number): void {
     const draft = surface.pending;
-    if (!draft || !draft.readyForAck || revision !== draft.revision) return;
-    const oldFrames = surface.frames;
-    const nextPaths = new Set(this.flatten(draft.tree).map(node => node.path));
-    for (const node of this.flatten(surface.tree)) {
-      if (!nextPaths.has(node.path)) surface.nodeIds.delete(node.path);
-    }
-    const removed = [...oldFrames.values()].filter(frame => !draft.frames.has(frame.path)).sort((a, b) => b.depth - a.depth);
+    if (!draft || !draft.readyForAck || draft.finalizing || revision !== draft.revision) return;
+    this.progress(surface);
+    draft.finalizing = true;
+    this.sendCore({ type: "FinalizeRender", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation, transactionId: revision });
+  }
+  private publish(surface: Surface, revision: number): void {
+    const draft = surface.pending!;
+    const removed: ComponentFrame[] = [];
+    for (const path of draft.removedFrames) { const frame = surface.frames.get(path); if (frame) removed.push(frame); }
+    removed.sort((a, b) => b.depth - a.depth);
     const changed = [...draft.frames.values()].sort((a, b) => b.depth - a.depth);
     for (const frame of removed) this.cleanupFrame(surface, frame);
     for (const frame of changed) {
@@ -928,8 +1147,15 @@ export class BusinessRuntime {
         this.runCleanup(surface, hook.slot.cleanup); hook.slot.cleanup = undefined;
       }
     }
-    const committed = new Map<string, ComponentFrame>();
+    const committed = surface.frames;
+    for (const frame of removed) { this.unbindContexts(surface, frame); committed.delete(frame.path); }
     for (const frame of draft.frames.values()) {
+      if (frame.base) this.unbindContexts(surface, frame.base);
+      for (const read of frame.contexts.values()) {
+        let consumers = surface.contextConsumers.get(read.provider);
+        if (!consumers) { consumers = new Set(); surface.contextConsumers.set(read.provider, consumers); }
+        consumers.add(frame.path);
+      }
       if (frame.reused) {
         committed.set(frame.path, frame.reused);
         continue;
@@ -948,41 +1174,52 @@ export class BusinessRuntime {
         } else slots.push(hook.slot);
       }
       committed.set(frame.path, {
-        path: frame.path, component: frame.component, props: frame.props,
+        regionPath: frame.regionPath, path: frame.path, component: frame.component, props: frame.props,
         rendered: frame.rendered, contexts: frame.contexts, slots, depth: frame.depth,
       });
     }
     surface.frames = committed;
-    const oldNodes = new Map(this.flatten(surface.tree).map(node => [node.id, node]));
+    const oldNodes = new Map<number, HostNode>();
+    for (const id of draft.removedHosts) { const old = surface.nodes.get(id); if (old) oldNodes.set(id, { ...old }); }
+    for (const id of draft.hosts.keys()) { const old = surface.nodes.get(id); if (old) oldNodes.set(id, { ...old }); }
+    for (const path of draft.removedRegions) surface.regions.delete(path);
+    for (const [path, region] of draft.regions) surface.regions.set(path, region);
+    for (const id of draft.removedHosts) {
+      const old = surface.nodes.get(id); if (old) surface.nodeIds.delete(old.path);
+      surface.nodes.delete(id); surface.parents.delete(id); surface.positions.delete(id);
+      if (surface.backHandlers.delete(id)) surface.backOrder = null; surface.inputRevisions.delete(id); surface.inputSyncDirty.delete(id);
+    }
+    for (const [id, node] of draft.hosts) {
+      const old = surface.nodes.get(id);
+      if (old) Object.assign(old, node); else surface.nodes.set(id, node);
+      if (node.events.backPress) { if (!surface.backHandlers.has(id)) { surface.backHandlers.add(id); surface.backOrder = null; } }
+      else if (surface.backHandlers.delete(id)) surface.backOrder = null;
+      // Topology changes own the list traversal; ordinary field updates skip it.
+      if (!oldNodes.has(id) || !this.sameOutput(oldNodes.get(id)!.children, node.children)) {
+        surface.backOrder = null;
+        node.children.forEach((child, index) => { surface.parents.set(child.id, id); surface.positions.set(child.id, index); });
+      }
+    }
+    if (!this.sameOutput(surface.tree, draft.tree) || surface.recoveryNodes) {
+      surface.backOrder = null; draft.tree.forEach((node, index) => { surface.parents.set(node.id, 0); surface.positions.set(node.id, index); });
+    }
+    for (const [id, token] of draft.inputTokens) if (surface.inputRevisions.get(id) === token) surface.inputSyncDirty.delete(id);
+    this.countMetric("commitLogEntries", draft.hosts.size + draft.frames.size + draft.regions.size + draft.removedHosts.size + draft.removedFrames.size);
     surface.tree = draft.tree;
     surface.revision = revision;
     this.countMetric("commits");
     if (draft.commitStarted !== undefined) this.countMetric("commitRoundTripMs", Date.now() - draft.commitStarted);
-    surface.pending = null;
-    const nextNodes = new Map(this.flatten(surface.tree).map(node => [node.id, node]));
-    // Never evict measurements mid-layout: later rounds can reuse earlier constraints.
-    // Retire offscreen identities after ACK, then bound the idle cache.
-    for (const key of surface.measureCache.keys()) {
-      const nodeId = Number(key.slice(1, key.indexOf(',')));
-      if (!nextNodes.has(nodeId)) surface.measureCache.delete(key);
-    }
-    while (surface.measureCache.size > 1024) {
-      const oldest = surface.measureCache.keys().next().value;
-      if (oldest === undefined) break;
-      surface.measureCache.delete(oldest);
-    }
-    const livePaths = new Set(this.flatten(surface.tree).map(node => node.path));
-    for (const path of surface.nodeIds.keys()) if (!livePaths.has(path)) surface.nodeIds.delete(path);
-    for (const id of surface.inputRevisions.keys()) if (!nextNodes.has(id)) surface.inputRevisions.delete(id);
+    const nextNodes = new Map<number, HostNode>();
+    for (const id of draft.hosts.keys()) { const node = surface.nodes.get(id); if (node) nextNodes.set(id, node); }
     for (const old of oldNodes.values()) {
-      const next = nextNodes.get(old.id);
+      const next = surface.nodes.get(old.id);
       if (!next || old.ref !== next.ref) this.assignRef(surface, old.ref, null);
       if (!next) this.retireHandle(surface, old.id);
     }
     for (const node of nextNodes.values()) {
       if (node.ref && oldNodes.get(node.id)?.ref !== node.ref) this.assignRef(surface, node.ref, this.nodeHandle(surface, node.id));
     }
-    for (const node of this.flatten(surface.tree)) {
+    for (const node of nextNodes.values()) {
       const old = oldNodes.get(node.id);
       if (node.events.layout && (!old || !old.events.layout || !sameFrame(old.frame, node.frame))) {
         try {
@@ -999,13 +1236,95 @@ export class BusinessRuntime {
         } catch (error) { this.emitError(surface, "EFFECT_ERROR", error); }
       }
     }
+    surface.pending = null;
+    if (surface.recoveryNodes) { surface.recoveryNodes = null; surface.recovering = false; surface.recoveryAttempts = 0; }
     const events = surface.deferredEvents;
     surface.deferredEvents = [];
     for (const event of events) {
       if (event.type === "InputChange") this.invokeEvent(surface, event);
       else if (event.type === "Tap" || event.type === "NativeEvent") surface.deferredEvents.push(event);
     }
-    if ([...committed.values()].some(frame => frame.slots.some(slot => (slot.kind === "state" || slot.kind === "reducer") && slot.pending.length > 0))) surface.dirty = true;
+    for (const frame of changed) for (const hook of frame.slots) if ((hook.kind === "state" || hook.kind === "reducer") && hook.slot.pending.length > 0) surface.dirtyOwners.add(frame.path);
+    if (surface.dirtyOwners.size || surface.inputSyncDirty.size) surface.dirty = true;
+  }
+
+  private progress(surface: Surface): void {
+    if (surface.watchdog !== null) this.emit(surface, { type: "CancelRequest", requestId: surface.watchdog });
+    surface.watchdog = null; surface.retries = 0;
+  }
+  private failCore(surface: Surface, code: string): void {
+    const draft = surface.pending;
+    if (!draft) return;
+    if (draft.readyForAck || surface.recovering) { this.recoverSurface(surface, code); return; }
+    // The host has not seen this draft. Abort is idempotent; the kernel may
+    // already have rolled back a failed Begin/Continue operation.
+    this.progress(surface); this.discardDraft(surface, draft); surface.pending = null;
+    this.countMetric("aborts");
+    if (this.renderCore) {
+      try { this.renderCore({ type: "AbortRender", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation, transactionId: draft.revision }); } catch {}
+    } else this.coreRequests.push({ type: "AbortRender", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation, transactionId: draft.revision });
+    this.emit(surface, { type: "Diagnostic", code: "CORE_RENDER_ERROR", message: code });
+  }
+  private ensureWatchdog(surface: Surface): void {
+    if (surface.watchdog !== null || !surface.pending && !surface.recovering || surface.recoveryAttempts > 2) return;
+    const requestId = surface.nextRequestId++;
+    if (!isU32(requestId)) throw new Error("REQUEST_ID_OVERFLOW");
+    surface.watchdog = requestId;
+    this.emit(surface, { type: "InvokeModule", requestId, module: "timer", method: "sleep", argument: "5000", purpose: "renderWatchdog" });
+  }
+  private retryTransaction(surface: Surface): void {
+    if (++surface.retries > 2) { this.recoverSurface(surface, "TRANSACTION_TIMEOUT"); return; }
+    this.countMetric("transactionRetries");
+    if (surface.recovering && !surface.recoveryNodes) {
+      const through = surface.nextRevision - 1;
+      if (!surface.hostResetAck) this.emit(surface, { type: "ResetSurface", resetToken: surface.resetToken, rejectedThroughTransactionId: through });
+      if (!surface.coreResetAck) this.sendCore({ type: "ResetSurface", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation, transactionId: through, resetToken: surface.resetToken, rejectedThroughTransactionId: through });
+      return;
+    }
+    const draft = surface.pending;
+    if (!draft) return;
+    if (draft.corePending || draft.finalizing) { if (draft.lastRequest) this.sendCore(draft.lastRequest); }
+    else if (draft.readyForAck) for (const payload of draft.commitPayloads) this.emit(surface, payload);
+    else for (const query of draft.measures.values()) this.emit(surface, { type: "MeasureRequest", requestId: query.requestId, nodeId: query.nodeId, kind: query.kind, text: query.text, fontSize: query.fontSize, maxWidth: query.maxWidth, props: query.props });
+  }
+  private recoverSurface(surface: Surface, reason: string): void {
+    this.progress(surface); this.countMetric("resets");
+    const failed = surface.pending;
+    if (failed) this.discardDraft(surface, failed);
+    surface.pending = null; surface.dirty = false;
+    if (++surface.recoveryAttempts > 2) { this.emit(surface, { type: "Diagnostic", code: "RECOVERY_FAILED", message: reason }); return; }
+    if (!surface.recovering) {
+      surface.recovering = true;
+      for (const frame of [...surface.frames.values()].sort((a, b) => b.depth - a.depth)) for (const slot of frame.slots) {
+        if (slot.kind === "effect" && slot.cleanup) { this.runCleanup(surface, slot.cleanup); slot.cleanup = undefined; }
+        if (slot.kind === "services") {
+          for (const stop of [...slot.subscriptions]) stop(); slot.pageListeners.clear();
+          for (const [id, request] of surface.modules) if (request.owner === slot) { surface.modules.delete(id); this.emit(surface, { type: "CancelRequest", requestId: id }); request.reject(new Error("RENDERER_RESET")); }
+        }
+      }
+      for (const node of surface.nodes.values()) { this.assignRef(surface, node.ref, null); this.retireHandle(surface, node.id); }
+    }
+    surface.resetToken++; surface.coreResetAck = false; surface.hostResetAck = false;
+    const through = surface.nextRevision - 1;
+    this.emit(surface, { type: "Diagnostic", code: "RENDERER_LOST", message: reason });
+    this.emit(surface, { type: "ResetSurface", resetToken: surface.resetToken, rejectedThroughTransactionId: through });
+    this.sendCore({ type: "ResetSurface", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation,
+      transactionId: through, resetToken: surface.resetToken, rejectedThroughTransactionId: through });
+  }
+  private resumeRecovery(surface: Surface): void {
+    if (!surface.coreResetAck || !surface.hostResetAck) return;
+    const nodes = [...surface.nodes.values()];
+    surface.nodeIds.clear(); surface.nodes.clear(); surface.parents.clear(); surface.positions.clear(); surface.backHandlers.clear(); surface.backOrder = null; surface.inputRevisions.clear(); surface.inputSyncDirty.clear();
+    for (const node of nodes) {
+      node.id = surface.nextNodeId++; if (!isU32(node.id)) throw new Error("NODE_ID_OVERFLOW");
+      node.frame = { x: 0, y: 0, width: 0, height: 0 };
+      if (node.kind === "TextInput") node.props = { ...node.props, inputRevision: 0 };
+      surface.nodeIds.set(node.path, node.id);
+    }
+    for (const region of surface.regions.values()) if (region.hostId) region.hostId = region.output[0].id;
+    surface.revision = 0; surface.recoveryNodes = nodes.length ? nodes : null; surface.dirty = true;
+    if (!nodes.length) { surface.regions.clear(); surface.tree = []; surface.recovering = false; }
+    this.onWake?.();
   }
 
   private assignRef(surface: Surface, ref: HostNode["ref"], handle: import("@anseronui/ui").NodeHandle | null): void {
@@ -1017,7 +1336,7 @@ export class BusinessRuntime {
     if (existing) return existing.handle;
     const owner = this.newServiceSlot(surface);
     const invoke = async (method: string, args?: unknown): Promise<any> => {
-      if (!owner.active || !this.flatten(surface.tree).some(node => node.id === nodeId)) throw new Error("NODE_UNMOUNTED");
+      if (!owner.active || !surface.nodes.has(nodeId)) throw new Error("NODE_UNMOUNTED");
       const result = await this.invokeModule(surface, owner, "__view", method, JSON.stringify({ nodeId, args: args ?? null }));
       return JSON.parse(result);
     };
@@ -1073,10 +1392,13 @@ export class BusinessRuntime {
     const release: CoreRequest = { type: "ReleaseSurface", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation };
     if (this.renderCore) this.renderCore(release);
     else this.coreRequests.push(release);
+    this.progress(surface);
+    if (surface.pending) this.discardDraft(surface, surface.pending);
     unregisterTimerScope(surface.timerScope);
     for (const node of this.flatten(surface.tree)) { this.assignRef(surface, node.ref, null); this.retireHandle(surface, node.id); }
     for (const frame of [...surface.frames.values()].sort((a, b) => b.depth - a.depth)) this.cleanupFrame(surface, frame);
-    surface.frames.clear(); surface.tree = []; surface.pending = null;
+    surface.frames.clear(); surface.tree = []; surface.pending = null; surface.nodes.clear(); surface.regions.clear(); surface.parents.clear(); surface.dirtyOwners.clear(); surface.inputSyncDirty.clear();
+    surface.contextConsumers.clear(); surface.backHandlers.clear(); surface.positions.clear(); surface.backOrder = null;
     surface.nodeIds.clear(); surface.measureCache.clear(); surface.modules.clear(); surface.deferredEvents = [];
   }
 }

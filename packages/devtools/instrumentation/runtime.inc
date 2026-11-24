@@ -162,6 +162,7 @@
       this.emit(surface, { type: 'CancelRequest', requestId: id }); surface.modules.delete(id); request.reject(new Error('SURFACE_DISPOSED'));
     }
     this.devtoolsSessions.delete(surface.id);
+    this.devtoolsForced.delete(surface.id); this.devtoolsOverrides.delete(surface.id);
     this.devtoolsCalls.delete(surface.id); this.devtoolsLogs.delete(surface.id);
     __anseronuiDevtoolsClearLogSink(surface.id);
   }

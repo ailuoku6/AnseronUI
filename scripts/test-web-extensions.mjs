@@ -22,7 +22,19 @@ final class Result: NSObject, WKScriptMessageHandler {
 }
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+final class FixtureResources: NSObject, WKURLSchemeHandler {
+ func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+  let path = urlSchemeTask.request.url!.path
+  let resource = "examples/components" + path
+  let data = (try? Data(contentsOf:URL(fileURLWithPath:resource))) ?? Data()
+  let mime = path.hasSuffix(".png") ? "image/png" : path.hasSuffix(".mp4") ? "video/mp4" : "application/octet-stream"
+  urlSchemeTask.didReceive(URLResponse(url:urlSchemeTask.request.url!,mimeType:mime,expectedContentLength:data.count,textEncodingName:nil))
+  urlSchemeTask.didReceive(data); urlSchemeTask.didFinish()
+ }
+ func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+}
 let config = WKWebViewConfiguration()
+config.setURLSchemeHandler(FixtureResources(), forURLScheme:"anseronui-test")
 config.websiteDataStore = .nonPersistent()
 let result = Result()
 config.userContentController.add(result, name: "result")
@@ -40,7 +52,7 @@ window.contentView = web
 window.title = "AnseronUI rendering regression"
 window.makeKeyAndOrderFront(nil)
 app.activate(ignoringOtherApps:true)
-web.loadHTMLString(try String(contentsOfFile: CommandLine.arguments[1],encoding:.utf8),baseURL:URL(string:"https://anseronui.test"))
+web.loadHTMLString(try String(contentsOfFile: CommandLine.arguments[1],encoding:.utf8),baseURL:URL(string:"anseronui-test://fixture"))
 DispatchQueue.main.asyncAfter(deadline:.now()+120){print("WebKit timeout");exit(2)}
 app.run()
 `);

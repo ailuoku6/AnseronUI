@@ -14,6 +14,7 @@
   "include": [
     "packages/protocol/src/**/*.ts",
     "packages/ui/src/**/*.ts",
+    "packages/ui/test/**/*.ts",
     "packages/core/src/**/*.ts",
     "packages/core/test/**/*.ts",
     "packages/ui-compiler/src/**/*.ts",

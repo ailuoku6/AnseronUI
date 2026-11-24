@@ -1,0 +1,204 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  ANSERONUI_DEBUG_BUILD: '1'
+
+jobs:
+  unit:
+    name: Shared contracts and tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run prepare:tools
+      - run: npm test
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: test-unit
+          path: .verification/tests/unit
+          if-no-files-found: warn
+
+  runtime:
+    name: ${{ matrix.suite }} runtime
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [layout, native, wasm, web, ios, macos]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.15.2'
+      - run: npm ci --ignore-scripts
+      - run: npm run test:ci -- ${{ matrix.suite }}
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: test-${{ matrix.suite }}
+          path: |
+            .verification/tests/${{ matrix.suite }}/
+            .verification/layout/summary.json
+            .verification/layout/*.stderr
+            .verification/performance/*.json
+          if-no-files-found: warn
+
+  android-build:
+    name: Android APK and test APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.15.2'
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+      - run: npm ci --ignore-scripts
+      - run: npm run test:ci -- android-build
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: test-android-build
+          path: |
+            .verification/tests/android-build/
+            examples/native/android/app/build/outputs/apk/
+          if-no-files-found: warn
+
+  # Only dispatch device jobs after an explicit repository configuration. This
+  # avoids an indefinite queued job when no matching runner has been installed.
+  # The final gate still fails when the device coverage is missing.
+  device-config:
+    name: Check device runner configuration
+    runs-on: ubuntu-latest
+    outputs:
+      android: ${{ steps.config.outputs.android }}
+      harmony: ${{ steps.config.outputs.harmony }}
+    steps:
+      - id: config
+        env:
+          ANDROID_ENABLED: ${{ vars.ANSERONUI_ANDROID_CI }}
+          HARMONY_ENABLED: ${{ vars.ANSERONUI_HARMONY_CI }}
+        run: |
+          echo "android=$ANDROID_ENABLED" >> "$GITHUB_OUTPUT"
+          echo "harmony=$HARMONY_ENABLED" >> "$GITHUB_OUTPUT"
+          if [ "$ANDROID_ENABLED" != true ] || [ "$HARMONY_ENABLED" != true ]; then
+            echo 'Full device coverage requires ANSERONUI_ANDROID_CI=true and ANSERONUI_HARMONY_CI=true plus matching runners.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  android:
+    name: Android device renderer
+    needs: device-config
+    if: needs.device-config.outputs.android == 'true' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, macOS, ARM64, anseronui-android]
+    timeout-minutes: 90
+    concurrency:
+      group: anseronui-android-device
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:ci -- android
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: test-android-device
+          path: |
+            .verification/tests/android/
+            examples/native/android/app/build/reports/androidTests/
+            examples/native/android/app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+  harmony:
+    name: HarmonyOS device renderer
+    needs: device-config
+    if: needs.device-config.outputs.harmony == 'true' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, macOS, ARM64, anseronui-harmony]
+    timeout-minutes: 90
+    concurrency:
+      group: anseronui-harmony-device
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:ci -- harmony
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: test-harmony-device
+          path: |
+            .verification/tests/harmony/
+            .verification/harmony/acceptance/
+            .verification/harmony/virtual-list/
+          if-no-files-found: warn
+
+  complete:
+    name: Full test gate
+    if: always()
+    needs: [unit, runtime, android-build, device-config, android, harmony]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          UNIT: ${{ needs.unit.result }}
+          RUNTIME: ${{ needs.runtime.result }}
+          ANDROID_BUILD: ${{ needs.android-build.result }}
+          ANDROID: ${{ needs.android.result }}
+          HARMONY: ${{ needs.harmony.result }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          failed=0
+          for result in "$UNIT" "$RUNTIME" "$ANDROID_BUILD"; do
+            if [ "$result" != success ]; then failed=1; fi
+          done
+          if [ "$EVENT" = pull_request ]; then
+            echo 'Device jobs run on push and manual dispatch. PR checks use hosted runners.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            for result in "$ANDROID" "$HARMONY"; do
+              if [ "$result" != success ]; then failed=1; fi
+            done
+          fi
+          printf 'Shared: %s; runtimes: %s; Android build: %s; Android device: %s; Harmony device: %s\n' "$UNIT" "$RUNTIME" "$ANDROID_BUILD" "$ANDROID" "$HARMONY" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failed" -ne 0 ]; then
+            echo 'Tests failed or device coverage is incomplete. See job logs and docs/contributing/testing.md.'
+            exit 1
+          fi

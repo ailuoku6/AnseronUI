@@ -126,30 +126,30 @@ Core 每次输出都带 sequence 和 `ackSequence`。宿主按顺序校验 bundl
 Core 生成批量命令：
 
 - `CreateNode`、`RemoveNode`；
-- `InsertChild`、`MoveChild`；
-- `SetProps`；
+- `InsertChild`、`MoveChild`、`DetachChild`；
+- `PatchProps { set, unset }`；
 - `SetFrame`；
 - `BindEvent`。
 
-宿主在主线程创建/更新原生节点，完成后发送 `CommitAck`。只有提交得到 ACK 后，节点 ref 和依赖提交完成的 effect 才被视为可用。提交失败会让 Core 清理相关 surface 并发出诊断。
+宿主收齐并预检完整事务，在主线程应用后发送 `CommitAck`。Business 再等待 Framework Core 的 `FinalizeRender` 确认，随后发布 Hook、ref、事件闭包和 effect。大事务使用有界分片，重复事务只确认一次。宿主丢失时通过 reset 重建物理树，保留逻辑状态并重新建立 effect/ref 资源。详见[页面生命周期](../guides/navigation/page-lifecycle.md)。
 
 ## Core 内部原理
 
 ### 描述树和 surface
 
-每个页面被挂载为一个独立 surface。Core 保存页面组件、Hook frame、当前描述树、节点 ID、ref、未完成服务请求和待提交 revision。页面切换会销毁旧 surface，再创建新页面；旧 surface 的异步回调和事件会被 owner/lifecycle 检查丢弃。
+每个页面被挂载为一个独立 surface。Business 保存组件、Hook frame、持久输出图、节点 ID、ref、服务请求和待提交 revision。导航按[保活与回收规则](../guides/navigation/page-lifecycle.md)管理 surface；旧实例的异步回调和事件会被 owner/lifecycle 检查丢弃。
 
 ### 状态和 Hook
 
-函数组件在 Core 中执行，Hook 按组件位置保存 frame。状态更新进入 Core 的更新队列；Core 重新执行受影响的组件，生成新描述树并协调节点。effect 在提交确认后执行，清理函数在依赖变化、节点卸载或 surface 销毁时执行。
+函数组件在 Business 中执行，Hook 按逻辑位置、key 和组件类型保存 frame。状态更新直接定位所属组件；干净祖先和兄弟的内部输出保持复用。编译器为可证明安全的宿主输出生成静态模板和动态槽，其他输出使用普通协调路径。业务继续使用现有 TSX 和 Hooks。effect 在提交确认后执行，清理函数在依赖变化、卸载、销毁或物理树恢复时执行。
 
 ### 布局和文本测量
 
-Framework Core 的 `LayoutKernel` 按 surface 持有 Flexily 布局树，用稳定 node ID 复用布局节点。每次渲染对齐当前描述树，只创建新增节点、释放删除节点、调整变化的父子关系；布局样式变化时更新有效值，删除的样式恢复 CSS preset 默认值。未变化节点保留 Flexily 的脏状态与布局缓存；容器尺寸变化仍会重新计算受影响布局。
+Framework Core 的 `LayoutKernel` 按 surface 持有节点图和 Flexily 布局树，用稳定 node ID 复用布局节点。正常事务只接收 Create、Patch、Children 和 Delete 增量。布局样式变化更新有效值；删除的样式恢复 CSS preset 默认值。绘制字段不触发布局，容器尺寸变化会重新计算受影响布局。
 
 Flexily 计算出逻辑单位下的 frame；文本、按钮、输入框和富文本的尺寸通过 `MeasureRequest` 交给平台真实文本引擎，结果通过 `MeasureResult` 返回并进入缓存。持久化测量回调读取当前轮数据；占位尺寸、文本/字体/约束变化和已使用测量结果变化会使相关节点变脏，避免复用旧测量。多轮测量复用同一棵布局树。
 
-内部 `ReleaseSurface` 消息释放对应 generation 的布局状态，迟到的旧 generation 释放不影响新 surface。实例关闭时显式释放剩余全部布局树。Business 与 Framework 之间仍传递完整 JSON 描述树、已提交树和测量缓存，本阶段的增量更新发生在布局树内部；宿主 Commit 差分和 ACK 语义沿用现有实现。
+内部 ABI 3 使用 BeginRender、ContinueRender、Prepared、FinalizeRender 和 AbortRender 隔离未提交状态。各测量轮的 frame 候选合并后与已提交几何比较，只输出最终变化。ReleaseSurface 释放对应 generation，迟到的旧 generation 释放不影响新 surface。跨库 JSON 使用有界分片，正常更新不传完整描述树和已提交树。详见[Core 与业务包](core-bundles.md)。
 
 Framework Core 只拥有布局计算语义；平台负责字体、字形、系统控件内边距和最终单位转换。这样可以避免 iOS、Android、Web 各自维护一套近似布局算法。
 

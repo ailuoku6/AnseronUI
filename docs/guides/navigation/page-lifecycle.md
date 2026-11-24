@@ -33,6 +33,12 @@ usePageEffect(() => {
 
 这里的计时器特指框架绑定。业务若显式使用浏览器自己的 `window.setTimeout`，由浏览器管理。订阅、轮询、定位或自定义原生视图的后台资源应在 `usePageEffect` 中清理。不要依赖隐藏页面继续发起导航；只有当前条目允许修改导航栈。
 
+## 物理树恢复
+
+Renderer 丢失或事务应用失败时，框架保留逻辑 Hook state、ref 容器和未消费的状态更新，清空并重建物理节点。旧 NodeHandle 立即失效，调用返回 `NODE_UNMOUNTED`。重建确认后，直接 ref 指向新节点，`useImperativeHandle` 重新创建。
+
+恢复期间，已挂载 effect 先执行 cleanup，重建成功后重新执行 setup，包括依赖数组为 `[]` 的 effect。服务订阅应成对释放，setup 应支持资源重新建立。网络请求等外部副作用没有 exactly-once 保证。普通页面隐藏与这种物理树恢复不同，隐藏规则仍按上表执行。
+
 ## 宿主可见性
 
 原生容器提供 `setVisibility(false/true)`，供原生导航覆盖、Tab 切换和嵌入场景调用。临时从父视图移除不等于销毁。拥有者最终必须调用 `destroy()`。

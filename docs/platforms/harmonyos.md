@@ -50,7 +50,7 @@ node scripts/anseronui.mjs run harmony --device 127.0.0.1:5557
 
 配置项 harmony.maxRetainedPages 为总存活页数（包含当前页），默认 Infinity，最小 1；harmony.showPageTabs 默认 true。超限或内存压力释放隐藏 Host/Core，路由名称和参数保留，返回时重建 Hook 状态。顶层页签切换重置路由栈。业务嵌入可使用 HarmonyController.setVisibility、setMaxRetainedPages、trimMemory、onPageEvicted、inspectRuntime 和 onRuntimeStats，见页面生命周期与性能文档。
 
-布局使用 Core/Flexily 的 frame；单位为 vp。主题切换覆盖普通节点、RichText span 和 Image.dmSrc。SetProps 是完整快照，移除属性会重置。默认样式与其他端公共基线一致：文本、按钮和输入框默认字号 16vp；Button 由共享 View/Text 组合，默认透明背景、横向 12vp/纵向 6vp 内边距、最小高度 32vp，标题色为 `#007aff`，协议不提供系统 Button 节点；TextInput 使用透明背景、0 内边距、关闭系统下划线、最小测量尺寸 120×32vp。按压按钮的整体透明度为原值的 60%，禁用时为 40%。Text/RichText 支持 `style.lineHeight`，测量与原生 NODE_TEXT_LINE_HEIGHT 使用同一数值；所有元素均支持由 Core 在提交确认后派发的 `onLayout`。TextInput 原生焦点保留跨提交，避免对未变化节点反复拆卸重挂。键盘类型与 returnKeyType 按 ArkUI 映射；autoCapitalize/autoCorrect 目前没有 Native Node API 映射，保留系统输入法行为，不能依赖它们在鸿蒙强制生效。
+布局使用 Core/Flexily 的 frame；单位为 vp。主题切换覆盖普通节点、RichText span 和 Image.dmSrc。宿主协议 2.0 使用 PatchProps 的 set/unset 更新字段；unset 恢复默认值，无关字段保持原生状态。默认样式与其他端公共基线一致：文本、按钮和输入框默认字号 16vp；Button 由共享 View/Text 组合，默认透明背景、横向 12vp/纵向 6vp 内边距、最小高度 32vp，标题色为 `#007aff`，协议不提供系统 Button 节点；TextInput 使用透明背景、0 内边距、关闭系统下划线、最小测量尺寸 120×32vp。按压按钮的整体透明度为原值的 60%，禁用时为 40%。Text/RichText 支持 `style.lineHeight`，测量与原生 NODE_TEXT_LINE_HEIGHT 使用同一数值；所有元素均支持由 Core 在提交确认后派发的 `onLayout`。TextInput 原生焦点保留跨提交，避免对未变化节点反复拆卸重挂。键盘类型与 returnKeyType 按 ArkUI 映射；autoCapitalize/autoCorrect 目前没有 Native Node API 映射，保留系统输入法行为，不能依赖它们在鸿蒙强制生效。
 
 ## 通知、后台与设备服务接入
 

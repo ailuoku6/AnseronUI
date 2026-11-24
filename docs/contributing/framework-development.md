@@ -106,6 +106,8 @@ npm run test:macos
 
 ## 检查与验证
 
+每次 push 的自动测试、平台套件和设备 runner 配置见[自动测试](testing.md)。本地统一入口为 `npm test`；完整平台入口为 `npm run test:ci -- <suite>`。
+
 文档和常规框架修改可以先执行：
 
 ```sh

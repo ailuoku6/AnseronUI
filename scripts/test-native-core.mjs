@@ -12,7 +12,7 @@ const modules = [];
 // business-module assertions below; leaving it pending also prevents a test
 // double from creating an unbounded, zero-delay polling loop.
 async function send(payload) {
-  child.stdin.write(payload ? JSON.stringify({ protocolMajor: 1, protocolMinor: 0, bundleBuildId: 'anseronui-demo', runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: 1, sequence: ++sequence, ackSequence: ack, payload }) + '\n' : '\n');
+  child.stdin.write(payload ? JSON.stringify({ protocolMajor: 2, protocolMinor: 0, bundleBuildId: 'anseronui-demo', runtimeEpoch: 1, surfaceId: 1, surfaceGeneration: 1, sequence: ++sequence, ackSequence: ack, payload }) + '\n' : '\n');
   const line = await lines.next();
   assert(!line.done, 'Native Core terminated before responding');
   const outputs = JSON.parse(line.value);
@@ -30,17 +30,18 @@ async function send(payload) {
           remove(c.nodeId);
         }
         if (c.type === 'SetProps') Object.assign(nodes.get(c.nodeId), c.props);
+        if (c.type === 'PatchProps') { Object.assign(nodes.get(c.nodeId), c.set); for (const key of c.unset) delete nodes.get(c.nodeId)[key]; }
         if (c.type === 'SetFrame') { assert(Object.values(c.frame).every(value => typeof value === 'number' && Number.isFinite(value)), 'Non-finite frame: '+JSON.stringify(c)); nodes.get(c.nodeId).frame = c.frame; }
         if (c.type === 'InsertChild' || c.type === 'MoveChild') nodes.get(c.nodeId).parent = c.parentId;
       }
     }
-    if (p.type === 'InvokeModule') modules.push(p);
+    if (p.type === 'InvokeModule' && p.purpose !== 'renderWatchdog') modules.push(p);
   }
   return outputs.map(e => e.payload);
 }
 async function settle(outputs) {
   const queue = [...outputs];
-  for(let rounds=0; rounds<1000; rounds++) {
+  for(let rounds=0; rounds<10000; rounds++) {
     const p=queue.shift();
     if (!p) {
       const more=await send();

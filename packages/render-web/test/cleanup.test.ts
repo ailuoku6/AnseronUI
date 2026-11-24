@@ -58,7 +58,7 @@ it('disposes renderer and Core even when request cancellation and service cleanu
     disposed: false, send: vi.fn(), flush: vi.fn(async () => {}), profileWaiter: null, backWaiter: null,
     requests: new Map([[1, () => { released.push('cancel'); throw new Error('cancel failed'); }]]),
     nativeServices: { dispose() { released.push('services'); throw new Error('service failed'); } },
-    renderer: { dispose() { released.push('renderer'); } }, runtime: { dispose() { released.push('core'); } },
+    environmentCleanups: [], renderer: { dispose() { released.push('renderer'); } }, runtime: { dispose() { released.push('core'); } },
   });
   await expect(host.destroy()).rejects.toThrow('cancel failed');
   expect(released).toEqual(['cancel', 'services', 'renderer', 'core']);
@@ -69,7 +69,7 @@ it('releases all native views, media, animations and DOM listeners after a plugi
   const renderer = Object.create(DOMRenderer.prototype) as any;
   const released: string[] = [];
   Object.assign(renderer, {
-    disposed: false, resumeVideos: new Set(), pointers: new Map(), revision: 1,
+    disposed: false, topology: {clear() {}}, resumeVideos: new Set(), pointers: new Map(), revision: 1,
     root: { replaceChildren() { released.push('root'); }, removeEventListener() { released.push('listener'); } },
     appearance: null, pointerListeners: new Map([['pointerdown', () => {}]]),
     records: new Map([1, 2].map(id => [id, { kind: 'Video', animation: { cancel() { released.push('animation' + id); } },

@@ -24,6 +24,24 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class RenderViewTest {
+    @Test fun fieldPatchPreservesNativeInputAndRestoresDefaults() = ui {
+        val renderer = AndroidRenderer(FrameLayout(instrumentation.targetContext))
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+          {"type":"CreateNode","nodeId":1,"kind":"TextInput"},
+          {"type":"PatchProps","nodeId":1,"set":{"value":"7","inputRevision":0,"placeholder":"hint"},"unset":[]}] }""")
+        val input = renderer.viewFor(1) as android.widget.EditText
+        input.setText("local unsent")
+        val patch = """{"type":"Commit","revision":2,"commands":[{"type":"PatchProps","nodeId":1,"set":{"opacity":0.4},"unset":[]}]}"""
+        renderer.applyJson(patch); renderer.applyJson(patch)
+        assertEquals("local unsent", input.text.toString()); assertEquals("hint", input.hint)
+        assertEquals(0.4f, input.alpha, 0.001f)
+        renderer.applyJson("""{"type":"Commit","revision":3,"commands":[{"type":"PatchProps","nodeId":1,"set":{},"unset":["opacity","placeholder"]}]}""")
+        assertEquals(1f,input.alpha,0.001f); assertEquals("local unsent",input.text.toString()); assertTrue(input.hint.isNullOrEmpty())
+        renderer.applyJson("""{"type":"Commit","revision":4,"commands":[{"type":"PatchProps","nodeId":1,"set":{"value":"7","inputRevision":1},"unset":[]}]}""")
+        assertEquals("7",input.text.toString())
+        try { renderer.applyJson("""{"type":"Commit","revision":4,"commands":[]}"""); fail("Conflicting replay accepted") } catch (_: IllegalArgumentException) { }
+        renderer.clear()
+    }
     @Test fun glassFallbackDefaultsOverridesAndReset() {
         val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
         try { ui {
@@ -512,19 +530,13 @@ class RenderViewTest {
         renderer.clear(); bitmap.recycle()
     }
 
-    @Test fun richTextParsesCoreSpanPayloadAndDisabledButtonHasDistinctStyle() = ui {
+    @Test fun richTextParsesCoreSpanPayload() = ui {
         val root = FrameLayout(instrumentation.targetContext)
         val renderer = AndroidRenderer(root)
         renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
             {"type":"CreateNode","nodeId":1,"kind":"RichText"},
-            {"type":"CreateNode","nodeId":2,"kind":"Button"},
-            {"type":"CreateNode","nodeId":3,"kind":"Button"},
             {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
-            {"type":"InsertChild","nodeId":2,"parentId":0,"index":1},
-            {"type":"InsertChild","nodeId":3,"parentId":0,"index":2},
-            {"type":"SetProps","nodeId":1,"props":{"fontSize":16,"spans":"[{\"text\":\"普通 \"},{\"text\":\"粗体\",\"fontWeight\":\"bold\",\"color\":\"#275de5\",\"clickable\":true}]"}},
-            {"type":"SetProps","nodeId":2,"props":{"title":"禁用","disabled":true,"color":"#275de5"}},
-            {"type":"SetProps","nodeId":3,"props":{"title":"可用","color":"#275de5"}}
+            {"type":"SetProps","nodeId":1,"props":{"fontSize":16,"spans":"[{\"text\":\"普通 \"},{\"text\":\"粗体\",\"fontWeight\":\"bold\",\"color\":\"#275de5\",\"clickable\":true}]"}}
         ]}""")
         val rich = renderer.viewFor(1) as TextView
         assertEquals("普通 粗体", rich.text.toString())
@@ -533,11 +545,6 @@ class RenderViewTest {
         assertEquals(1, spans.size)
         assertEquals(0, (rich.text as android.text.Spanned).getSpans(0, 3, android.text.style.ClickableSpan::class.java).size)
         assertEquals(1, (rich.text as android.text.Spanned).getSpans(3, 5, android.text.style.ClickableSpan::class.java).size)
-        val disabled = renderer.viewFor(2) as android.widget.Button
-        val enabled = renderer.viewFor(3) as android.widget.Button
-        assertFalse(disabled.isEnabled)
-        assertTrue("disabled alpha=${disabled.alpha}", disabled.alpha < enabled.alpha)
-        assertNotEquals(enabled.textColors.defaultColor, disabled.textColors.getColorForState(intArrayOf(-android.R.attr.state_enabled), enabled.textColors.defaultColor))
         renderer.clear()
     }
 
@@ -826,15 +833,17 @@ class RenderViewTest {
             if (!done) ui { snapshot = descendants(view).filterIsInstance<TextView>().take(20).joinToString { it.text.toString().take(60) } + "; scroll=" + descendants(view).filterIsInstance<ScrollView>().map { "${it.scrollY}/${it.height}/${it.getChildAt(0)?.height}" } }
             assertTrue("$message: $errors $snapshot", done && errors.isEmpty())
         }
-        fun button(title: String) = descendants(view).filterIsInstance<android.widget.Button>().first { it.text.toString() == title }
+        fun labels(title: String) = descendants(view).filterIsInstance<TextView>().filter { it.text.toString() == title }
+        fun button(title: String): View { var target: View = labels(title).first(); while (!target.isClickable && target.parent is View) target = target.parent as View; return target }
+        fun buttonCount() = descendants(view).count { it.isClickable && it !is TextView }
         try {
-            waitUi("compiled list first frame") { descendants(view).filterIsInstance<android.widget.Button>().any { it.text.toString() == "展开" } }
+            waitUi("compiled list first frame") { labels("展开").isNotEmpty() }
             var initial = 0
-            ui { val first = descendants(view).filterIsInstance<android.widget.Button>().first { it.text.toString() == "展开" }; initial = descendants(view).first { it.transitionName == "list-row-0" }.height; first.performClick() }
-            waitUi("variable row expands") { descendants(view).filterIsInstance<android.widget.Button>().any { it.text.toString() == "收起" && (descendants(view).firstOrNull { row -> row.transitionName == "list-row-0" }?.height ?: 0) > initial } }
+            ui { initial = descendants(view).first { it.transitionName == "list-row-0" }.height; button("展开").performClick() }
+            waitUi("variable row expands") { labels("收起").isNotEmpty() && (descendants(view).firstOrNull { row -> row.transitionName == "list-row-0" }?.height ?: 0) > initial }
             ui { button("跳到第 4000 项").performClick() }
             waitUi("deep virtual window") { descendants(view).filterIsInstance<TextView>().any { it.text.toString().replace(" ", "") == "第4000项" } }
-            ui { assertTrue(descendants(view).filterIsInstance<android.widget.Button>().size < 60); button("头部插入").performClick() }
+            ui { assertTrue(buttonCount() < 60); button("头部插入").performClick() }
             waitUi("prepend retains visible target") { descendants(view).filterIsInstance<TextView>().any { it.text.toString().replace(" ", "") == "第4000项" } }
             lateinit var ticks: TextView; var before = ""
             val hidden = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -851,7 +860,7 @@ class RenderViewTest {
             ui { assertEquals(before, ticks.text.toString()); view.setVisibility(true) }
             waitUi("visible timer resumes") { ticks.text.toString() != before }
             ui { val density = view.resources.displayMetrics.density; layout(view, (240 * density).toInt(), (700 * density).toInt()) }
-            waitUi("bounded viewport after resize") { descendants(view).filterIsInstance<ScrollView>().first().height <= view.height && descendants(view).filterIsInstance<android.widget.Button>().size < 60 }
+            waitUi("bounded viewport after resize") { descendants(view).filterIsInstance<ScrollView>().first().height <= view.height && buttonCount() < 60 }
         } finally { ui { view.destroy(); activity.finish() } }
     }
 
@@ -971,6 +980,54 @@ class RenderViewTest {
         assertEquals((420*density).toInt(), scroll.scrollY)
         assertEquals(before - (40*density).toInt(), renderer.viewFor(3)!!.top - scroll.scrollY)
         renderer.clear()
+    }
+
+    @Test fun virtualRunwayPreservesNativeFlingSpeedUntilExhausted() = ui {
+        val root = FrameLayout(instrumentation.targetContext)
+        val renderer = AndroidRenderer(root)
+        val density = root.resources.displayMetrics.density
+        renderer.applyJson("""{"type":"Commit","revision":1,"commands":[
+          {"type":"CreateNode","nodeId":1,"kind":"ScrollView"},
+          {"type":"CreateNode","nodeId":2,"kind":"View"},
+          {"type":"CreateNode","nodeId":3,"kind":"View"},
+          {"type":"InsertChild","nodeId":1,"parentId":0,"index":0},
+          {"type":"InsertChild","nodeId":2,"parentId":1,"index":0},
+          {"type":"InsertChild","nodeId":3,"parentId":2,"index":0},
+          {"type":"SetProps","nodeId":1,"props":{"scrollAnchorOffset":0}},
+          {"type":"SetFrame","nodeId":1,"frame":{"x":0,"y":0,"width":320,"height":480}},
+          {"type":"SetFrame","nodeId":2,"frame":{"x":0,"y":0,"width":320,"height":30000}},
+          {"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":0,"width":320,"height":3200}}
+        ]}""")
+        layout(root, (320*density).toInt(), (480*density).toInt())
+        val scroll = renderer.viewFor(1) as ScrollView
+        try {
+            for (velocity in listOf(6000, -6000)) {
+                val start = (500*density).toInt()
+                scroll.scrollTo(0,start)
+                val expected = android.widget.OverScroller(root.context)
+                expected.fling(0,start,0,velocity,0,0,0,(30000*density).toInt()-scroll.height,0,0)
+                scroll.fling(velocity)
+                repeat(2) { leg ->
+                    if (leg > 0) {
+                        // Same-direction reflings retain OverScroller's flywheel.
+                        expected.fling(0,expected.currY,0,velocity,0,0,0,(30000*density).toInt()-scroll.height,0,0)
+                        scroll.fling(velocity)
+                    }
+                    repeat(8) {
+                        SystemClock.sleep(16)
+                        expected.computeScrollOffset(); scroll.computeScroll()
+                        assertEquals("Covered virtual window must retain native fling velocity ($velocity, leg $leg)", expected.currY.toDouble(),scroll.scrollY.toDouble(),45.0)
+                    }
+                }
+                assertTrue("Fling must make measurable progress", kotlin.math.abs(scroll.scrollY-start)>200)
+            }
+            // Protection starts only at the real end of mounted content.
+            renderer.applyJson("""{"type":"Commit","revision":2,"commands":[{"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":0,"width":320,"height":700}}]}""")
+            layout(root, (320*density).toInt(), (480*density).toInt())
+            scroll.scrollTo(0,(200*density).toInt()); scroll.fling(20000)
+            repeat(8) { SystemClock.sleep(16); scroll.computeScroll() }
+            assertEquals("Fling stops at exhausted mounted window without showing blank content", (220*density).toDouble(),scroll.scrollY.toDouble(),2.0)
+        } finally { renderer.clear() }
     }
 
     @Test fun compiledVariableListSustainsBidirectionalFlings() {

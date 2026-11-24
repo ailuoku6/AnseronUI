@@ -23,7 +23,7 @@ export async function verifyRouting(): Promise<void> {
   });
   const wait = async (condition: () => boolean) => { for (let i = 0; i < 100; i++) { if (failure) throw failure; await stack.host?.flush(); if (condition()) return; await new Promise(resolve => setTimeout(resolve, 5)); } throw new Error('Routing did not settle: ' + root.textContent); };
   const node = (id: string) => root.querySelector<HTMLElement>('[data-testid="' + id + '"]');
-  const click = (title: string) => { stage = title; const button = Array.from(root.querySelectorAll('button')).find(item => item.textContent === title); if (!button) throw new Error('Missing route button: ' + title); button.click(); };
+  const click = (title: string) => { stage = title; const button = Array.from(root.querySelectorAll<HTMLElement>('[role="button"]')).find(item => item.textContent === title); if (!button) throw new Error('Missing route button: ' + title); button.click(); };
   const assert = (value: unknown, message: string) => { if (!value) throw new Error(message); };
   try {
     router.load('counter', { original: '根参数', nested: { valid: true } });

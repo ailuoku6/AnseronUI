@@ -110,7 +110,7 @@ class AnseronUIRenderView @JvmOverloads constructor(
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        routes.forEach { it.host?.renderer?.appearanceChanged() }
+        routes.forEach { it.host?.environmentChanged() }
     }
 
     override fun onAttachedToWindow() {

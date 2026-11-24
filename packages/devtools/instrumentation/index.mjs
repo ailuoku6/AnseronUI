@@ -53,6 +53,8 @@ export function instrumentSource(path, source, options) {
     source = patch(source, 'surface.revision = revision;', 'surface.revision = revision;\n    this.devtoolsStart(surface);');
     source = patch(source, 'this.countMetric("commits");', 'this.devtoolsDidCommit(surface);\n    this.countMetric("commits");');
     source = patch(source, 'const props = element.props;', 'const props = this.devtoolsOverlay(surface, framePath, element.props);');
+    source = patch(source, 'if (base && base.component === element.component', 'if (!this.devtoolsForced.get(surface.id)?.has(framePath) && base && base.component === element.component');
+    source = patch(source, 'const owner = this.activeRegion;\n      for (const index of changed)', 'for (let index = 0; index < old.paths.length; index++) {\n        const host = surface.nodes.get(surface.regions.get(old.paths[index])?.hostId ?? 0);\n        if (host && this.devtoolsOverrides.get(surface.id)?.has(host.path)) changed.add(index);\n      }\n      const owner = this.activeRegion;\n      for (const index of changed)');
     source = patch(source, '() => element.component(element.props)', '() => element.component(props)');
     source = patch(source, 'const props = element.props as Record<string, unknown>;', 'const props = this.devtoolsOverlay(surface, hostPath, element.props);');
     source = patch(source, 'if (element.tag === "RichText") {', 'if (element.tag === "Text" && typeof props.text === "string") outputProps.text = props.text;\n    if (element.tag === "RichText") {');

@@ -223,7 +223,7 @@ export interface HostElement { kind: "host"; tag: HostTag; key: Key | null; prop
 export interface ComponentElement { kind: "component"; component: Component<any>; key: Key | null; props: object }
 export interface FragmentElement { kind: "fragment"; key: Key | null; children: NormalizedChild[] }
 export interface ProviderElement { kind: "provider"; contextId: number; value: unknown; key: Key | null; children: NormalizedChild[] }
-export type UIElement = HostElement | ComponentElement | FragmentElement | ProviderElement;
+export type UIElement = HostElement | ComponentElement | FragmentElement | ProviderElement | import("./template.js").TemplateElement;
 
 function host(tag: HostTag, props: CommonProps): HostElement {
   return { kind: "host", tag, key: props.key ?? null, props, children: normalizeChildren(props.children) };

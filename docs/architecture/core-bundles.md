@@ -25,18 +25,24 @@ AnseronUI 现在使用 **Framework Core + Business Bundle** 两份独立编译�
 
 ## 版本化消息与生命周期
 
-内部 ABI 当前为 `CORE_ABI_VERSION = 2`，定义在 [contracts.ts](../../packages/core/src/contracts.ts)。`Render` 请求包含 surface/generation/revision/round、纯数据节点树、上次提交树、文本测量缓存和请求编号；`RenderResult` 回复包含 frame、测量查询和渲染命令。Framework Core 按 surface 保留布局树，根据节点 ID 增量同步，而业务侧仍发送完整描述树。
+内部 ABI 为 `CORE_ABI_VERSION = 3`，定义在 [contracts.ts](../../packages/core/src/contracts.ts)。业务侧按 Hook owner 定位需要求值的组件，保留干净组件的输出。编译器为可证明安全的宿主子树生成静态模板和动态槽；不能证明安全的代码保留普通组件求值。业务继续使用现有 TSX、Hooks、Context 和 ref。
+
+`BeginRender` 只发送节点创建、字段 patch、变化的子列表和删除。Framework Core 保留节点图和布局树，返回 `Prepared`、必要测量请求和变化的 frame。测量通过 `ContinueRender` 续传；同一事务跨轮收集 frame 候选，在最终几何稳定后生成命令。绘制属性变化不触发布局。
+
+宿主应用完整 Commit 并返回 `CommitAck` 后，业务请求 `FinalizeRender`。Core 确认 `Finalized` 后，业务才发布状态、事件闭包、effect 和 ref。`AbortRender` 丢弃未提交修改。请求重传使用同一事务标识，冲突请求被拒绝。完整树 `Render` 入口用于参考验证，不是普通更新路径。
 
 `ReleaseSurface` / `SurfaceReleased` 消息释放指定 surface/generation 的持久化布局状态；旧 generation 的释放不会删除较新布局树。Framework 额外导出 `dispose()`，由 Native 组合适配器和 Wasm adapter 在实例关闭时调用。ReferenceRuntime 为每个实例持有独立 LayoutKernel；单次探针函数 `render()` 保持计算后释放的行为。
 
-ABI 1 与 ABI 2 不能混用，升级后需要重新构建 Framework Core 和 Business Bundle。外部宿主协议仍为 major 1 / minor 0，C transport 接口保持不变。
+外部宿主协议为 major 2 / minor 0。`PatchProps` 使用显式 `set` / `unset`，受控输入的 `value` / `inputRevision` 成对更新。大事务通过 `CommitBegin` / `CommitChunk` / `CommitEnd` 缓冲完整命令，再进行拓扑检查和视图提交。内部消息也使用有界分片。Framework Core、Business Bundle 和宿主必须使用匹配的 ABI 与协议。
+
+提交失败后，`ResetSurface` / `ResetAck` 建立恢复屏障，拒绝旧事务。恢复保留组件状态和 ref 容器，重建物理节点、effect 和 ref 资源。旧节点 handle 失效；业务 effect 应允许资源重新建立。
 
 - 两份产物启动时核对 ABI 版本；不兼容时拒绝启动。
 - 请求和结果按宿主循环串行交换，进入另一库前前一调用已经返回，不通过同步 Hook 回调重入库。
 - 跨库字节只在其所有者规定的有效期内读取，接收方复制/解析；两个运行时不共享引用计数和分配器。
 - 原生 profile 使用 `localize_runtime` 隔离符号，`instance_per_thread` 隔离 owner thread 的状态。
 - Web 为两份 Wasm 分别创建 instance 和 memory。`WasmRuntime` 负责两个运行时的初始化、消息搬运和销毁。
-- effect、ref 和业务状态仍在 Renderer 的 CommitAck 后提交；旧 generation 的回复不会写入新页面。
+- effect、ref 和业务状态在 Renderer ACK 与 Core Finalize 确认后发布；旧 generation 的回复不会写入新页面。
 
 业务包可包含多个页面。路由切换只是创建/销毁运行时状态，并不会编译，也不意味着每页有一份 Framework Core。
 

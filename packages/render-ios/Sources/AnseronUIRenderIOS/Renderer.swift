@@ -2,14 +2,14 @@ import Foundation
 import UIKit
 import AVFoundation
 
-public struct RenderFrame: Decodable {
+public struct RenderFrame: Codable {
     public let x: Double
     public let y: Double
     public let width: Double
     public let height: Double
 }
 
-public struct RenderProps: Decodable {
+public struct RenderProps: Codable {
     public let text: String?
     public var spans: String?
     public let inputRevision: UInt32?
@@ -117,7 +117,20 @@ public struct RenderProps: Decodable {
     }
 }
 
-public struct RenderCommand: Decodable {
+extension RenderProps {
+    func patched(_ set: RenderProps, _ unset: [String]) throws -> RenderProps {
+        guard (set.value != nil) == (set.inputRevision != nil), unset.contains("value") == unset.contains("inputRevision"), Set(unset).count == unset.count else { throw RenderError.invalidCommand }
+        let encoder = JSONEncoder()
+        var values = try JSONSerialization.jsonObject(with: encoder.encode(self)) as! [String: Any]
+        let additions = try JSONSerialization.jsonObject(with: encoder.encode(set)) as! [String: Any]
+        for key in unset { guard additions[key] == nil else { throw RenderError.invalidCommand }; values.removeValue(forKey: key) }
+        for (key, value) in additions { values[key] = value }
+        return try JSONDecoder().decode(RenderProps.self, from: JSONSerialization.data(withJSONObject: values))
+    }
+    static func empty() throws -> RenderProps { try JSONDecoder().decode(RenderProps.self, from: Data("{}".utf8)) }
+}
+
+public struct RenderCommand: Codable {
     public let type: String
     public let nodeId: UInt32
     public let kind: String?
@@ -125,6 +138,12 @@ public struct RenderCommand: Decodable {
     public let parentId: UInt32?
     public let index: Int?
     public let props: RenderProps?
+    public let set: RenderProps?
+    public let unset: [String]?
+    var changedFields: Set<String> {
+        let fields = set.flatMap { try? JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) as? [String: Any] } ?? [:]
+        return Set(fields.keys).union(unset ?? [])
+    }
     public let frame: RenderFrame?
     public let event: String?
     public let enabled: Bool?
@@ -390,17 +409,33 @@ private final class TouchSession {
         try apply(commit)
     }
 
+    private let topology = RenderTopology()
+    private var lastCommands: Data?
     public func apply(_ commit: RenderCommit) throws {
-        guard commit.type == "Commit", commit.revision > revision, commit.commands.count <= 4096 else { throw RenderError.invalidCommit }
-        try validate(commit.commands)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let signature = try encoder.encode(commit.commands)
+        if commit.revision == revision { guard signature == lastCommands else { throw RenderError.invalidCommit }; return }
+        guard commit.type == "Commit", commit.revision > revision, commit.commands.count <= 65536 else { throw RenderError.invalidCommit }
+        let publishTopology = try topology.prepare(commit.commands)
+        for c in commit.commands where c.type == "CreateNode" && c.kind == "Native" { guard let name = c.nativeName, extensions.components[name] != nil else { throw RenderError.invalidCommand } }
         do {
+            let geometry = commit.commands.filter { ["CreateNode", "RemoveNode", "InsertChild", "MoveChild", "DetachChild", "SetFrame"].contains($0.type) || $0.changedFields.contains("scrollAnchorOffset") }
+            var affectedScroll = Set<UInt32>()
+            for c in geometry { affectedScroll.formUnion(topology.ancestors(c.nodeId)); if let parent = c.parentId { affectedScroll.formUnion(topology.ancestors(parent)) } }
             for command in commit.commands { try applyOne(command) }
-            for record in nodes.values { record.animation.setActive(pageActive); record.animation.commit() }
-            revision = commit.revision
-            updateScrollExtents()
+            let touched = Set(commit.commands.map { $0.nodeId })
+            for id in touched { if let record = nodes[id] { record.animation.setActive(pageActive); record.animation.commit() } }
+            publishTopology(); lastCommands = signature; revision = commit.revision
+            let geometryChanged = commit.commands.contains { ["CreateNode", "RemoveNode", "InsertChild", "MoveChild", "DetachChild", "SetFrame"].contains($0.type) || $0.changedFields.contains("scrollAnchorOffset") }
+            if geometryChanged {
+                for c in geometry { affectedScroll.formUnion(topology.ancestors(c.nodeId)); if let parent = c.parentId { affectedScroll.formUnion(topology.ancestors(parent)) } }
+                updateScrollExtents(affectedScroll)
+            }
+            if geometryChanged || commit.commands.contains(where: { $0.type == "SetProps" || $0.changedFields.contains("backgroundColor") || $0.changedFields.contains("dmBackgroundColor") }) {
             let page = root.subviews.first
-            let color = nodes.values.first { $0.view === page }?.pageBackgroundColor ?? .clear
+            let color = topology.rootIds.first.flatMap { nodes[$0] }?.pageBackgroundColor ?? .clear
             onPageBackgroundColor?(color)
+            }
         } catch {
             clear()
             throw error
@@ -408,6 +443,7 @@ private final class TouchSession {
     }
 
     public func clear() {
+        topology.clear(); lastCommands = nil
         touchSessions.removeAll()
         let records = Array(nodes.values); nodes.removeAll()
         for record in records { releaseMedia(record) }
@@ -501,29 +537,6 @@ private final class TouchSession {
         // Layout quantizes frames to whole points. Rounding a fractional text
         // extent down can make UILabel truncate an otherwise unconstrained line.
         return (min(maxWidth, ceil(size.width)), ceil(size.height), font.ascender)
-    }
-
-    private func validate(_ commands: [RenderCommand]) throws {
-        var known = Set(nodes.keys)
-        for command in commands {
-            guard command.nodeId != 0 else { throw RenderError.invalidCommand }
-            switch command.type {
-            case "CreateNode":
-                guard !known.contains(command.nodeId), ["View", "Text", "RichText", "TextInput", "ScrollView", "Image", "Video", "Native"].contains(command.kind ?? "") else { throw RenderError.invalidCommand }
-                known.insert(command.nodeId)
-            case "InsertChild", "MoveChild":
-                guard known.contains(command.nodeId), let parent = command.parentId, parent == 0 || known.contains(parent), parent != command.nodeId, let index = command.index, index >= 0 else { throw RenderError.invalidCommand }
-            case "RemoveNode":
-                guard known.remove(command.nodeId) != nil else { throw RenderError.invalidCommand }
-            case "SetProps":
-                guard known.contains(command.nodeId), command.props != nil else { throw RenderError.invalidCommand }
-            case "SetFrame":
-                guard known.contains(command.nodeId), let frame = command.frame, frame.x.isFinite, frame.y.isFinite, frame.width.isFinite, frame.height.isFinite, frame.width >= 0, frame.height >= 0 else { throw RenderError.invalidCommand }
-            case "BindEvent":
-                guard known.contains(command.nodeId), ["tap", "changeText", "longPress", "backPress", "focus", "blur", "submit", "scroll", "scrollEnd", "layout", "touchDown", "touchMove", "touchUp", "touchCancel", "spanClick", "loadSuccess", "loadFailure", "playStateDidChanged", "playTimeDidChanged", "firstFrameDidDisplay", "nativeComponent"].contains(command.event ?? ""), command.enabled != nil else { throw RenderError.invalidCommand }
-            default: throw RenderError.invalidCommand
-            }
-        }
     }
 
     private func applyOne(_ command: RenderCommand) throws {
@@ -625,11 +638,33 @@ private final class TouchSession {
             if let native = nodes[parent]?.native, native.contentView == nil { throw RenderError.invalidCommand }
             let target = parent == 0 ? root : nodes[parent]?.content
             guard let target else { throw RenderError.invalidCommand }
-            let targetIndex = min(index, target.subviews.count)
+            let targetIndex = min(index, max(0, target.subviews.count - (record.view.superview === target ? 1 : 0)))
             if record.view.superview !== target || target.subviews.firstIndex(of: record.view) != targetIndex {
                 record.view.removeFromSuperview()
                 target.insertSubview(record.view, at: targetIndex)
             }
+        case "DetachChild": record.view.removeFromSuperview()
+        case "PatchProps":
+            guard let set = command.set, let unset = command.unset else { throw RenderError.invalidCommand }
+            let base = try record.declaredProps ?? RenderProps.empty()
+            let props = try base.patched(set, unset)
+            if let native = record.native, set.nativeProps != nil || unset.contains("nativeProps") {
+                guard let values = try decodeNativeJSON(props.nativeProps ?? "{}") as? [String: Any] else { throw NativeExtensionError.invalidArguments }
+                try native.setProps(values)
+            }
+            let changed = command.changedFields
+            if changed.isSubset(of: Set(["opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius"])) {
+                record.declaredProps = props
+                var values: [String: Double] = [:]
+                if changed.contains("opacity") { values["opacity"] = props.opacity ?? 1 }
+                if changed.contains("translateX") { values["translateX"] = props.translateX ?? 0 }
+                if changed.contains("translateY") { values["translateY"] = props.translateY ?? 0 }
+                if changed.contains("scaleX") { values["scaleX"] = props.scaleX ?? 1 }
+                if changed.contains("scaleY") { values["scaleY"] = props.scaleY ?? 1 }
+                if changed.contains("rotate") { values["rotate"] = props.rotate ?? 0 }
+                if changed.contains("borderRadius") { values["borderRadius"] = props.borderRadius ?? 0 }
+                record.animation.stage(values)
+            } else { try setProps(record, props, changed: changed) }
         case "SetProps":
             guard let props = command.props else { throw RenderError.invalidCommand }
             if let native = record.native {
@@ -653,7 +688,8 @@ private final class TouchSession {
         }
     }
 
-    private func setProps(_ record: NodeRecord, _ raw: RenderProps) throws {
+    private func setProps(_ record: NodeRecord, _ raw: RenderProps, changed: Set<String>? = nil) throws {
+        func affects(_ keys: String...) -> Bool { changed == nil || keys.contains { changed!.contains($0) } }
         let previous = record.declaredProps
         record.declaredProps = raw
         let dark = root.traitCollection.userInterfaceStyle == .dark
@@ -674,7 +710,7 @@ private final class TouchSession {
             || previous?.glassEffectSpacing != props.glassEffectSpacing
             || previous?.disabled != props.disabled
             || previous?.backgroundBlurRadius != raw.backgroundBlurRadius
-        if glassChanged, let effectView = view as? UIVisualEffectView, #available(iOS 26.0, *) {
+        if affects("glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing", "disabled", "backgroundBlurRadius"), glassChanged, let effectView = view as? UIVisualEffectView, #available(iOS 26.0, *) {
             if props.glassEffectContainer == true {
                 let effect = UIGlassContainerEffect()
                 effect.spacing = props.glassEffectSpacing ?? 0
@@ -689,39 +725,43 @@ private final class TouchSession {
                 effectView.effect = nil
             }
         }
-        if let effectView = view as? TSPrimitiveView {
+        if affects("glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing", "disabled", "backgroundBlurRadius"), let effectView = view as? TSPrimitiveView {
             let usesFallback = !nativeGlass || (props.glassEffect != true && props.glassEffectContainer != true)
             if usesFallback { effectView.effect = nil }
             effectView.setBackgroundBlur(radius:usesFallback ? (props.backgroundBlurRadius ?? 0) : 0)
         }
         record.pageBackgroundColor = backgroundColor
+        if affects("animation") {
         if let json = props.animation {
             guard let config = try decodeNativeJSON(json) as? [String: Any] else { throw NativeExtensionError.invalidArguments }
             record.animation.options = try TSAnimationOptions(config)
         } else { record.animation.options = nil }
+        }
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         backgroundColor.getRed(&r, green:&g, blue:&b, alpha:&a)
+        if affects("opacity", "translateX", "translateY", "scaleX", "scaleY", "rotate", "borderRadius", "backgroundColor", "dmBackgroundColor", "glassEffect", "glassEffectStyle", "glassEffectContainer") {
         record.animation.stage(["opacity":props.opacity ?? 1, "translateX":props.translateX ?? 0, "translateY":props.translateY ?? 0,
             "scaleX":props.scaleX ?? 1, "scaleY":props.scaleY ?? 1, "rotate":props.rotate ?? 0, "borderRadius":props.borderRadius ?? 0,
             "r":Double(r)*255,"g":Double(g)*255,"b":Double(b)*255,"a":Double(a)])
-        view.layer.borderWidth = CGFloat(props.borderWidth ?? 0)
-        view.layer.borderColor = parseColor(props.borderColor)?.cgColor
-        view.clipsToBounds = view is UIScrollView || props.overflow == "hidden"
-        view.layer.shadowColor = (parseColor(props.shadowColor) ?? .black).cgColor
-        view.layer.shadowOpacity = Float(props.shadowOpacity ?? 0)
-        view.layer.shadowRadius = CGFloat(props.shadowRadius ?? 0)
-        view.layer.shadowOffset = CGSize(width: props.shadowOffsetX ?? 0, height: props.shadowOffsetY ?? 0)
-        view.isHidden = props.visibility == "hidden"
-        view.accessibilityIdentifier = props.testID
-        record.touchAction = props.touchAction ?? "auto"
-        updateAccessibility(record)
+        }
+        if affects("borderWidth") { view.layer.borderWidth = CGFloat(props.borderWidth ?? 0) }
+        if affects("borderColor", "dmBorderColor") { view.layer.borderColor = parseColor(props.borderColor)?.cgColor }
+        if affects("overflow") { view.clipsToBounds = view is UIScrollView || props.overflow == "hidden" }
+        if affects("shadowColor", "dmShadowColor") { view.layer.shadowColor = (parseColor(props.shadowColor) ?? .black).cgColor }
+        if affects("shadowOpacity") { view.layer.shadowOpacity = Float(props.shadowOpacity ?? 0) }
+        if affects("shadowRadius") { view.layer.shadowRadius = CGFloat(props.shadowRadius ?? 0) }
+        if affects("shadowOffsetX", "shadowOffsetY") { view.layer.shadowOffset = CGSize(width: props.shadowOffsetX ?? 0, height: props.shadowOffsetY ?? 0) }
+        if affects("visibility") { view.isHidden = props.visibility == "hidden" }
+        if affects("testID") { view.accessibilityIdentifier = props.testID }
+        if affects("touchAction") { record.touchAction = props.touchAction ?? "auto" }
+        if affects("accessible", "accessibilityHidden", "accessibilityRole", "accessibilityLabel", "accessibilityHint", "accessibilityValue", "accessibilityChecked", "accessibilitySelected", "accessibilityClickable", "accessibilityLongClickable", "disabled") { updateAccessibility(record) }
         if record.kind == "View" { view.isUserInteractionEnabled = props.disabled != true }
-        if let scroll = view as? UIScrollView {
+        if affects("scrollEnabled", "showsVerticalScrollIndicator"), let scroll = view as? UIScrollView {
             scroll.isScrollEnabled = props.scrollEnabled ?? true
             scroll.showsVerticalScrollIndicator = props.showsVerticalScrollIndicator ?? true
         }
-        updateImage(record, props: props)
-        if let video = view as? TSVideoView {
+        if affects("src", "dmSrc", "placeholderSrc", "resizeMode", "controls", "autoplay", "loop", "muted", "rate", "playControl") { updateImage(record, props: props) }
+        if affects("src", "dmSrc", "placeholderSrc", "resizeMode", "controls", "autoplay", "loop", "muted", "rate", "playControl"), let video = view as? TSVideoView {
             record.videoLoop = props.loop ?? false
             record.videoRate = Float(props.rate ?? 1)
             video.playerLayer.videoGravity = resizeGravity(props.resizeMode)
@@ -784,7 +824,7 @@ private final class TouchSession {
             else if props.playControl == "stop" { record.suspendedRate = 0; record.player?.pause(); record.player?.seek(to: .zero); emitMedia("playStateDidChanged", id: nodeId(for: record), source: source, state: "paused") }
         }
         let fontSize = CGFloat(props.fontSize ?? 16)
-        if let label = view as? UILabel {
+        if affects("text", "spans", "fontSize", "fontWeight", "fontStyle", "color", "dmColor", "lineHeight", "textAlign", "textDecorationLine", "numberOfLines", "ellipsizeMode"), let label = view as? UILabel {
             configureLabel(label, text: props.text ?? "", fontSize: fontSize, props: props)
             record.spanRanges = []
             if record.kind == "RichText", let data = props.spans?.data(using: .utf8), let spans = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
@@ -795,29 +835,28 @@ private final class TouchSession {
                     offset += length
                 }
             }
-        } else if let field = view as? UITextField {
+        } else if affects("value", "inputRevision", "placeholder", "placeholderTextColor", "dmPlaceholderTextColor", "fontSize", "fontWeight", "fontStyle", "color", "dmColor", "editable", "disabled", "secureTextEntry", "keyboardType", "returnKeyType", "autoCapitalize", "autoCorrect", "maxLength"), let field = view as? UITextField {
             record.applyingValue = true
-            if (props.inputRevision ?? 0) >= record.inputRevision && field.markedTextRange == nil {
+            if affects("value", "inputRevision"), (props.inputRevision ?? 0) >= record.inputRevision && field.markedTextRange == nil {
                 let value = props.value ?? ""
                 if field.text != value { field.text = value }
                 record.lastInputValue = value
             }
-            field.placeholder = props.placeholder ?? ""
-            field.font = .systemFont(ofSize: fontSize)
-            field.textColor = parseColor(props.color) ?? .label
-            field.isEnabled = props.editable ?? true
-            field.isSecureTextEntry = props.secureTextEntry ?? false
-            field.attributedPlaceholder = props.placeholder.map { NSAttributedString(string: $0, attributes: [.foregroundColor: parseColor(props.placeholderTextColor) ?? .placeholderText]) }
-            field.keyboardType = props.keyboardType == "numeric" ? .numberPad : (props.keyboardType == "email-address" ? .emailAddress : (props.keyboardType == "phone-pad" ? .phonePad : (props.keyboardType == "url" ? .URL : .default)))
-            field.returnKeyType = props.returnKeyType == "done" ? .done : (props.returnKeyType == "go" ? .go : (props.returnKeyType == "search" ? .search : (props.returnKeyType == "send" ? .send : .default)))
-            field.autocapitalizationType = props.autoCapitalize == "characters" ? .allCharacters : (props.autoCapitalize == "words" ? .words : (props.autoCapitalize == "sentences" ? .sentences : .none))
-            field.autocorrectionType = props.autoCorrect == false ? .no : .default
-            record.maxLength = props.maxLength
-            field.delegate = props.maxLength == nil ? nil : self
+            if affects("placeholder") { field.placeholder = props.placeholder ?? "" }
+            if affects("fontSize", "fontWeight", "fontStyle") { field.font = .systemFont(ofSize: fontSize) }
+            if affects("color", "dmColor") { field.textColor = parseColor(props.color) ?? .label }
+            if affects("editable") { field.isEnabled = props.editable ?? true }
+            if affects("secureTextEntry") { field.isSecureTextEntry = props.secureTextEntry ?? false }
+            if affects("placeholder", "placeholderTextColor", "dmPlaceholderTextColor") { field.attributedPlaceholder = props.placeholder.map { NSAttributedString(string: $0, attributes: [.foregroundColor: parseColor(props.placeholderTextColor) ?? .placeholderText]) } }
+            if affects("keyboardType") { field.keyboardType = props.keyboardType == "numeric" ? .numberPad : (props.keyboardType == "email-address" ? .emailAddress : (props.keyboardType == "phone-pad" ? .phonePad : (props.keyboardType == "url" ? .URL : .default))) }
+            if affects("returnKeyType") { field.returnKeyType = props.returnKeyType == "done" ? .done : (props.returnKeyType == "go" ? .go : (props.returnKeyType == "search" ? .search : (props.returnKeyType == "send" ? .send : .default))) }
+            if affects("autoCapitalize") { field.autocapitalizationType = props.autoCapitalize == "characters" ? .allCharacters : (props.autoCapitalize == "words" ? .words : (props.autoCapitalize == "sentences" ? .sentences : .none)) }
+            if affects("autoCorrect") { field.autocorrectionType = props.autoCorrect == false ? .no : .default }
+            if affects("maxLength") { record.maxLength = props.maxLength }
+            if affects("maxLength") { field.delegate = props.maxLength == nil ? nil : self }
             record.applyingValue = false
         }
     }
-
     private func updateAccessibility(_ record: NodeRecord) {
         guard let p = record.declaredProps else { return }
         let view = record.view
@@ -1112,14 +1151,15 @@ private final class TouchSession {
         return current.replacingCharacters(in: range, with: string).count <= maximum
     }
 
-    private func updateScrollExtents() {
-        for record in nodes.values where record.kind == "ScrollView" {
+    private func updateScrollExtents(_ ids: Set<UInt32>) {
+        for id in ids {
+            guard let record = nodes[id], record.kind == "ScrollView" else { continue }
             guard let scroll = record.view as? UIScrollView else { continue }
             let anchor = record.declaredProps?.scrollAnchorOffset ?? 0
             let delta = anchor - record.anchorOffset
             record.anchorOffset = anchor
             let offset = scroll.contentOffset
-            let children = nodes.values.filter { $0.view.superview === record.content }
+            let children = topology.children(id).compactMap { nodes[$0] }
             let width = children.map { ($0.animation.declared["x"] ?? 0) + ($0.animation.declared["width"] ?? 0) }.max() ?? 0
             let height = children.map { ($0.animation.declared["y"] ?? 0) + ($0.animation.declared["height"] ?? 0) }.max() ?? 0
             record.content.frame = CGRect(x: 0, y: 0, width: max(scroll.bounds.width, width), height: max(scroll.bounds.height, height))
@@ -1159,4 +1199,111 @@ private func parseColor(_ value: String?) -> UIColor? {
     let rgb = hex.count == 8 ? packed >> 8 : packed
     let alpha = hex.count == 8 ? CGFloat(packed & 255) / 255 : 1
     return UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: alpha)
+}
+
+/// Owns at most one complete, bounded transaction. Chunk JSON is kept verbatim
+/// until End so UTF-8 accounting is independent of Foundation number formatting.
+final class RenderCommitBuffer {
+    private var header: [String: Any]?
+    private var chunks: [Int: String] = [:]
+    private var bytes = 0
+    private var count = 0
+    private var through: UInt32 = 0
+    private var last: [String: Any]?
+    func reset(_ rejected: UInt32) { header = nil; chunks.removeAll(); bytes = 0; count = 0; through = max(through, rejected); last = nil }
+    func accept(_ payload: [String: Any]) throws -> [String: Any]? {
+        switch payload["type"] as? String {
+        case "CommitBegin":
+            guard let id = payload["transactionId"] as? UInt32, id > through,
+                  let n = payload["chunkCount"] as? Int, n > 0, n <= 65536,
+                  let size = payload["totalBytes"] as? Int, size > 0, size <= 16777216,
+                  let commands = payload["commandCount"] as? Int, commands >= 0, commands <= 65536 else { throw RenderError.invalidCommit }
+            if let header { guard NSDictionary(dictionary: header).isEqual(to: payload) else { throw RenderError.invalidCommit }; return nil }
+            header = payload; chunks.removeAll(); bytes = 0; count = 0; return nil
+        case "CommitChunk":
+            guard let header, let id = payload["transactionId"] as? UInt32, id == header["transactionId"] as? UInt32,
+                  let index = payload["index"] as? Int, index >= 0, index < (header["chunkCount"] as! Int),
+                  let text = payload["data"] as? String, text.utf8.count <= 1048576,
+                  let commands = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [[String: Any]], commands.count <= 4096 else { throw RenderError.invalidCommit }
+            if let old = chunks[index] { guard old == text else { throw RenderError.invalidCommit }; return nil }
+            bytes += text.utf8.count - 2 + (commands.isEmpty ? 0 : 1); count += commands.count
+            guard bytes <= (header["totalBytes"] as! Int), count <= (header["commandCount"] as! Int) else { throw RenderError.invalidCommit }
+            chunks[index] = text; return nil
+        case "CommitEnd":
+            if header == nil, payload["transactionId"] as? UInt32 == last?["revision"] as? UInt32 { return last }
+            guard let header, payload["transactionId"] as? UInt32 == header["transactionId"] as? UInt32,
+                  chunks.count == header["chunkCount"] as? Int, count == header["commandCount"] as? Int,
+                  bytes + 1 == header["totalBytes"] as? Int else { throw RenderError.invalidCommit }
+            let text = "[" + (0..<chunks.count).map { String(chunks[$0]!.dropFirst().dropLast()) }.joined(separator: ",") + "]"
+            let commands = try JSONSerialization.jsonObject(with: Data(text.utf8))
+            let result: [String: Any] = ["type": "Commit", "revision": header["revision"]!, "commands": commands]
+            self.header = nil; chunks.removeAll(); last = result; return result
+        default: return payload
+        }
+    }
+}
+
+/// Incremental preflight: retain committed topology and stage only this batch's
+/// records/lists. No platform objects are touched until the whole batch passes.
+final class RenderTopology {
+    struct Entry { var kind: String; var parent: UInt32?; var children: [UInt32]; var props: RenderProps? }
+    private var records: [UInt32: Entry] = [:]
+    private var roots: [UInt32] = []
+    func clear() { records.removeAll(); roots.removeAll() }
+    var rootIds: [UInt32] { roots }
+    func children(_ id: UInt32) -> [UInt32] { records[id]?.children ?? [] }
+    func ancestors(_ id: UInt32) -> [UInt32] {
+        var result: [UInt32] = [], next = id
+        while next > 0, let record = records[next] { result.append(next); next = record.parent ?? 0 }
+        return result
+    }
+    func descendants(_ id: UInt32) -> [UInt32] { [id] + children(id).flatMap { descendants($0) } }
+
+    func prepare(_ commands: [RenderCommand]) throws -> () -> Void {
+        var edits: [UInt32: Entry] = [:], removed = Set<UInt32>(), nextRoots = roots
+        func get(_ id: UInt32) throws -> Entry {
+            guard !removed.contains(id), let entry = edits[id] ?? records[id] else { throw RenderError.invalidCommand }; return entry
+        }
+        func list(_ id: UInt32) throws -> [UInt32] { id == 0 ? nextRoots : try get(id).children }
+        func setList(_ id: UInt32, _ children: [UInt32]) throws {
+            if id == 0 { nextRoots = children } else { var entry = try get(id); entry.children = children; edits[id] = entry }
+        }
+        func detach(_ id: UInt32) throws {
+            var entry = try get(id)
+            if let parent = entry.parent { try setList(parent, list(parent).filter { $0 != id }) }
+            entry.parent = nil; edits[id] = entry
+        }
+        func remove(_ id: UInt32) throws { for child in try get(id).children { try remove(child) }; removed.insert(id); edits.removeValue(forKey:id) }
+        let kinds = Set(["View","Text","RichText","TextInput","ScrollView","Image","Video","Native"])
+        let events = Set(["tap","changeText","longPress","backPress","focus","blur","submit","scroll","scrollEnd","layout","touchDown","touchMove","touchUp","touchCancel","spanClick","loadSuccess","loadFailure","playStateDidChanged","playTimeDidChanged","firstFrameDidDisplay","nativeComponent"])
+        for c in commands {
+            guard c.nodeId > 0 else { throw RenderError.invalidCommand }
+            if c.type == "CreateNode" {
+                guard records[c.nodeId] == nil, edits[c.nodeId] == nil, !removed.contains(c.nodeId), let kind = c.kind, kinds.contains(kind) else { throw RenderError.invalidCommand }
+                edits[c.nodeId] = Entry(kind:kind, parent:nil, children:[], props:nil); continue
+            }
+            var entry = try get(c.nodeId)
+            switch c.type {
+            case "InsertChild", "MoveChild":
+                guard let parent = c.parentId, let index = c.index, index >= 0 else { throw RenderError.invalidCommand }
+                if parent > 0 { guard ["View","ScrollView","Native"].contains(try get(parent).kind) else { throw RenderError.invalidCommand } }
+                var ancestor = parent
+                while ancestor > 0 { guard ancestor != c.nodeId else { throw RenderError.invalidCommand }; ancestor = try get(ancestor).parent ?? 0 }
+                try detach(c.nodeId); var children = try list(parent)
+                guard index <= children.count else { throw RenderError.invalidCommand }
+                children.insert(c.nodeId,at:index); try setList(parent,children)
+                entry = try get(c.nodeId); entry.parent = parent; edits[c.nodeId] = entry
+            case "DetachChild": try detach(c.nodeId)
+            case "RemoveNode": try detach(c.nodeId); try remove(c.nodeId)
+            case "PatchProps":
+                guard let set = c.set, let unset = c.unset else { throw RenderError.invalidCommand }
+                let base = try entry.props ?? RenderProps.empty(); entry.props = try base.patched(set,unset); edits[c.nodeId] = entry
+            case "SetProps": guard let props = c.props else { throw RenderError.invalidCommand }; entry.props = props; edits[c.nodeId] = entry
+            case "SetFrame": guard let f = c.frame, [f.x,f.y,f.width,f.height].allSatisfy({$0.isFinite}), f.width >= 0, f.height >= 0 else { throw RenderError.invalidCommand }
+            case "BindEvent": guard let event = c.event, events.contains(event), c.enabled != nil else { throw RenderError.invalidCommand }
+            default: throw RenderError.invalidCommand
+            }
+        }
+        return { [self] in for id in removed { records.removeValue(forKey:id) }; for (id,entry) in edits { records[id] = entry }; roots = nextRoots }
+    }
 }

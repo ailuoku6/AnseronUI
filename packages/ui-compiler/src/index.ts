@@ -1,12 +1,16 @@
 import ts from "typescript";
+import { hostTemplate, localComponentReturn, type OptimizationReport } from "./templates.js";
+export type { OptimizationReport } from "./templates.js";
 import { originalSource, printMapped, type MappedSource } from "./source-map.js";
 
 export interface CompileDiagnostic { code: string; message: string; line: number; column: number }
-export interface CompileResult { source: string; diagnostics: CompileDiagnostic[]; mapped: MappedSource }
+export interface CompileResult { source: string; diagnostics: CompileDiagnostic[]; mapped: MappedSource; optimizations: OptimizationReport[] }
 
 /** P0 TSX lowering. It preserves TS type syntax for the subsequent static compiler. */
-export function lowerTSX(source: string, fileName = "page.tsx", options: { devtools?: boolean } = {}): CompileResult {
-  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+export function lowerTSX(source: string, fileName = "page.tsx", options: { devtools?: boolean; program?: ts.Program; optimize?: boolean } = {}): CompileResult {
+  const file = options.program?.getSourceFile(fileName) ?? options.program?.getSourceFile(ts.sys.resolvePath(fileName)) ?? ts.createSourceFile(fileName, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  const optimizations: OptimizationReport[] = [];
+  const checker = options.program?.getTypeChecker();
   const diagnostics: CompileDiagnostic[] = [];
   let usedJSX = false;
   const report = (node: ts.Node, code: string, message: string): void => {
@@ -36,11 +40,22 @@ export function lowerTSX(source: string, fileName = "page.tsx", options: { devto
 
   const transformer: ts.TransformerFactory<ts.SourceFile> = context => {
     const factory = context.factory;
+    const plans: ts.VariableStatement[] = [];
     const visit: ts.Visitor = node => {
       if (options.devtools && ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "definePage" && node.arguments.length === 2) {
         const component = node.arguments[1];
         const name = ts.isIdentifier(component) || ts.isPropertyAccessExpression(component) ? component.getText(file) : "PageComponent";
-        return factory.updateCallExpression(node, node.expression, node.typeArguments, [...node.arguments, factory.createStringLiteral(name)]);
+        return factory.updateCallExpression(node, node.expression, node.typeArguments, [
+          ...node.arguments.map(argument => ts.visitNode(argument, visit) as ts.Expression),
+          factory.createStringLiteral(name),
+        ]);
+      }
+      if (checker && options.program && options.optimize !== false && (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node))) {
+        if (localComponentReturn(file, node, checker, options.program)) {
+          const plan = hostTemplate(file, node, checker, factory, expression => ts.visitNode(expression, visit) as ts.Expression, plans.length);
+          if (plan) { plans.push(plan.declaration); optimizations.push(plan.report); usedJSX = true; return ts.setSourceMapRange(plan.expression, node); }
+          optimizations.push({ siteId: file.fileName + ':' + node.pos, mode: 'fallback', reason: 'dynamic-structure-or-unknown-value', nodes: 0, slots: 0 });
+        }
       }
       if (ts.isJsxElement(node)) return ts.setSourceMapRange(makeElement(node.openingElement.tagName, node.openingElement.attributes, node.children, node.openingElement.typeArguments), node);
       if (ts.isJsxSelfClosingElement(node)) return ts.setSourceMapRange(makeElement(node.tagName, node.attributes, [], node.typeArguments), node);
@@ -111,8 +126,9 @@ export function lowerTSX(source: string, fileName = "page.tsx", options: { devto
         factory.createImportClause(false, undefined, factory.createNamedImports([
           factory.createImportSpecifier(false, factory.createIdentifier("jsx"), factory.createIdentifier("__anseronuiJSX")),
           factory.createImportSpecifier(false, factory.createIdentifier("Fragment"), factory.createIdentifier("__anseronuiFragment")),
+          ...(plans.length ? [factory.createImportSpecifier(false, factory.createIdentifier("template"), factory.createIdentifier("__anseronuiTemplate")), factory.createImportSpecifier(true, factory.createIdentifier("HostTemplate"), factory.createIdentifier("__anseronuiHostTemplate"))] : []),
         ])), factory.createStringLiteral("@anseronui/ui/jsx-runtime"));
-      return factory.updateSourceFile(transformed, [importDeclaration, ...transformed.statements]);
+      return factory.updateSourceFile(transformed, [importDeclaration, ...plans, ...transformed.statements]);
     };
   };
   const result = ts.transform(file, [transformer]);
@@ -123,5 +139,12 @@ export function lowerTSX(source: string, fileName = "page.tsx", options: { devto
     const location = file.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
     diagnostics.push({ code: "TSX_PARSE", message: ts.flattenDiagnosticMessageText(diagnostic.messageText, " "), line: location.line + 1, column: location.character + 1 });
   }
-  return { source: output, diagnostics, mapped };
+  return { source: output, diagnostics, mapped, optimizations };
+}
+
+/** Build one symbol context for staging. Aliases resolve to the actual UI
+ * declarations; single-file callers without this context stay conservative. */
+export function createCompileProgram(files: string[], options: ts.CompilerOptions = {}): ts.Program {
+  return ts.createProgram(files, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    jsx: ts.JsxEmit.Preserve, skipLibCheck: true, ...options });
 }

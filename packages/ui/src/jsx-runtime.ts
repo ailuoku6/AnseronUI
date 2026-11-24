@@ -26,3 +26,6 @@ export function jsx(type: ElementType, props: object | null, key?: Key): UIEleme
 }
 export const jsxs = jsx;
 export const jsxDEV = jsx;
+
+export { template } from "./template.js";
+export type { HostTemplate } from "./template.js";
