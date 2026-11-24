@@ -82,10 +82,13 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          # Override v3's default "tools platform-tools": the legacy tools
+          # package is no longer available from the Android SDK repository.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018'
       - uses: mlugg/setup-zig@v2
         with:
           version: '0.15.2'
-      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
       - run: npm ci --ignore-scripts
       - run: npm run test:ci -- android-build
       - uses: actions/upload-artifact@v6
