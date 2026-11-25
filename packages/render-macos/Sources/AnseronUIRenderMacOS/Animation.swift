@@ -152,9 +152,11 @@ final class AnseronUINodeAnimation: NSObject {
         MainActor.assumeIsolated {
             for background in view.subviews.compactMap({ $0 as? DesktopBackgroundBlurView }) { background.updateCornerRadius(radius) }
         }
+#if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             for glass in view.subviews.compactMap({ $0 as? NSGlassEffectView }) { glass.cornerRadius = radius }
         }
+#endif
         view.layer?.shadowPath = CGPath(roundedRect:view.bounds,cornerWidth:radius,cornerHeight:radius,transform:nil)
         view.layer?.backgroundColor = NSColor(srgbRed:max(0,min(255,v["r"]!))/255, green:max(0,min(255,v["g"]!))/255, blue:max(0,min(255,v["b"]!))/255, alpha:max(0,min(1,v["a"]!))).cgColor
         view.layer?.masksToBounds = clipsContent

@@ -437,7 +437,11 @@ private final class DesktopScrollView: NSScrollView {
     private func setGlassEffect(_ r: NodeRecord, props: RenderProps) throws {
         guard r.kind == "View" else { return }
         let nativeGlass: Bool
+#if compiler(>=6.2)
         if #available(macOS 26.0, *) { nativeGlass = true } else { nativeGlass = false }
+#else
+        nativeGlass = false
+#endif
         let enabled = nativeGlass && (props.glassEffect == true || props.glassEffectContainer == true) || (props.backgroundBlurRadius ?? 0) > 0
         guard enabled else {
             guard let host = r.glassHost else { return }
@@ -463,6 +467,7 @@ private final class DesktopScrollView: NSScrollView {
             r.glassHost = host; r.glassContent = contentView; r.content = contentView
             return
         }
+#if compiler(>=6.2)
         guard #available(macOS 26.0, *) else { return }
 
         let host: NSView
@@ -499,6 +504,7 @@ private final class DesktopScrollView: NSScrollView {
         for child in children { content.addSubview(child) }
         oldHost?.removeFromSuperview()
         r.glassHost = host; r.glassContent = content; r.content = content
+#endif
     }
 
     private func updateAccessibility(_ r: NodeRecord) {

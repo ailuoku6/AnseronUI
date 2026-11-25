@@ -341,6 +341,7 @@ import AVKit
         try focusFixture.apply([["type":"PatchProps","nodeId":1,"set":["backgroundBlurRadius":20,"borderRadius":18],"unset":[]]])
         Integration.check(focusFixture.window.firstResponder === editor && editor.hasMarkedText(),"native backdrop updates preserve focused IME composition")
         print("PASS: macOS native backdrop materials, retained foreground and IME")
+#if compiler(>=6.2)
         guard #available(macOS 26.0, *) else { return }
         let f = Fixture(); defer { f.close() }
         try f.create(1,"View",["testID":"glass","glassEffect":true,"glassEffectStyle":"clear","glassEffectTintColor":"#5599cc","glassEffectInteractive":true,"borderRadius":28],NSRect(x:20,y:20,width:200,height:100))
@@ -362,6 +363,7 @@ import AVKit
         let parent = f.root.subviews.first!
         Integration.check(Integration.descendants(parent).contains(child) && !Integration.descendants(parent).contains { $0 is NSGlassEffectView || $0 is NSGlassEffectContainerView },"disabling glass restores child hierarchy")
         print("PASS: macOS Liquid Glass effect, grouping and fallback hierarchy")
+#endif
     }
     static func text() throws {
         let f = Fixture(); defer { f.close() }
