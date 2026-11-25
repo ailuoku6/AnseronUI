@@ -149,7 +149,7 @@ function Editor(props: { ref?: RefTarget<EditorHandle> }) {
 
 ## 验证入口
 
-`npm run test:framework` 覆盖协议、ref 提交时序、模块成功/失败、取消及组件公开句柄。`npm run test:core:native` 和 `npm run test:core:wasm` 包含扩展页的真实 AOT 协议验证。macOS 可执行 `node scripts/test-web-extensions.mjs`，用 WebKit 验证 Web 参考宿主和 DOM 扩展。iOS 的 `testNativeExtensions` 与 Android 的同名 instrumentation 测试验证真实平台控件、属性、回调及 ref。
+`npm run test:framework` 覆盖协议、ref 提交时序、模块成功/失败、取消及组件公开句柄。`npm run test:core:native` 和 `npm run test:core:wasm` 包含扩展页的真实 AOT 协议验证。Linux/macOS 安装 Playwright WebKit 后可执行 `node scripts/test-web-extensions.mjs`，用 WebKit 验证 Web 参考宿主和 DOM 扩展。iOS 的 `testNativeExtensions` 与 Android 的同名 instrumentation 测试验证真实平台控件、属性、回调及 ref。
 
 ## 通过 npm 分发与自动注册
 

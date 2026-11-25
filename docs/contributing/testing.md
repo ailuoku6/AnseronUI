@@ -1,6 +1,6 @@
 # 自动测试
 
-[Tests 工作流](../../.github/workflows/tests.yml) 在每次 push、pull request 和手动运行时触发。push 不设置路径或分支过滤。共享测试、AOT 和平台测试在独立 checkout 中执行。
+[Tests 工作流](../../.github/workflows/tests.yml) 在分支 push、pull request、非发布 tag push 和手动运行时触发，不设置路径或分支过滤。`v*` 发布 tag 由 [Publish 工作流](../../.github/workflows/publish.yml) 调用同一套测试，通过后才发布。每个发布 tag 只启动一轮测试。共享测试、AOT 和平台测试在独立 checkout 中执行。
 
 ## 本地入口
 
@@ -12,12 +12,14 @@
 | `npm run test:ci -- layout` | 布局上游差分、Native library、WASI | C/C++、Zig、首次运行需网络 |
 | `npm run test:ci -- native` | 当前 Native Core、五类示例协议、错误堆栈、细粒度更新预算 | C/C++ 工具链 |
 | `npm run test:ci -- wasm` | 当前 Wasm Core、五类示例协议、DevTools、细粒度更新预算 | Zig |
-| `npm run test:ci -- web` | Web 生产构建、全部九个 WebKit 套件，含真实双 Wasm | Apple Silicon macOS 15+、Xcode、Zig、图形会话 |
+| `npm run test:ci -- web` | Web 生产构建、全部 11 个 Playwright WebKit 套件，含真实双 Wasm | Linux / macOS、Zig、Playwright WebKit 及系统依赖 |
 | `npm run test:ci -- ios` | macOS 专属 CLI 路径、原生图标编译、当前 AOT 构建、UIKit transport 测试、XCUITest | Apple Silicon Mac、Xcode、已安装 iPhone simulator runtime |
 | `npm run test:ci -- macos` | 当前 AOT/AppKit 集成、Renderer 回归、DevTools 截图 | Apple Silicon macOS 15+、Xcode、图形会话 |
 | `npm run test:ci -- android-build` | 原生图标资源编译、当前 arm64 APK、instrumentation APK | JDK 17、SDK 35、NDK、Zig |
 | `npm run test:ci -- android` | 当前 AOT 构建、全部 instrumentation 用例 | 上述工具与已连接 arm64-v8a / x86_64 设备或模拟器；x86_64 需要 LLVM 22+ |
 | `npm run test:ci -- harmony` | smoke 和主示例的构建、安装、UI 验收 | Apple Silicon Mac、DevEco API 21 SDK、LLVM、已连接模拟器/已签名设备 |
+
+Web 测试首次运行前执行 `npx playwright install --with-deps webkit`，安装锁定版本的浏览器和 Linux 系统库。测试使用无头 WebKit 和本地 HTTP 资源服务，无需 Xcode 或桌面会话。
 
 套件自动准备编译器。Core 的输出目录共享，因此同一 checkout 内串行运行套件。`native` 和 `wasm` 最后构建专用性能 fixture；后续平台测试会重新构建主配置。
 
@@ -37,7 +39,7 @@ npm run test:harmony:virtual-list -- <hdc-target>
 
 ## GitHub runner
 
-托管 runner 自动执行共享测试、布局、Native/Wasm、WebKit、iOS、macOS、Android arm64 APK 构建和 x86_64 模拟器测试。Android 使用 `ubuntu-latest`、KVM 和 API 35 Google APIs 模拟器，每次 push、PR 和手动运行都会执行，无需仓库开关或自托管 runner。`macos-15` 使用 Apple Silicon。HarmonyOS 的设备执行需要自托管 runner：
+共享测试、布局、Native Core、Wasm 和 WebKit 使用 `ubuntu-latest`。仅 iOS/UIKit 和 macOS/AppKit 使用 `macos-15`（Apple Silicon），分别依赖 Xcode 模拟器和 AppKit。全部套件在每次 push、PR 和手动运行时触发。Android 使用 `ubuntu-latest`、KVM 和 API 35 Google APIs 模拟器，每次 push、PR 和手动运行都会执行，无需仓库开关或自托管 runner。HarmonyOS 的设备执行需要自托管 runner：
 
 | 平台 | Runner 标签 | 工具与设备 | 仓库 Actions 变量 |
 | --- | --- | --- | --- |
@@ -47,7 +49,7 @@ npm run test:harmony:virtual-list -- <hdc-target>
 
 HarmonyOS runner 进程需能读取工具环境。默认使用 `/Applications/DevEco-Studio.app/Contents`，自定义安装设置 `DEVECO_STUDIO_HOME`、`DEVECO_SDK_HOME`、`HARMONY_NATIVE_SDK`、`HARMONY_LLVM_CLANG`。设备序列号通过 runner 的 `HARMONY_DEVICE` 环境变量设置。
 
-HarmonyOS 设备任务在 push 和手动运行时执行，并串行使用设备。未配置 HarmonyOS runner 时，该任务跳过，push 的 **Full test gate 失败**并报告覆盖不完整。PR 的 gate 要求全部托管任务成功，包括 Android 模拟器测试；不包含 HarmonyOS 设备执行。
+HarmonyOS 设备任务在启用后于 push 和手动运行时执行，并串行使用设备。未启用或处于 PR 时，该任务可跳过，summary 会记录跳过状态。`Full test gate` 要求全部必跑任务成功；任一任务失败或取消均会失败，包括已启用的 HarmonyOS 测试。允许跳过不代表该平台已完成设备验证。
 
 在分支保护中将 `Full test gate` 设为 required check，才能阻止测试失败的合并。工作流本身不会修改分支保护。
 
@@ -81,4 +83,4 @@ Harmony 验收报告中的 `blocked` 会使全量设备套件失败，避免把�
 
 ## 失败报告
 
-Actions 上传 `test-*` artifacts。iOS 包含 `.xcresult`；Android 包含 HTML/XML instrumentation 结果；Harmony 包含布局 JSON、截图和验收结果。每个 suite 的步骤状态也写入 Actions summary。下载失败任务的 artifact，从首个 `failed` 步骤开始排查。
+Actions 上传 `test-*` artifacts。iOS 包含 `.xcresult`；Web 失败时包含截图、浏览器日志和 Playwright trace；Android 包含 KVM 诊断日志与 HTML/XML instrumentation 结果；Harmony 包含布局 JSON、截图和验收结果。Android 在构建前验证 KVM，设备缺失、权限错误、虚拟机创建失败和模拟器加速检查结果写入 `.verification/android-kvm.log`。每个 suite 的步骤状态也写入 Actions summary。下载失败任务的 artifact，从首个 `failed` 步骤开始排查。

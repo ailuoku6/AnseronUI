@@ -2,14 +2,18 @@ name: Tests
 
 on:
   push:
+    # Release tags run these same tests through Publish, once per release.
+    tags-ignore:
+      - 'v*'
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: tests-${{ github.event_name }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -39,12 +43,24 @@ jobs:
 
   runtime:
     name: ${{ matrix.suite }} runtime
-    runs-on: macos-15
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        suite: [layout, native, wasm, web, ios, macos]
+        include:
+          - suite: layout
+            os: ubuntu-latest
+          - suite: native
+            os: ubuntu-latest
+          - suite: wasm
+            os: ubuntu-latest
+          - suite: web
+            os: ubuntu-latest
+          - suite: ios
+            os: macos-15
+          - suite: macos
+            os: macos-15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -55,6 +71,9 @@ jobs:
         with:
           version: '0.15.2'
       - run: npm ci --ignore-scripts
+      - name: Install WebKit and system dependencies
+        if: matrix.suite == 'web'
+        run: npx --no-install playwright install --with-deps webkit
       - run: npm run test:ci -- ${{ matrix.suite }}
       - uses: actions/upload-artifact@v6
         if: always()
@@ -62,6 +81,10 @@ jobs:
           name: test-${{ matrix.suite }}
           path: |
             .verification/tests/${{ matrix.suite }}/
+            .verification/browser/*/result.json
+            .verification/browser/*/failure.json
+            .verification/browser/*/failure.png
+            .verification/browser/*/trace.zip
             .verification/layout/summary.json
             .verification/layout/*.stderr
             .verification/performance/*.json
@@ -115,7 +138,7 @@ jobs:
         run: |
           echo "harmony=$HARMONY_ENABLED" >> "$GITHUB_OUTPUT"
           if [ "$HARMONY_ENABLED" != true ]; then
-            echo 'Full device coverage requires ANSERONUI_HARMONY_CI=true plus a matching HarmonyOS runner.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'HarmonyOS device tests are optional and will be skipped. Enable ANSERONUI_HARMONY_CI with a matching runner to execute them.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
   android:
@@ -137,6 +160,11 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools emulator platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018'
+      - name: Verify KVM acceleration
+        shell: bash
+        run: |
+          mkdir -p .verification
+          bash .github/scripts/android-kvm.sh 2>&1 | tee .verification/android-kvm.log
       - uses: mlugg/setup-zig@v2
         with:
           version: '0.15.2'
@@ -153,12 +181,6 @@ jobs:
         run: |
           npm run prepare:compiler
           npm run build:android
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm && test -w /dev/kvm
       - name: Test on Android API 35 emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -167,7 +189,7 @@ jobs:
           arch: x86_64
           cores: 2
           ram-size: 2048M
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -accel on -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: npm run test:ci -- android
       - uses: actions/upload-artifact@v6
@@ -175,6 +197,7 @@ jobs:
         with:
           name: test-android-device
           path: |
+            .verification/android-kvm.log
             .verification/tests/android/
             examples/native/android/app/build/reports/androidTests/
             examples/native/android/app/build/outputs/androidTest-results/
@@ -213,27 +236,11 @@ jobs:
     needs: [unit, runtime, android-build, device-config, android, harmony]
     runs-on: ubuntu-latest
     steps:
-      - env:
-          UNIT: ${{ needs.unit.result }}
-          RUNTIME: ${{ needs.runtime.result }}
-          ANDROID_BUILD: ${{ needs.android-build.result }}
-          ANDROID: ${{ needs.android.result }}
-          HARMONY: ${{ needs.harmony.result }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          failed=0
-          for result in "$UNIT" "$RUNTIME" "$ANDROID_BUILD" "$ANDROID"; do
-            if [ "$result" != success ]; then failed=1; fi
-          done
-          if [ "$EVENT" = pull_request ]; then
-            echo 'Android emulator tests run on hosted runners. HarmonyOS device tests run on push and manual dispatch.' >> "$GITHUB_STEP_SUMMARY"
-          else
-            for result in "$HARMONY"; do
-              if [ "$result" != success ]; then failed=1; fi
-            done
-          fi
-          printf 'Shared: %s; runtimes: %s; Android build: %s; Android device: %s; Harmony device: %s\n' "$UNIT" "$RUNTIME" "$ANDROID_BUILD" "$ANDROID" "$HARMONY" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$failed" -ne 0 ]; then
-            echo 'Tests failed or device coverage is incomplete. See job logs and docs/contributing/testing.md.'
-            exit 1
-          fi
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Check all test job results
+        env:
+          TEST_JOB_RESULTS: ${{ toJSON(needs) }}
+        run: node .github/scripts/test-gate.mjs

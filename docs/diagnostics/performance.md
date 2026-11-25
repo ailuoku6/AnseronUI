@@ -114,7 +114,7 @@ npm run bench:render -- --baseline=/tmp/reference-before.json
 
 ## 真实 UI 回归
 
-在 macOS/Xcode 环境运行：
+Web 用例支持 Linux 和 macOS，首次执行前安装 Playwright WebKit（`npx playwright install --with-deps webkit`）。AppKit 用例需要 macOS/Xcode：
 
 ```sh
 npm run test:browser:virtual-list
@@ -122,7 +122,7 @@ npm run test:browser:virtual-list:wasm
 npm run test:macos
 ```
 
-WebKit 两种模式使用真实 DOM 文本测量和提交，验证展开、20 次真实滚动、深处定位、头插锚点、隐藏/恢复计时和 resize，生成 `webkit-reference.json` 与 `webkit-wasm.json`。命令行宿主每 50ms 发起一次无副作用的 JS 调用，防止桌面无活动应用时整个 WebKit 页面挂起。滚动样本等候两次 animation frame；无前台焦点的 WKWebView 可能抑制 RAF，100ms 后继续，并在 `paintWaitTimeouts` 记录降级次数。100ms 是请求的等待时间，系统后台限流仍可能使它延长至约 1 秒。因此这些采样是带调度等待的交互时延，不能作为纯计算时延或 GPU 呈现保证。
+WebKit 两种模式使用真实 DOM 文本测量和提交，验证展开、20 次真实滚动、深处定位、头插锚点、隐藏/恢复计时和 resize，生成 `webkit-reference.json` 与 `webkit-wasm.json`。测试使用 Playwright 无头 WebKit。滚动样本等候两次 animation frame；100ms 后仍未完成时继续，并在 `paintWaitTimeouts` 记录降级次数。因此这些采样是带调度等待的交互时延，不能作为纯计算时延或 GPU 呈现保证。
 
 AppKit 使用真实 AOT Core、NSView、文本与 AVPlayer，覆盖列表动态行高、定位/插入/resize、计时和媒体暂停恢复、保活与内存回收，生成 `appkit-native.json`。它记录首屏和跳转场景耗时及完整宿主指标，不将少量功能场景当作统计分位数。
 

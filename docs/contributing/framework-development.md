@@ -149,7 +149,9 @@ AnseronUI 自有代码采用 MIT。第三方许可见根目录 `THIRD_PARTY_NOTI
 
 [Publish 工作流](../../.github/workflows/publish.yml) 使用 GitHub 托管的 Ubuntu runner 和 Node.js 24。推送 `v*` 标签时自动触发，也可以在仓库 Actions → Publish → Run workflow 手动触发。标签触发时，标签去掉 `v` 后必须与根目录 `package.json` 的版本完全相同。
 
-工作流执行 `npm ci --ignore-scripts`，再通过 `npm publish --access public --provenance` 发布根目录的 `anseronui` 包。发布命令自动执行现有 `prepublishOnly` 检查和 `prepack` 打包；任一检查失败都会终止发布。它不构建 iOS/Android 应用，也不发布各 workspace 包。
+工作流先校验 tag 与包版本，再调用 [Tests 工作流](../../.github/workflows/tests.yml)，测试与发布使用同一 ref 的源码。共享测试、布局、Native/Wasm、Web、iOS、macOS、Android 构建与模拟器测试全部完成且成功后，才启动发布 job。HarmonyOS 可跳过；实际运行后失败或取消仍会阻止发布。必跑任务缺失或跳过也会阻止发布。`v*` tag 不会另启一轮独立 Tests，以免重复占用 runner。
+
+发布 job 执行 `npm ci --ignore-scripts`，再通过 `npm publish --access public --provenance` 发布根目录的 `anseronui` 包。发布命令还会执行 `prepublishOnly` 检查和 `prepack` 打包；任一检查失败都会终止发布。手动触发也必须通过同样的前置测试。只有发布 job 获取 npm Trusted Publishing 所需的 OIDC 权限。
 
 npm 上的包名是 `anseronui`。认证采用 [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)，无需配置 `NPM_TOKEN`。publisher 配置为：
 

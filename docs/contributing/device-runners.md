@@ -94,7 +94,7 @@ npm run test:ci -- harmony
 
 在 Actions → Tests → Run workflow 手动运行一次。检查 Android 和 HarmonyOS 设备 job、上传的 artifacts 与 `Full test gate`。随后每次 push 自动执行同一工作流。将 `Full test gate` 加入分支保护的 required checks。
 
-HarmonyOS 变量未启用时，该设备 job 跳过，push 的 gate 失败并说明设备覆盖不完整。变量启用但 runner 离线时，GitHub 会等待匹配 runner；将其恢复在线或关闭对应变量。关闭变量不会把全端测试算作通过。
+HarmonyOS 变量未启用时，该设备 job 可跳过，不阻止测试 gate 或发布，summary 保留跳过状态。已启用的设备测试失败或取消会阻止 gate 和发布。变量启用但 runner 离线时，GitHub 会等待匹配 runner；将其恢复在线或关闭对应变量。跳过不代表已完成 HarmonyOS 设备验证。
 
 ## 排查接入失败
 
