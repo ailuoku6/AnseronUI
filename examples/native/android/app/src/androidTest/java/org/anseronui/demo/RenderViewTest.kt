@@ -973,12 +973,14 @@ class RenderViewTest {
         val scroll = renderer.viewFor(1) as ScrollView
         scroll.scrollTo(0,(300*density).toInt())
         val before = renderer.viewFor(3)!!.top - scroll.scrollY
+        // Native motion advances after Core calculated the correction, before
+        // the UI thread receives the commit. Apply the delta to this position.
+        scroll.scrollTo(0,(340*density).toInt())
         renderer.applyJson("""{"type":"Commit","revision":2,"commands":[
           {"type":"SetProps","nodeId":1,"props":{"scrollAnchorOffset":80}},
           {"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":480,"width":320,"height":100}}
         ]}""")
-        // Native movement may continue between receipt of the commit and layout.
-        scroll.scrollTo(0,(340*density).toInt())
+        assertEquals("Anchor compensation must be applied before commit ACK", (420*density).toInt(), scroll.scrollY)
         layout(root, (320*density).toInt(), (480*density).toInt())
         assertEquals((420*density).toInt(), scroll.scrollY)
         assertEquals(before - (40*density).toInt(), renderer.viewFor(3)!!.top - scroll.scrollY)
@@ -986,6 +988,9 @@ class RenderViewTest {
     }
 
     @Test fun virtualRunwayPreservesNativeFlingSpeedUntilExhausted() = ui {
+        // Keep the native-velocity comparison inside a fully mounted document,
+        // including the extra distance contributed by a same-direction re-fling.
+        // Exhaustion is exercised separately below with the 700-unit row.
         val root = FrameLayout(instrumentation.targetContext)
         val renderer = AndroidRenderer(root)
         val density = root.resources.displayMetrics.density
@@ -999,7 +1004,7 @@ class RenderViewTest {
           {"type":"SetProps","nodeId":1,"props":{"scrollAnchorOffset":0}},
           {"type":"SetFrame","nodeId":1,"frame":{"x":0,"y":0,"width":320,"height":480}},
           {"type":"SetFrame","nodeId":2,"frame":{"x":0,"y":0,"width":320,"height":30000}},
-          {"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":0,"width":320,"height":3200}}
+          {"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":0,"width":320,"height":30000}}
         ]}""")
         layout(root, (320*density).toInt(), (480*density).toInt())
         val scroll = renderer.viewFor(1) as ScrollView
@@ -1024,8 +1029,27 @@ class RenderViewTest {
                 }
                 assertTrue("Fling must make measurable progress", kotlin.math.abs(scroll.scrollY-start)>200)
             }
+            // A newly attached row has a zero frame until the next layout. It
+            // must not turn the start of a deep virtual window into offset 0.
+            renderer.applyJson("""{"type":"Commit","revision":2,"commands":[
+              {"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":10000,"width":320,"height":3200}}
+            ]}""")
+            layout(root, (320*density).toInt(), (480*density).toInt())
+            scroll.scrollTo(0,(10000*density).toInt())
+            renderer.applyJson("""{"type":"Commit","revision":3,"commands":[
+              {"type":"CreateNode","nodeId":4,"kind":"View"},
+              {"type":"SetFrame","nodeId":4,"frame":{"x":0,"y":13200,"width":320,"height":100}},
+              {"type":"InsertChild","nodeId":4,"parentId":2,"index":1}
+            ]}""")
+            assertTrue("Virtual row frames must be laid out before the commit is acknowledged", renderer.viewFor(4)!!.height > 0)
+            scroll.scrollTo(0,(10000*density).toInt()); scroll.fling(-20000)
+            repeat(8) { SystemClock.sleep(16); scroll.computeScroll() }
+            assertEquals("Pending row layout must not expose a false runway at zero", (10000*density).toDouble(),scroll.scrollY.toDouble(),2.0)
+            layout(root, (320*density).toInt(), (480*density).toInt())
+            repeat(4) { SystemClock.sleep(16); scroll.computeScroll() }
+            assertEquals("Reverse fling stays at the real mounted boundary after layout", (10000*density).toDouble(),scroll.scrollY.toDouble(),2.0)
             // Protection starts only at the real end of mounted content.
-            renderer.applyJson("""{"type":"Commit","revision":2,"commands":[{"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":0,"width":320,"height":700}}]}""")
+            renderer.applyJson("""{"type":"Commit","revision":4,"commands":[{"type":"RemoveNode","nodeId":4},{"type":"SetFrame","nodeId":3,"frame":{"x":0,"y":0,"width":320,"height":700}}]}""")
             layout(root, (320*density).toInt(), (480*density).toInt())
             scroll.scrollTo(0,(200*density).toInt()); scroll.fling(20000)
             repeat(8) { SystemClock.sleep(16); scroll.computeScroll() }
@@ -1092,7 +1116,14 @@ class RenderViewTest {
                         var covered = top
                         for (row in rows) { if (row.third <= covered) continue; if (row.second > covered + 2) break; covered = row.third }
                         val now = SystemClock.uptimeMillis(); samples++
-                        if (covered < bottom) { blankSamples++; if (blankSince == 0L) blankSince = now; longestBlank = maxOf(longestBlank, now - blankSince) } else blankSince = 0
+                        if (covered < bottom) {
+                            blankSamples++
+                            if (blankSince == 0L) {
+                                blankSince = now
+                                android.util.Log.i("AnseronUIListTest", "blank start: velocity=$velocity offset=${scroll.scrollY} viewport=${scroll.height} rows=" + rows.joinToString { "${it.first}:${it.second}..${it.third}" })
+                            }
+                            longestBlank = maxOf(longestBlank, now - blankSince)
+                        } else blankSince = 0
                         val visible = rows.filter { it.third > top && it.second < bottom }
                         for (row in visible) previous[row.first]?.let { old ->
                             val reversed = if (velocity > 0) row.second - old else old - row.second
@@ -1105,7 +1136,8 @@ class RenderViewTest {
                 var initialTravel = 0.0; var finalTravel = 0.0
                 fun travelPosition(): Double {
                     val document = (scroll.getChildAt(0) as android.view.ViewGroup).getChildAt(0) as android.view.ViewGroup
-                    val row = (0 until document.childCount).map { document.getChildAt(it) }.first { it.bottom > scroll.scrollY }
+                    val row = (0 until document.childCount).map { document.getChildAt(it) }.firstOrNull { it.bottom > scroll.scrollY }
+                        ?: throw AssertionError("No row covers offset ${scroll.scrollY}; viewport=${scroll.height}; rows=" + (0 until document.childCount).joinToString { val child = document.getChildAt(it); "${child.top}..${child.bottom}" })
                     val content = row as android.view.ViewGroup
                     val index = content.getChildAt(0).transitionName.removePrefix("list-row-").toInt()
                     return index + (scroll.scrollY - row.top).toDouble() / maxOf(1, row.height)
@@ -1151,6 +1183,42 @@ class RenderViewTest {
             while (core.messages.none { it.optDouble("y") == 120.0 } && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(10)
             val events = core.messages.filter { it.optString("event") == "scroll" || it.optString("type") == "Tap" }
             assertEquals(listOf("scroll:60", "tap", "scroll:120"), events.map { if (it.getString("type") == "Tap") "tap" else "scroll:${it.getInt("y")}" })
+        } finally { release.countDown(); ui { host.destroy() } }
+    }
+
+    @Test fun hostFlushesMotionBetweenNativeStepsWithoutCrossingDiscreteBarriers() {
+        val core = RecordingCore()
+        val entered = CountDownLatch(1); val release = CountDownLatch(1); val checked = CountDownLatch(1)
+        val blocked = java.util.concurrent.atomic.AtomicBoolean(false)
+        var eventsAtNextStep = emptyList<String>()
+        val transport = object : AndroidCoreTransport by core {
+            override fun step(maxMessages: Int): List<ByteArray> {
+                if (core.messages.any { it.optString("type") == "InspectRuntime" }) {
+                    if (blocked.compareAndSet(false, true)) {
+                        entered.countDown(); check(release.await(5, TimeUnit.SECONDS))
+                    } else if (checked.count > 0) {
+                        eventsAtNextStep = core.messages.filter { it.optString("event") == "scroll" || it.optString("type") == "Tap" }
+                            .map { if (it.getString("type") == "Tap") "tap" else "scroll:${it.getInt("y")}" }
+                        checked.countDown()
+                    }
+                }
+                return core.step(maxMessages)
+            }
+        }
+        lateinit var host: AndroidHost
+        ui { host = AndroidHost(FrameLayout(instrumentation.targetContext), { transport }); host.start("test", 320f, 480f) }
+        try {
+            assertTrue(core.committed.await(5, TimeUnit.SECONDS))
+            ui { host.inspectRuntime() }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            ui {
+                for (y in 1..60) host.renderer.onEvent?.invoke(RendererEvent("NativeEvent", 1, 1, event = "scroll", y = y.toDouble()))
+                host.renderer.onEvent?.invoke(RendererEvent("Tap", 1, 1))
+                for (y in 61..120) host.renderer.onEvent?.invoke(RendererEvent("NativeEvent", 1, 1, event = "scroll", y = y.toDouble()))
+            }
+            release.countDown()
+            assertTrue(checked.await(5, TimeUnit.SECONDS))
+            assertEquals(listOf("scroll:60", "tap", "scroll:120"), eventsAtNextStep)
         } finally { release.countDown(); ui { host.destroy() } }
     }
 

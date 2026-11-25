@@ -192,14 +192,19 @@ public final class SharedCoreTest {
             Thread.sleep(400);
             assertEquals(after, bounds("floating-ball"));
             instrumentation.runOnMainSync(() -> assertTrue(((android.widget.ScrollView)findTag(activity.getWindow().getDecorView(), "component-scroll")).getScrollY() > initialScroll[0]));
-            tap("布局样式"); waitFor("画布: 280 · 实测: 280 × 64");
+            // The showcase constrains its canvas to the actual page width.
+            // The hosted emulator is 320 dp wide, so its wide canvas is 260 dp.
+            int pageWidth = Math.round(bounds("components-root").width() / density);
+            int wideCanvas = Math.max(120, Math.min(280, pageWidth - 60));
+            int narrowCanvas = Math.max(120, Math.min(220, pageWidth - 60));
+            tap("布局样式"); waitFor("画布: " + wideCanvas + " · 实测: " + wideCanvas + " × 64");
             assertEquals(after, bounds("floating-ball"));
-            assertEquals(280*density, bounds("layout-between").width(), 1);
+            assertEquals(wideCanvas*density, bounds("layout-between").width(), 1);
             android.graphics.Rect row = bounds("layout-between"), first = bounds("layout-between-a");
             assertEquals(10*density, first.left-row.left, 1);
             assertEquals(12*density, first.top-row.top, 1);
-            tap("切换窄画布"); waitFor("画布: 220 · 实测: 220 × 64");
-            assertEquals(220*density, bounds("layout-between").width(), 1);
+            tap("切换窄画布"); waitFor("画布: " + narrowCanvas + " · 实测: " + narrowCanvas + " × 64");
+            assertEquals(narrowCanvas*density, bounds("layout-between").width(), 1);
             tap("基础组件"); waitFor("基础组件实验室");
         } finally { instrumentation.runOnMainSync(() -> activity.finish()); }
     }

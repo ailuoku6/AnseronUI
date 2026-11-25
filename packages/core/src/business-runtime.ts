@@ -184,7 +184,7 @@ export class BusinessRuntime {
           else this.invokeEvent(surface, { ...event, revision: surface.revision });
         }
       }
-      if (surface.visible && surface.dirty && !surface.pending && (!surface.recovering || surface.coreResetAck && surface.hostResetAck)) this.beginRender(surface);
+      if (this.incoming.length === 0 && surface.visible && surface.dirty && !surface.pending && (!surface.recovering || surface.coreResetAck && surface.hostResetAck)) this.beginRender(surface);
       this.ensureWatchdog(surface);
     }
     return this.takeOutputs();
@@ -321,7 +321,9 @@ export class BusinessRuntime {
       this.ack(surface, payload.revision);
     } else if (payload.type === "CommitFailed") {
       if (surface.pending?.revision === payload.revision) {
-        this.recoverSurface(surface, payload.reason);
+        if (payload.reason === "SCROLL_WINDOW_SUPERSEDED" && surface.pending.readyForAck) {
+          this.abandonScrollWindow(surface, surface.pending);
+        } else this.recoverSurface(surface, payload.reason);
       }
     } else if (payload.type === "Tap" || payload.type === "InputChange" || payload.type === "NativeEvent") {
       if (!surface.visible) return;
@@ -1119,12 +1121,65 @@ export class BusinessRuntime {
       this.emit(surface, { type: "MeasureRequest", requestId: query.requestId, nodeId: query.nodeId, kind: query.kind, text: query.text, fontSize: query.fontSize, maxWidth: query.maxWidth, props: query.props });
     }
     if (result.ready) {
+      if (this.supersedeStaleScrollWindow(surface, draft)) return;
       draft.readyForAck = true;
       if (this.profiling) draft.commitStarted = Date.now();
       this.countMetric("commands", result.commands.length);
       draft.commitPayloads = splitCommit(draft.revision, surface.revision, result.commands);
       for (const payload of draft.commitPayloads) this.emit(surface, payload);
     }
+  }
+  private supersedeStaleScrollWindow(surface: Surface, draft: Draft): boolean {
+    // Native motion can reverse while text measurements are in flight. Never
+    // publish a virtual window that has already left the reported viewport;
+    // it would remove visible rows before the next window can be measured.
+    const events: NativeEvent[] = [];
+    let barrier = false;
+    for (const event of surface.deferredEvents) {
+      if (event.type !== "NativeEvent" || event.event !== "scroll") { barrier = true; break; }
+      events.push(event);
+    }
+    // Include posted motion that the bounded input step has not consumed yet.
+    // A superseded draft is rebuilt only after that input queue is drained.
+    for (const input of this.incoming) {
+      if (barrier) break;
+      if (input.surfaceId !== surface.id || input.surfaceGeneration !== surface.generation) continue;
+      const event = input.payload;
+      if (event.type !== "NativeEvent" || event.event !== "scroll") break;
+      events.push(event);
+    }
+    const checked = new Set<number>();
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (checked.has(event.nodeId)) continue;
+      checked.add(event.nodeId);
+      if (draft.removedHosts.has(event.nodeId)) continue;
+      const old = surface.nodes.get(event.nodeId);
+      const scroll = draft.hosts.get(event.nodeId) ?? old;
+      if (!old || !scroll || scroll.kind !== "ScrollView" || typeof scroll.props.scrollAnchorOffset !== "number") continue;
+      const child = scroll.children[0];
+      const document = child && (draft.hosts.get(child.id) ?? child);
+      if (!document || document.children.length === 0) continue;
+      let top = Infinity, bottom = -Infinity;
+      for (const child of document.children) {
+        const row = draft.hosts.get(child.id) ?? child;
+        if (row.style.position !== "absolute") continue;
+        top = Math.min(top, row.frame.y); bottom = Math.max(bottom, row.frame.y + row.frame.height);
+      }
+      if (!Number.isFinite(top) || !Number.isFinite(bottom)) continue;
+      const offset = Math.max(0, Math.min(document.frame.height - scroll.frame.height,
+        event.y! + scroll.props.scrollAnchorOffset - Number(old.props.scrollAnchorOffset ?? 0)));
+      if (offset >= top - 1 && Math.min(document.frame.height, offset + scroll.frame.height) <= bottom + 1) continue;
+      this.abandonScrollWindow(surface, draft);
+      return true;
+    }
+    return false;
+  }
+  private abandonScrollWindow(surface: Surface, draft: Draft): void {
+    for (const frame of draft.frames.values()) if (frame.base) surface.dirtyOwners.add(frame.path);
+    this.discardDraft(surface, draft); surface.pending = null; surface.dirty = true;
+    this.countMetric("aborts");
+    this.sendCore({ type: "AbortRender", abi: CORE_ABI_VERSION, surfaceId: surface.id, generation: surface.generation, transactionId: draft.revision });
   }
   private acceptMeasure(surface: Surface, result: Extract<InputPayload, { type: "MeasureResult" }>): void {
     const request = surface.modules.get(result.requestId);

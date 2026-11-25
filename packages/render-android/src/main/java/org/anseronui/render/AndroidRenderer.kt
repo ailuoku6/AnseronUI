@@ -294,6 +294,7 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
             private set
         private var anchors = emptyList<Pair<View, Double>>()
         var anchorsEnabled = false
+        val isFlinging get() = !flingScroller.isFinished
         fun captureAnchor() {
             if (!anchorsEnabled) return
             val document = (getChildAt(0) as? ViewGroup)?.getChildAt(0) as? ViewGroup ?: return
@@ -343,6 +344,15 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 if (anchorsEnabled) {
                     val document = (getChildAt(0) as? ViewGroup)?.getChildAt(0) as? ViewGroup
                     if (document != null && document.childCount > 0) {
+                        // Commits attach new rows before the next Android layout.
+                        // Their zero frames are not a mounted runway. Hold the
+                        // viewport until geometry and anchor compensation agree,
+                        // discarding this travel instead of catching up later.
+                        if (isLayoutRequested || document.isLayoutRequested) {
+                            flingAdjustment += scrollY - desired
+                            postInvalidateOnAnimation()
+                            return
+                        }
                         var first = Int.MAX_VALUE; var last = 0
                         for (index in 0 until document.childCount) {
                             val row = document.getChildAt(index)
@@ -468,6 +478,60 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
 
     fun applyJson(payload: String) = applyCommit(JSONObject(payload))
 
+    /** Reject only before mutation: the Core can abort this transaction safely. */
+    internal fun supersededScrollWindow(commit: JSONObject): Boolean {
+        val commands = commit.getJSONArray("commands")
+        val frames = mutableMapOf<Long, JSONObject>()
+        val removed = mutableSetOf<Long>()
+        for (i in 0 until commands.length()) {
+            val c = commands.getJSONObject(i)
+            if (c.getString("type") == "SetFrame") frames[c.getLong("nodeId")] = c.getJSONObject("frame")
+            if (c.getString("type") in setOf("RemoveNode", "DetachChild")) removed.add(c.getLong("nodeId"))
+        }
+        for ((scrollId, record) in nodes) {
+            val scroll = record.view as? TouchScrollView ?: continue
+            if (!scroll.anchorsEnabled || !scroll.isFlinging || scrollId in removed) continue
+            val document = record.content?.getChildAt(0) as? ViewGroup ?: continue
+            val documentId = recordsByView[document]?.nodeId ?: continue
+            if (documentId in removed) continue
+            val rows = (0 until document.childCount).map { document.getChildAt(it) }
+            val rowIds = rows.mapNotNull { recordsByView[it]?.nodeId }.filter { it !in removed }.toMutableSet()
+            for (i in 0 until commands.length()) {
+                val c = commands.getJSONObject(i)
+                if (c.getString("type") in setOf("InsertChild", "MoveChild") && c.getLong("parentId") == documentId) rowIds.add(c.getLong("nodeId"))
+            }
+            fun top(id: Long) = frames[id]?.optDouble("y") ?: nodes[id]?.animation?.declared?.get("y") ?: 0.0
+            fun height(id: Long) = frames[id]?.optDouble("height") ?: nodes[id]?.animation?.declared?.get("height") ?: 0.0
+            val retained = rows.firstOrNull { it.bottom > scroll.scrollY && it.top < scroll.scrollY + scroll.height && recordsByView[it]?.nodeId in rowIds }
+            var delta = 0.0
+            if (retained != null) {
+                val id = recordsByView.getValue(retained).nodeId
+                delta = top(id) - (nodes[id]?.animation?.declared?.get("y") ?: 0.0)
+            } else for (i in 0 until commands.length()) {
+                val c = commands.getJSONObject(i)
+                if (c.getLong("nodeId") != scrollId) continue
+                val props = c.optJSONObject("props") ?: c.optJSONObject("set") ?: continue
+                if (props.has("scrollAnchorOffset")) delta = props.getDouble("scrollAnchorOffset") - (record.declaredProps?.optDouble("scrollAnchorOffset") ?: 0.0)
+            }
+            val extent = height(documentId)
+            val viewport = scroll.height / density.toDouble()
+            val offset = (scroll.scrollY / density + delta).coerceIn(0.0, max(0.0, extent - viewport))
+            var covered = offset
+            for (id in rowIds.sortedBy { top(it) }) {
+                if (top(id) + height(id) <= covered) continue
+                if (top(id) > covered + 2 / density) break
+                covered = max(covered, top(id) + height(id))
+            }
+            if (rowIds.isNotEmpty() && covered < min(extent, offset + viewport) - 1 / density) {
+                onEvent?.invoke(RendererEvent("NativeEvent", scrollId, revision, event = "scroll", x = scroll.scrollX / density.toDouble(),
+                    y = scroll.scrollY / density.toDouble(), scrollAdjustment = scroll.appliedAnchorPixels / density.toDouble(),
+                    contentWidth = document.width / density.toDouble(), contentHeight = document.height / density.toDouble()))
+                return true
+            }
+        }
+        return false
+    }
+
     internal fun applyCommit(commit: JSONObject) {
         require(Looper.myLooper() == Looper.getMainLooper()) { "Renderer must run on the UI thread" }
         require(commit.getString("type") == "Commit") { "Invalid commit" }
@@ -503,6 +567,14 @@ class AndroidRenderer(val root: FrameLayout, private val extensions: AndroidPlat
                 if (video.player.isPlaying) { resumeVideos.add(video); video.player.pause() }
             }
             if (geometryChanged) { collectAncestors(); updateScrollExtents(affected) }
+            if (scrollAnchors.any { it.anchorsEnabled } && root.width > 0 && root.height > 0) {
+                // Publish virtual row geometry and its viewport compensation as
+                // one UI operation, before another commit can capture anchors
+                // against declared frames that Android has not laid out yet.
+                root.measure(View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY))
+                root.layout(root.left, root.top, root.right, root.bottom)
+            }
             if (geometryChanged || (0 until commands.length()).any { commands.getJSONObject(it).optJSONObject("set")?.has("backgroundColor") == true }) {
             val page = surface.getChildAt(0)
             onPageBackgroundColor?.invoke(topology.rootId()?.let { nodes[it] }?.pageBackgroundColor ?: Color.TRANSPARENT)

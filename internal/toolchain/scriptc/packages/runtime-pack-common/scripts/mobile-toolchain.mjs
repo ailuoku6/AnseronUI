@@ -34,7 +34,13 @@ export function mobileRuntimeConfig(name, env = process.env, platform = process.
         object_format: "macho",
         minimum_os: "15.0",
       },
-      targetArgs: ["-target", triple, "-isysroot", sysroot],
+      targetArgs: [
+        "-target",
+        triple,
+        ...(simulator ? ["-mcpu=apple_m1"] : []),
+        "-isysroot",
+        sysroot,
+      ],
       systemLibraries: [{ name: "System", predicate: true }],
     };
   }

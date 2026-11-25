@@ -3,6 +3,163 @@ import { definePage, VirtualList, View, Text, Button, ScrollView, useState, useE
 import type { VirtualListHandle } from '@anseronui/ui';
 import { TestHost } from './host-harness.js';
 
+it.each(['before', 'after'] as const)('does not commit a measured window with a reversed viewport queued %s the measurement', async order => {
+  const data = Array.from({ length: 5000 }, (_, id) => id);
+  const h = new TestHost(definePage('superseded-window', () => <VirtualList data={data} keyExtractor={id => id}
+    estimatedItemHeight={100} renderItem={id => <View testID={'row-' + id} style={{ height: 100 }}><Text>{'Row ' + id}</Text></View>} />));
+  try {
+    await h.mount('superseded-window');
+    const scroll = [...h.nodes].find(([, node]) => node.kind === 'ScrollView')![0];
+    const send = h.send.bind(h);
+    const step = h.runtime.step.bind(h.runtime);
+    // Native AOT advances one incoming message per step. Exercise motion both
+    // before and after delivery of a round of text measurements.
+    let measures = 0;
+    h.runtime.step = () => {
+      const outputs = step(1);
+      measures += outputs.filter(output => output.payload.type === 'MeasureRequest').length;
+      return outputs;
+    };
+    let reversed = false;
+    h.send = payload => {
+      if (payload.type === 'MeasureResult') measures--;
+      if (!reversed && payload.type === 'MeasureResult' && measures === 0) {
+        reversed = true;
+        if (order === 'after') send(payload);
+        send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll', x: 0, y: 10000,
+          contentWidth: 320, contentHeight: 500000 });
+        if (order === 'after') return;
+      }
+      send(payload);
+    };
+    const before = h.outputs.length;
+    send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll', x: 0, y: 20000,
+      contentWidth: 320, contentHeight: 500000 });
+    await h.settle();
+    expect(reversed).toBe(true);
+    expect(h.runtime.getStats().aborts).toBeGreaterThan(0);
+    const committedIds = h.outputs.slice(before).flatMap(output => output.type === 'Commit' ? output.commands.flatMap(command =>
+      command.type === 'SetProps' ? [String(command.props.testID ?? '')] : command.type === 'PatchProps' ? [String(command.set.testID ?? '')] : []) : []);
+    expect(committedIds).not.toContain('row-200');
+    expect([...h.nodes.values()].some(node => node.props.testID === 'row-100')).toBe(true);
+  } finally { h.runtime.dispose(); }
+});
+
+it('drains queued motion before rebuilding a superseded native window', async () => {
+  const h = new TestHost(definePage('queued-window', () => <VirtualList data={Array.from({ length: 5000 }, (_, id) => id)} keyExtractor={id => id}
+    estimatedItemHeight={100} renderItem={id => <View testID={'row-' + id} style={{ height: 100 }}><Text>{'Row ' + id}</Text></View>} />));
+  try {
+    await h.mount('queued-window');
+    const scroll = [...h.nodes].find(([, node]) => node.kind === 'ScrollView')![0];
+    const step = h.runtime.step.bind(h.runtime);
+    h.runtime.step = () => step(1);
+    const accept = h.runtime.acceptCoreResult.bind(h.runtime);
+    let reversed = false;
+    h.runtime.acceptCoreResult = result => {
+      if (!reversed && result.type === 'Prepared' && result.ready) {
+        reversed = true;
+        for (let y = 19000; y >= 10000; y -= 1000) h.send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll', x: 0, y,
+          contentWidth: 320, contentHeight: 500000 });
+      }
+      accept(result);
+    };
+    const before = h.outputs.length;
+    h.send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll', x: 0, y: 20000,
+      contentWidth: 320, contentHeight: 500000 });
+    await h.settle();
+    expect(reversed).toBe(true);
+    expect(h.runtime.getStats().aborts).toBe(1);
+    expect(h.outputs.slice(before).flatMap(output => output.type === 'Commit' ? output.commands : [])
+      .some(command => command.type === 'SetProps' && command.props.testID === 'row-200')).toBe(false);
+    expect([...h.nodes.values()].some(node => node.props.testID === 'row-100')).toBe(true);
+  } finally { h.runtime.dispose(); }
+});
+
+it('retries an unchanged host transaction superseded by native motion without resetting the surface', async () => {
+  const h = new TestHost(definePage('host-rejected-window', () => <VirtualList data={Array.from({ length: 5000 }, (_, id) => id)} keyExtractor={id => id}
+    estimatedItemHeight={100} renderItem={id => <View testID={'row-' + id} style={{ height: 100 }}><Text>{'Row ' + id}</Text></View>} />));
+  try {
+    await h.mount('host-rejected-window');
+    const scroll = [...h.nodes].find(([, node]) => node.kind === 'ScrollView')![0];
+    const step = h.runtime.step.bind(h.runtime);
+    let rejected = false;
+    h.runtime.step = () => step().filter(output => {
+      if (rejected || output.payload.type !== 'Commit') return true;
+      rejected = true;
+      h.ack = output.sequence;
+      h.send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll', x: 0, y: 10000,
+        contentWidth: 320, contentHeight: 500000 });
+      h.send({ type: 'CommitFailed', revision: output.payload.revision, reason: 'SCROLL_WINDOW_SUPERSEDED' });
+      return false;
+    });
+    const before = h.outputs.length;
+    h.send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll', x: 0, y: 20000,
+      contentWidth: 320, contentHeight: 500000 });
+    await h.settle();
+    expect(rejected).toBe(true);
+    expect(h.outputs.slice(before).some(output => output.type === 'ResetSurface' || output.type === 'Diagnostic')).toBe(false);
+    expect([...h.nodes.values()].some(node => node.props.testID === 'row-100')).toBe(true);
+    expect(h.runtime.getStats().pendingRenders).toBe(0);
+  } finally { h.runtime.dispose(); }
+});
+
+it('commits a shortened document while a native offset from the old extent is deferred', async () => {
+  let shorten = () => {};
+  const h = new TestHost(definePage('shortened-window', () => {
+    const [short, setShort] = useState(false);
+    shorten = () => setShort(true);
+    return <VirtualList data={Array.from({ length: short ? 2 : 5000 }, (_, id) => id)} keyExtractor={id => id}
+      estimatedItemHeight={100} renderItem={id => <View testID={'row-' + id} style={{ height: 100 }}><Text>{(short ? 'Short ' : 'Row ') + id}</Text></View>} />;
+  }));
+  try {
+    await h.mount('shortened-window');
+    const scroll = [...h.nodes].find(([, node]) => node.kind === 'ScrollView')![0];
+    const send = h.send.bind(h);
+    const move = () => send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll', x: 0, y: 10000,
+      contentWidth: 320, contentHeight: 500000 });
+    move(); await h.settle();
+    let moved = false;
+    h.send = payload => {
+      if (!moved && payload.type === 'MeasureResult') { moved = true; move(); }
+      send(payload);
+    };
+    shorten(); await h.settle();
+    expect(moved).toBe(true);
+    expect(h.runtime.getStats().pendingRenders).toBe(0);
+    expect([...h.nodes.values()].filter(node => String(node.props.testID ?? '').startsWith('row-'))).toHaveLength(2);
+  } finally { h.runtime.dispose(); }
+});
+
+it('keeps a bounded reverse runway while a window for the previous fling direction is in flight', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(10000);
+  const data = Array.from({ length: 5000 }, (_, id) => id);
+  const h = new TestHost(definePage('reverse-runway', () => <VirtualList data={data} keyExtractor={id => id}
+    estimatedItemHeight={100} overscan={300} renderItem={id => <View testID={'row-' + id} style={{ height: 100 }} />} />));
+  try {
+    await h.mount('reverse-runway', 320, 395);
+    const scroll = [...h.nodes].find(([, node]) => node.kind === 'ScrollView')![0];
+    const move = async (time: number, y: number) => {
+      clock.mockReturnValue(time);
+      h.send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll', x: 0, y,
+        contentWidth: 320, contentHeight: 500000, scrollAdjustment: 0 });
+      await h.settle();
+    };
+    await move(11000, 10000);
+    await move(11100, 12000);
+    // During delivery of this forward window, native motion can reverse 1000
+    // units. It must still contain the whole viewport at that new position.
+    let rows = [...h.nodes.values()].filter(node => String(node.props.testID ?? '').startsWith('row-'));
+    expect(rows.some(node => node.props.testID === 'row-110')).toBe(true);
+    expect(rows.length).toBeLessThanOrEqual(32);
+    await move(11200, 10000);
+    rows = [...h.nodes.values()].filter(node => String(node.props.testID ?? '').startsWith('row-'));
+    // The same protection is required if this reverse window arrives after
+    // native scrolling turns forward again (11000 + the 395-unit viewport).
+    expect(rows.some(node => node.props.testID === 'row-113')).toBe(true);
+    expect(rows.length).toBeLessThanOrEqual(32);
+  } finally { h.runtime.dispose(); clock.mockRestore(); }
+});
+
 it('keeps reverse prefetch direction when coalesced native offsets include positive height compensation', async () => {
   const clock = vi.spyOn(Date, 'now'); clock.mockReturnValue(10000);
   const data = Array.from({ length: 5000 }, (_, id) => id);

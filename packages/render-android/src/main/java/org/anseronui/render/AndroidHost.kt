@@ -68,12 +68,14 @@ class AndroidHost(
             pendingEvents.add(event)
             if (eventsScheduled) false else { eventsScheduled = true; true }
         }
-        if (schedule) enqueue {
-            val batch = synchronized(eventLock) {
-                pendingEvents.toList().also { pendingEvents.clear(); eventsScheduled = false }
-            }
-            batch.forEach { sendEvent(it) }
+        if (schedule) enqueue { flushEvents() }
+    }
+
+    private fun flushEvents() {
+        val batch = synchronized(eventLock) {
+            pendingEvents.toList().also { pendingEvents.clear(); eventsScheduled = false }
         }
+        batch.forEach { sendEvent(it) }
     }
 
     private fun sendEvent(event: RendererEvent) {
@@ -215,6 +217,10 @@ class AndroidHost(
         val runtime = core ?: return
         try {
             repeat(32) {
+                // A native step may measure/prepare a window while the UI is
+                // already scrolling elsewhere. Deliver coalesced motion before
+                // the next step, rather than waiting behind the entire drain.
+                flushEvents()
                 val stepStart = if (profiling) System.nanoTime() else 0L
                 val output = runtime.step(64)
                 metric(bridgeMetrics, "adapterStepMs", elapsed(stepStart))
@@ -283,6 +289,13 @@ class AndroidHost(
             "Commit" -> ui.post {
                 metric(hostMetrics, "uiQueueMs", elapsed(queuedAt))
                 try {
+                    if (renderer.supersededScrollWindow(payload)) {
+                        enqueue {
+                            flushEvents()
+                            send(JSONObject().put("type", "CommitFailed").put("revision", payload.getLong("revision")).put("reason", "SCROLL_WINDOW_SUPERSEDED"))
+                        }
+                        return@post
+                    }
                     val applyStart = if (profiling) System.nanoTime() else 0L
                     renderer.applyCommit(payload)
                     metric(hostMetrics, "rendererApplyMs", elapsed(applyStart))

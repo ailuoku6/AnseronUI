@@ -447,7 +447,10 @@ export function VirtualList<T>(props: VirtualListProps<T>): UIElement {
   // Keep a warm runway on both sides even at rest: the first fling event
   // arrives after native scrolling has already started, and reversals cannot
   // wait for another measurement/commit round trip.
-  const warm = Math.max(overscan, viewport.height * 2);
+  // A window already in flight can arrive after native motion reverses. Reserve
+  // the observed commit horizon on both sides, rather than only prefetching in
+  // the old direction and removing the rows the reversed fling now displays.
+  const warm = Math.max(overscan, viewport.height * 2, lead);
   const before = warm + (current.velocity < 0 ? lead : 0);
   const after = warm + (current.velocity > 0 ? lead : 0);
   let start = current.layout.at(Math.max(0, current.offset - before));
@@ -456,10 +459,10 @@ export function VirtualList<T>(props: VirtualListProps<T>): UIElement {
   const visibleStart = current.layout.at(current.offset);
   const visibleEnd = Math.min(current.layout.count, current.layout.at(current.offset + viewport.height) + 1);
   const extra = Math.max(0, 32 - (visibleEnd - visibleStart));
-  const backward = current.velocity < 0 ? Math.ceil(extra * 0.65) : current.velocity > 0 ? Math.floor(extra * 0.35) : Math.floor(extra / 2);
+  const backward = current.velocity < 0 ? Math.ceil(extra * 0.55) : current.velocity > 0 ? Math.floor(extra * 0.45) : Math.floor(extra / 2);
   start = Math.max(start, visibleStart - backward);
   end = Math.min(end, visibleEnd + extra - backward);
-  const runway = Math.max(overscan / 2, Math.min(viewport.height * 2, Math.abs(current.velocity) * current.renderLatency));
+  const runway = Math.max(overscan / 2, lead);
   if (current.windowStart >= 0 &&
       (current.windowStart === 0 || current.offset >= current.layout.offset(current.windowStart) + runway) &&
       (current.windowEnd === current.layout.count || current.offset + viewport.height <= current.layout.offset(current.windowEnd) - runway)) {
@@ -524,7 +527,7 @@ export function VirtualList<T>(props: VirtualListProps<T>): UIElement {
       current.offset = Math.max(0, offset);
       if (!programmed) current.target = -1;
       current.correction = false;
-      const runway = Math.max(overscan / 2, Math.min(viewport.height * 2, Math.abs(current.velocity) * current.renderLatency));
+      const runway = Math.max(overscan / 2, Math.min(viewport.height * 5, Math.abs(current.velocity) * current.renderLatency * 2));
       const top = current.layout.offset(current.windowStart);
       const bottom = current.layout.offset(current.windowEnd);
       if (current.windowStart < 0 || current.windowStart > 0 && offset < top + runway ||
