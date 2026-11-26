@@ -544,16 +544,50 @@ import AVKit
         RunLoop.main.run(until:Date(timeIntervalSinceNow:0.2))
         Integration.check(!f.events.contains { $0.event == "scrollEnd" },"unmounted scroll must cancel pending end callback")
     }
+    static func animationTimeline() throws {
+        let view = NSView(frame:NSRect(x:20,y:30,width:80,height:40))
+        var now = 10.0
+        let node = AnseronUINodeAnimation(view:view,clock:{ now })
+        defer { node.cancel() }
+        node.stage(["x":20,"y":30,"width":80,"height":40]); node.commit()
+        var results:[Bool] = []
+        try node.animate(["style":["opacity":0.2,"translateX":60],"options":["duration":1000,"delay":250,"easing":"linear"]]) { results.append($0) }
+        now = 10.125; node.advance()
+        Integration.check(view.alphaValue == 1 && view.frame.minX == 20 && results.isEmpty,"animation delay retains initial frame")
+        now = 10.25; node.advance()
+        Integration.check(view.alphaValue == 1 && view.frame.minX == 20,"animation starts at zero progress")
+        now = 10.75; node.advance()
+        Integration.check(abs(view.alphaValue-0.6) < 0.001 && abs(view.frame.minX-50) < 0.001 && results.isEmpty,"animation midpoint interpolates opacity and native geometry")
+        node.setActive(false)
+        now = 20.75; node.advance()
+        Integration.check(abs(view.alphaValue-0.6) < 0.001 && results.isEmpty,"inactive animation preserves its presentation and completion")
+        node.setActive(true); node.advance()
+        Integration.check(abs(view.alphaValue-0.6) < 0.001 && results.isEmpty,"resumed animation excludes paused time")
+        now = 21.25; node.advance()
+        Integration.check(abs(view.alphaValue-0.2) < 0.001 && abs(view.frame.minX-80) < 0.001 && results == [true],"animation finishes at the exact duration")
+        now = 22; node.advance()
+        Integration.check(results == [true],"completed animation settles only once")
+
+        now = 30; results.removeAll()
+        try node.animate(["style":["opacity":1,"translateX":0],"options":["duration":1000,"easing":"linear","iterations":2,"autoreverse":true]]) { results.append($0) }
+        now = 30.25; node.advance()
+        Integration.check(abs(view.alphaValue-0.4) < 0.001 && abs(view.frame.minX-65) < 0.001,"autoreverse animation advances forward")
+        now = 31.25; node.advance()
+        Integration.check(abs(view.alphaValue-0.8) < 0.001 && abs(view.frame.minX-35) < 0.001,"autoreverse animation reverses its second leg")
+        now = 32.25; node.advance()
+        Integration.check(abs(view.alphaValue-0.4) < 0.001 && results.isEmpty,"autoreverse animation repeats for the requested iterations")
+        now = 35; node.advance()
+        Integration.check(abs(view.alphaValue-0.2) < 0.001 && abs(view.frame.minX-80) < 0.001 && results == [true],"late frame completes all iterations at the original state")
+    }
     static func animation() throws {
+        try animationTimeline()
         let f = Fixture(); defer { f.close() }
         try f.create(1,"View",["testID":"animated"],NSRect(x:20,y:30,width:80,height:40))
         var completed:Bool?
         _ = try f.renderer.invoke(nodeId:1,method:"animate",args:["style":["opacity":0.2,"translateX":60],"options":["duration":150,"easing":"linear"]]) { result in
             if case .success(let value) = result { completed = (value as? [String:Any])?["finished"] as? Bool }
         }
-        RunLoop.main.run(until:Date(timeIntervalSinceNow:0.07))
         let animated = f.widget("animated")
-        Integration.check(animated.alphaValue > 0.2 && animated.alphaValue < 1,"animation has intermediate frame")
         Integration.wait("animation completion") { completed != nil }
         Integration.check(completed == true && abs(animated.alphaValue-0.2) < 0.01,"animation final state")
         Integration.check(f.root.hitTest(f.root.convert(NSPoint(x:135,y:50),to:f.root.superview)) === animated,"translated views must receive clicks at their visible position")

@@ -39,11 +39,15 @@ final class AnseronUINodeAnimation: NSObject {
     private var start: Double = 0
     private var completion: ((Bool) -> Void)?
     private var mirroredX = false, mirroredY = false
-    init(view: NSView) { self.view = view }
+    private let clock: () -> Double
+    init(view: NSView, clock: @escaping () -> Double = CACurrentMediaTime) {
+        self.view = view
+        self.clock = clock
+    }
     func setActive(_ value: Bool) {
         guard active != value else { return }
-        if !value { pausedAt = CACurrentMediaTime() }
-        else { start += CACurrentMediaTime() - pausedAt }
+        if !value { pausedAt = clock() }
+        else { start += clock() - pausedAt }
         active = value
         link?.fireDate = value ? Date() : .distantFuture
     }
@@ -83,14 +87,19 @@ final class AnseronUINodeAnimation: NSObject {
     }
     private func begin(_ next: [String: Double], _ options: TSAnimationOptions, _ complete: ((Bool) -> Void)? = nil) {
         cancel(); target = next; from = current; running = options; completion = complete
-        start = CACurrentMediaTime() + options.delay / 1000
-        if !active { pausedAt = CACurrentMediaTime() }
+        start = clock() + options.delay / 1000
+        if !active { pausedAt = clock() }
         let timer = Timer(timeInterval: 1.0 / 60, target: self, selector: #selector(tick(_:)), userInfo: nil, repeats: true)
         link = timer; if !active { timer.fireDate = .distantFuture }; RunLoop.main.add(timer, forMode: .common)
     }
     @objc private func tick(_ timer: Timer) {
-        guard let options = running else { return }
-        let elapsed = (CACurrentMediaTime() - start) * 1000
+        advance()
+    }
+    // Timer delivery may skip frames under load. Use the monotonic timeline for
+    // progress; an injected clock also lets regressions sample exact frames.
+    func advance() {
+        guard active, let options = running else { return }
+        let elapsed = (clock() - start) * 1000
         if elapsed < 0 { return }
         let legs = options.autoreverse ? 2 : 1
         let done = options.duration == 0 || (options.iterations != -1 && elapsed >= options.duration * Double(legs * options.iterations))
