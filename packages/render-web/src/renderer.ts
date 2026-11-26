@@ -466,7 +466,12 @@ export class DOMRenderer {
       : 'none';
         }
     element.style.overflowAnchor = 'none';
-    if (affects("overflow")) { element.style.overflow = String(props.overflow ?? (record.kind === "ScrollView" ? "auto" : "")); }
+    if (affects("overflow", "numberOfLines")) {
+      // Line clamping sizes the text box, but overflowing lines can still paint
+      // outside its fixed Core frame unless the rendered content is clipped.
+      element.style.overflow = record.kind === "Text" && props.numberOfLines
+        ? "hidden" : String(props.overflow ?? (record.kind === "ScrollView" ? "auto" : ""));
+    }
     if (affects("visibility")) { element.style.visibility = String(props.visibility ?? ""); }
     if (affects("touchAction")) { element.style.touchAction = String(props.touchAction ?? ""); }
     if (record.kind === "Text" && affects("numberOfLines", "ellipsizeMode")) {

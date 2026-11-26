@@ -68,6 +68,7 @@ jobs:
           node-version: '24'
           cache: npm
       - uses: mlugg/setup-zig@v2
+        if: matrix.suite != 'web'
         with:
           version: '0.15.2'
       - run: npm ci --ignore-scripts

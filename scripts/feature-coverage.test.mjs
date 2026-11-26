@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
-import { browserSuites, suites } from './testing/suites.mjs';
+import { browserSuites, wasmBrowserSuites, suites } from './testing/suites.mjs';
 
 const root = resolve('.');
 const read = path => readFileSync(resolve(root, path), 'utf8');
@@ -48,7 +48,7 @@ test('every host tag and browser suite has an executable coverage entry', () => 
     if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) mounted.add(node.tagName.getText());
   });
   for (const tag of tags) assert.ok(mounted.has(tag === 'Native' ? 'NativeComponent' : tag), `Host tag is not mounted in runtime tests: ${tag}`);
-  for (const suite of browserSuites) {
+  for (const suite of [...browserSuites, ...wasmBrowserSuites]) {
     assert.ok(existsSync(resolve(root, `packages/render-web/test/${suite === 'virtual-list-wasm' ? 'virtual-list' : suite === 'text-measurement-wasm' ? 'text-measurement' : suite}.browser.ts`)), `Missing browser suite source: ${suite}`);
   }
 });
@@ -85,6 +85,19 @@ test('every CI suite and browser test is registered with a runnable command', ()
   }
   for (const file of files('packages/render-web/test').filter(file => file.endsWith('.browser.ts'))) {
     const name = file.split('/').at(-1).replace('.browser.ts', '');
-    assert.ok(browserSuites.includes(name), `Browser test is not registered in CI: ${name}`);
+    assert.ok([...browserSuites, ...wasmBrowserSuites].includes(name), `Browser test has no runnable entry: ${name}`);
+  }
+});
+
+test('Web CI covers JS page behavior without compiler or Wasm prerequisites', () => {
+  const steps = suites.web;
+  assert.deepEqual(steps[0], ['npm', 'run', 'build:web']);
+  assert.ok(!steps.some(step => step.includes('prepare:compiler') || step.includes('build:core:wasm')));
+  const scheduled = steps.filter(step => step.includes('scripts/test-web-extensions.mjs')).map(step => step.at(-1));
+  assert.deepEqual(scheduled, browserSuites);
+  assert.ok(!scheduled.some(name => wasmBrowserSuites.includes(name)));
+  for (const name of ['timers', 'accessibility-demo', 'virtual-list', 'text-measurement']) {
+    const run = steps.findIndex(step => step.includes('scripts/test-web-extensions.mjs') && step.at(-1) === name);
+    assert.ok(run > 0, `${name} must exercise the JS page after the Web build`);
   }
 });

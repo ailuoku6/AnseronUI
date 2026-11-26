@@ -125,6 +125,20 @@ test('overflowing text still wraps at the available width and preserves line lim
   assert.equal(f.sent.at(-1).payload.width, 120);
   assert.equal(f.sent.at(-1).payload.height, 48);
 });
+test('unlimited text omits the platform line limit for both measurement passes', () => {
+  const f = fixture(options => ({ width: options.constraintWidth ? 240 : 600,
+    height: options.constraintWidth ? (options.maxLines === 2 ? 96 : 144) : 48 }));
+  for (const numberOfLines of [2, 0, 2, 0]) {
+    f.host.output({ type: 'MeasureRequest', requestId: 1, nodeId: 2, kind: 'Text',
+      text: 'AnseronUI 中文 English 🪿 paragraph that wraps', fontSize: 16, maxWidth: 120,
+      props: { numberOfLines, lineHeight: 24 } });
+    assert.equal(f.sent.at(-1).payload.height, numberOfLines ? 48 : 72);
+    for (const options of f.measures.slice(-2)) {
+      assert.equal(options.maxLines, numberOfLines || undefined);
+      assert.equal(options.lineHeight, 24);
+    }
+  }
+});
 test('location and transfer subscription polls remain open and cancel ownership', async () => {
   const { host, sent } = fixture();
   host.invoke({ requestId: 1, module: 'events', method: 'next', argument: JSON.stringify({ id: 'watch', module: 'location' }) });

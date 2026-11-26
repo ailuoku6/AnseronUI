@@ -76,6 +76,35 @@ async function tab(page) {
 }
 await new Promise(resolve=>setTimeout(resolve,1500));
 await tab('components');
+// The accessibility tree retains text even when maxLines=0 paints nothing.
+// Check actual pixels as well as Core's collapsed/expanded frame heights.
+let measurement = await expect('text-measure-ready','text-measure-toggle','展开文本');
+const textFrame = nodes => nodes.get('text-measure-preview').bounds.match(/-?\d+/g).map(Number);
+const collapsedText = textFrame(measurement);
+click(measurement,'text-measure-toggle');
+measurement = await expect('text-measure-expanded','text-measure-toggle','收起文本');
+measurement = await reveal('text-measure-preview');
+const expandedText = textFrame(measurement);
+assert.ok(expandedText[3]-expandedText[1]>collapsedText[3]-collapsedText[1],'Expanded paragraph grows beyond two lines');
+const textScreenshot = join(out,'text-measure-expanded.jpeg');
+shell('snapshot_display','-f','/data/local/tmp/text-measure-expanded.jpeg');
+run(['-t',device,'file','recv','/data/local/tmp/text-measure-expanded.jpeg',textScreenshot]);
+const textPng = join(out,'text-measure-expanded.png');
+const textConversion = spawnSync('/usr/bin/sips',['-s','format','png',textScreenshot,'--out',textPng],{encoding:'utf8'});
+assert.equal(textConversion.status,0,textConversion.stderr);
+const textPixels = PNG.sync.read(readFileSync(textPng));
+let ink = 0;
+for(let y=Math.max(0,expandedText[1]);y<Math.min(textPixels.height,expandedText[3]);y++) {
+  for(let x=Math.max(0,expandedText[0]);x<Math.min(textPixels.width,expandedText[2]);x++) {
+    const offset=(y*textPixels.width+x)*4;
+    if(textPixels.data[offset]<100&&textPixels.data[offset+1]<100&&textPixels.data[offset+2]<100)ink++;
+  }
+}
+assert.ok(ink>100,'Expanded paragraph must paint visible text, not an empty frame');
+click(measurement,'text-measure-toggle');
+measurement = await expect('text-measure-recollapsed','text-measure-toggle','展开文本');
+const recollapsedText = textFrame(measurement);
+assert.equal(recollapsedText[3]-recollapsedText[1],collapsedText[3]-collapsedText[1],'Collapse restores the two-line height');
 let buttons=await expect('main-buttons-initial','component-count','点击: 0');
 const frame=id=>buttons.get(id)?.bounds.match(/-?\d+/g).map(Number);
 for(let attempt=0;attempt<6;attempt++) {
@@ -188,5 +217,5 @@ const rows=[...nodes.keys()].filter(id=>id.startsWith('list-row-'));
 assert.ok(rows.length<100,'VirtualList bounds mounted row count');
 click(nodes,'list-prepend');
 nodes=snapshot('main-list-prepend');assert.ok([...nodes.keys()].some(id=>/^list-row-39[89][0-9]$|^list-row-40[01][0-9]$/.test(id)),'prepend retained deep window');
-const result={appearance:mode,checks:['shared primitive Button geometry, click and disabled guard','playing video first frame and four rounded corners in screenshot','custom Hook, HOC, component/element/render/children props and retained state','appearance subscription, dmSrc native load, lineHeight and onLayout frame','shadow density, visible outer halo and horizontally centered labels','main extensions native change and custom module','5000-row VirtualList jump to row 4000','bounded mounted rows and prepend retains deep window'],mountedRows:rows.length,at:new Date().toISOString()};
+const result={appearance:mode,checks:['text measurement expand paints text and collapse restores two lines','shared primitive Button geometry, click and disabled guard','playing video first frame and four rounded corners in screenshot','custom Hook, HOC, component/element/render/children props and retained state','appearance subscription, dmSrc native load, lineHeight and onLayout frame','shadow density, visible outer halo and horizontally centered labels','main extensions native change and custom module','5000-row VirtualList jump to row 4000','bounded mounted rows and prepend retains deep window'],mountedRows:rows.length,at:new Date().toISOString()};
 writeFileSync(join(out,'main-results.json'),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result,null,2));

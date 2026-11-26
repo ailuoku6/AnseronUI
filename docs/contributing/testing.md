@@ -12,7 +12,7 @@
 | `npm run test:ci -- layout` | 布局上游差分、Native library、WASI | C/C++、Zig、首次运行需网络 |
 | `npm run test:ci -- native` | 当前 Native Core、五类示例协议、错误堆栈、细粒度更新预算 | C/C++ 工具链 |
 | `npm run test:ci -- wasm` | 当前 Wasm Core、五类示例协议、DevTools、细粒度更新预算 | Zig |
-| `npm run test:ci -- web` | Web 生产构建、全部 11 个 Playwright WebKit 套件，含真实双 Wasm | Linux / macOS、Zig、Playwright WebKit 及系统依赖 |
+| `npm run test:ci -- web` | JS Web 生产构建、9 个 Playwright WebKit 套件 | Linux / macOS、Playwright WebKit 及系统依赖 |
 | `npm run test:ci -- ios` | macOS 专属 CLI 路径、原生图标编译、当前 AOT 构建、UIKit transport 测试、XCUITest | Apple Silicon Mac、Xcode、已安装 iPhone simulator runtime |
 | `npm run test:ci -- macos` | 当前 AOT/AppKit 集成、Renderer 回归、DevTools 截图 | Apple Silicon macOS 15+、Xcode、图形会话 |
 | `npm run test:ci -- android-build` | 原生图标资源编译、当前 arm64 APK、instrumentation APK | JDK 17、SDK 35、NDK、Zig |
@@ -21,7 +21,7 @@
 
 Web 测试首次运行前执行 `npx playwright install --with-deps webkit`，安装锁定版本的浏览器和 Linux 系统库。测试使用无头 WebKit 和本地 HTTP 资源服务，无需 Xcode 或桌面会话。
 
-套件自动准备编译器。Core 的输出目录共享，因此同一 checkout 内串行运行套件。`native` 和 `wasm` 最后构建专用性能 fixture；后续平台测试会重新构建主配置。
+Web 套件使用 JS 运行时，覆盖计时器、无障碍示例、虚拟列表和文本测量，无需 AOT 编译器或 Zig。其他平台套件自动准备编译器。Core 的输出目录共享，因此同一 checkout 内串行运行套件。`native` 和 `wasm` 最后构建专用性能 fixture；后续平台测试会重新构建主配置。
 
 iOS 自动选择可用 iPhone。用 `IOS_SIMULATOR_UDID` 指定设备。Android 用 `ANDROID_SERIAL`；只有一个设备时自动选择。HarmonyOS 用 `HARMONY_DEVICE`。Android 支持 `arm64-v8a` 和 `x86_64`。设备测试自动选择目标 ABI；`ANSERONUI_ANDROID_ABI` 可指定架构。只构建时默认 `arm64-v8a`。x86_64 的异步 AOT 需要 LLVM 22+：Linux 默认使用 `clang-22`，macOS 默认使用 Homebrew LLVM。自定义路径设置 `ANSERONUI_ANDROID_LLVM_CLANG`。CI 自动安装 LLVM 22。
 
@@ -61,7 +61,7 @@ HarmonyOS 设备任务在启用后于 push 和手动运行时执行，并串行�
 | TSX lowering、JSX ABI、模板、组合组件、Hook、细粒度更新 | UI/compiler/Core 单测；reducer 顺序与 memo/callback 缓存；Native/Wasm fixture 的固定工作量与消息预算 |
 | 基础组件、Button、富文本、输入、ref、触摸/滚动 | Core；WebKit；iOS/Android/macOS renderer；Harmony smoke/demo |
 | Flex 布局、测量、样式、主题、图片来源 | 布局上游/差分/Native/Wasm；WebKit 与各端 renderer |
-| 虚拟列表、深处窗口、头插锚点 | Core、WebKit 参考/Wasm、原生 renderer 与 Harmony demo |
+| 虚拟列表、深处窗口、头插锚点 | Core、WebKit JS、原生 renderer 与 Harmony demo |
 | 动画、帧时钟、取消/销毁 | Core 协议；WebKit；iOS/Android/macOS；Harmony adapter |
 | 路由、参数、保活、返回、可见性、内存回收 | Core/Web router；各端宿主与设备测试 |
 | Promise/计时器、HTTP、取消与迟到回调 | Core；Native/Wasm；HTTP fixture 与原生页面 |
@@ -79,7 +79,7 @@ HarmonyOS 设备任务在启用后于 push 和手动运行时执行，并串行�
 
 Harmony 验收报告中的 `blocked` 会使全量设备套件失败，避免把系统配额/授权阻塞计为通过。不能用 `continue-on-error` 隐藏功能失败。
 
-新增回归优先放在所属包的 `test/` 或原生测试 target 中。新增浏览器入口须加入 `scripts/testing/suites.mjs` 的 `browserSuites`。新增独立测试脚本须加入 suite；先用本地 suite 验证，再确认 Actions 中存在对应日志。
+新增回归优先放在所属包的 `test/` 或原生测试 target 中。新增 JS 浏览器入口须加入 `scripts/testing/suites.mjs` 的 `browserSuites`。可选 Wasm 浏览器入口登记在 `wasmBrowserSuites`，先执行 `npm run build:core:wasm`，再用 `node scripts/test-web-extensions.mjs <入口>` 手动运行。新增独立测试脚本须加入 suite；先用本地 suite 验证，再确认 Actions 中存在对应日志。
 
 ## 失败报告
 

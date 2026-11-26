@@ -3,15 +3,15 @@ import { writeFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve, sep } from 'node:path';
 import { webkit } from 'playwright';
-import { browserSuites } from './testing/suites.mjs';
+import { browserSuites, wasmBrowserSuites } from './testing/suites.mjs';
 
 const suite = process.argv[2] ?? 'extensions';
-if (!browserSuites.includes(suite)) throw new Error(`Unknown browser suite: ${suite}`);
+if (![...browserSuites, ...wasmBrowserSuites].includes(suite)) throw new Error(`Unknown browser suite: ${suite}`);
 const directory = `.verification/browser/${suite}`;
 await rm(directory, { recursive: true, force: true });
 await mkdir(directory, { recursive: true });
-const entry = suite.startsWith('text-measurement') ? 'verifyTextMeasurement' : suite.startsWith('virtual-list') ? 'verifyVirtualList' : suite === 'accessibility-wasm' ? 'verifyAccessibilityWasm' : suite === 'accessibility' ? 'verifyAccessibility' : suite === 'styles' ? 'verifyStyles' : suite === 'layout' ? 'verifyLayout' : suite === 'split' ? 'verifySplitTimers' : suite === 'routing' ? 'verifyRouting' : 'verifyExtensions';
-const encoded = ['split', 'virtual-list-wasm', 'accessibility-wasm', 'text-measurement-wasm'].includes(suite)
+const entry = suite.startsWith('text-measurement') ? 'verifyTextMeasurement' : suite.startsWith('virtual-list') ? 'verifyVirtualList' : suite === 'accessibility-wasm' ? 'verifyAccessibilityWasm' : suite === 'accessibility-demo' ? 'verifyAccessibilityDemo' : suite === 'accessibility' ? 'verifyAccessibility' : suite === 'styles' ? 'verifyStyles' : suite === 'layout' ? 'verifyLayout' : suite === 'timers' ? 'verifyTimers' : suite === 'split' ? 'verifySplitTimers' : suite === 'routing' ? 'verifyRouting' : 'verifyExtensions';
+const encoded = wasmBrowserSuites.includes(suite)
   ? await Promise.all(['business', 'framework'].map(async kind => (await readFile(`.verification/${kind}-wasm/entry.wasm`)).toString('base64'))) : [];
 const args = encoded.map(text => `Uint8Array.from(atob(${JSON.stringify(text)}), c => c.charCodeAt(0))`).join(',');
 const result = await build({ stdin: { contents: `import {${entry}} from './packages/render-web/test/${suite.startsWith('text-measurement') ? 'text-measurement' : suite === 'virtual-list-wasm' ? 'virtual-list' : suite}.browser.ts';

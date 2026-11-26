@@ -10,6 +10,12 @@ export async function verifyTextMeasurement(business?: Uint8Array, framework?: U
   const node = (id: string) => root.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
   const assert = (value: unknown, message: string) => { if (!value) throw new Error(message + '; ' + root.outerHTML + '; ' + JSON.stringify(host.diagnostics)); };
   const tick = async () => { for (let i = 0; i < 20; i++) { await host.flush(); await Promise.resolve(); } };
+  const assertClipped = () => {
+    const preview = node('text-measure-preview');
+    // Frame height alone does not detect text painting into the following row.
+    assert(getComputedStyle(preview).overflowY === 'hidden',
+      'collapsed text must clip content below its two-line frame');
+  };
   try {
     await host.mount('components', 390, 844);
     for (let i = 0; i < 100 && !node('text-measure-toggle'); i++) {
@@ -22,10 +28,13 @@ export async function verifyTextMeasurement(business?: Uint8Array, framework?: U
     const collapsed = await measureBrowserText(root)('Text', measurementSample, 16, width, { lineHeight: 24, numberOfLines: 2 });
     assert(node('text-measure-result').textContent === `完整: ${full.width} × ${full.height} / 两行: ${collapsed.height}`, 'public measurement matches browser typesetting');
     assert(node('text-measure-preview').getBoundingClientRect().height === collapsed.height, 'collapsed Text matches measured height');
+    assertClipped();
     node('text-measure-toggle').click(); await tick();
     assert(node('text-measure-preview').getBoundingClientRect().height === full.height, 'expanded Text matches measured height');
+    assert(getComputedStyle(node('text-measure-preview')).overflowY === 'visible', 'expanded Text restores default overflow');
     node('text-measure-toggle').click(); await tick();
     assert(node('text-measure-preview').getBoundingClientRect().height === collapsed.height, 'collapse restores two lines');
+    assertClipped();
     assert(document.body.childElementCount === bodyChildren, 'detached measurement probes are released');
     assert(host.diagnostics.length === 0, 'no runtime diagnostics');
   } finally { await host.destroy(); root.remove(); }

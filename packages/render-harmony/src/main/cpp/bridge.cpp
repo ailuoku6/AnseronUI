@@ -459,7 +459,13 @@ void props(napi_env e,Node &n,napi_value p,const std::set<std::string> *changed=
     else if(k=="fontWeight")ints(h,NODE_FONT_WEIGHT,{str(e,v)=="bold"?ARKUI_FONT_WEIGHT_BOLD:ARKUI_FONT_WEIGHT_NORMAL});
     else if(k=="fontStyle")ints(h,NODE_FONT_STYLE,{str(e,v)=="italic"?1:0});
     else if(k=="textAlign"){auto a=str(e,v);ints(h,NODE_TEXT_ALIGN,{a=="center"?1:a=="right"?2:0});}
-    else if(k=="numberOfLines")ints(h,NODE_TEXT_MAX_LINES,{static_cast<int32_t>(integer(e,v,true))});
+    else if(k=="numberOfLines"){
+      // The shared API uses zero for unlimited lines; ArkUI treats it as zero
+      // visible lines. Reset the native limit when expanding the text.
+      const auto lines=integer(e,v,true);
+      if(lines)ints(h,NODE_TEXT_MAX_LINES,{static_cast<int32_t>(lines)});
+      else api->resetAttribute(h,NODE_TEXT_MAX_LINES);
+    }
     else if(k=="ellipsizeMode")ints(h,NODE_TEXT_OVERFLOW,{str(e,v)=="tail"?ARKUI_TEXT_OVERFLOW_ELLIPSIS:ARKUI_TEXT_OVERFLOW_CLIP});
     else if(k=="visibility")ints(h,NODE_VISIBILITY,{str(e,v)=="hidden"?1:0});
     else if(k=="disabled"||k=="editable")ints(h,NODE_ENABLED,{k=="disabled"?!boolean(e,v):boolean(e,v)});

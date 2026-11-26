@@ -332,7 +332,7 @@ export class HarmonyHost {
         const options: MeasureOptions = { textContent: p.text ?? '',
           fontSize: p.fontSize ?? 16, fontWeight: p.props?.fontWeight ?? 'normal',
           fontStyle: p.props?.fontStyle === 'italic' ? FontStyle.Italic : FontStyle.Normal,
-          maxLines: p.props?.numberOfLines, lineHeight: p.props?.lineHeight,
+          maxLines: p.props?.numberOfLines ? p.props.numberOfLines : undefined, lineHeight: p.props?.lineHeight,
           constraintWidth: !intrinsic && p.maxWidth && p.maxWidth > 0 ? p.maxWidth + 'vp' : undefined };
         let size = measure.measureTextSize(options);
         if (p.kind === 'Text' && p.maxWidth !== undefined && p.maxWidth > 0 && this.ui.px2vp(Number(size.width)) > p.maxWidth) {
