@@ -346,6 +346,14 @@ private final class TouchSession {
 }
 
 @MainActor public final class IOSRenderer: NSObject, UIScrollViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate {
+    // Xcode 16's SDK has no Liquid Glass types, even when the built app later
+    // runs on iOS 26. Both SDK support and runtime availability are required.
+    static var supportsNativeGlass: Bool {
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) { return true }
+#endif
+        return false
+    }
     #if DEBUG
     private var devtoolsImage = ""
     private var devtoolsImageRect = CGRect.zero
@@ -494,9 +502,7 @@ private final class TouchSession {
         for record in nodes.values {
             guard let raw = record.declaredProps else { continue }
             let dark = root.traitCollection.userInterfaceStyle == .dark
-            let nativeGlass: Bool
-            if #available(iOS 26.0, *) { nativeGlass = true } else { nativeGlass = false }
-            let p = raw.themed(dark).glassFallback(dark, nativeGlass: nativeGlass)
+            let p = raw.themed(dark).glassFallback(dark, nativeGlass: Self.supportsNativeGlass)
             let color = parseColor(p.backgroundColor) ?? .clear
             record.pageBackgroundColor = color
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
@@ -693,8 +699,7 @@ private final class TouchSession {
         let previous = record.declaredProps
         record.declaredProps = raw
         let dark = root.traitCollection.userInterfaceStyle == .dark
-        let nativeGlass: Bool
-        if #available(iOS 26.0, *) { nativeGlass = true } else { nativeGlass = false }
+        let nativeGlass = Self.supportsNativeGlass
         let props = raw.themed(dark).glassFallback(dark, nativeGlass: nativeGlass)
         let view = record.view
         // Missing backgrounds are transparent, including when a prior color is removed.
@@ -710,6 +715,7 @@ private final class TouchSession {
             || previous?.glassEffectSpacing != props.glassEffectSpacing
             || previous?.disabled != props.disabled
             || previous?.backgroundBlurRadius != raw.backgroundBlurRadius
+#if compiler(>=6.2)
         if affects("glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing", "disabled", "backgroundBlurRadius"), glassChanged, let effectView = view as? UIVisualEffectView, #available(iOS 26.0, *) {
             if props.glassEffectContainer == true {
                 let effect = UIGlassContainerEffect()
@@ -725,6 +731,7 @@ private final class TouchSession {
                 effectView.effect = nil
             }
         }
+#endif
         if affects("glassEffect", "glassEffectStyle", "glassEffectTintColor", "glassEffectInteractive", "glassEffectContainer", "glassEffectSpacing", "disabled", "backgroundBlurRadius"), let effectView = view as? TSPrimitiveView {
             let usesFallback = !nativeGlass || (props.glassEffect != true && props.glassEffectContainer != true)
             if usesFallback { effectView.effect = nil }

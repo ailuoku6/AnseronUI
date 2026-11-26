@@ -145,7 +145,7 @@ function LoadMessage() {
 ## 验证与排查
 
 1. 先运行 `npm run typecheck:framework` 和 `npm run test:framework`，排除框架类型与参考行为问题。
-2. 把页面/共享源码加入应用配置，执行 `npm run anseronui -- build <ios|android|web> --config <配置路径>`。目标平台构建才会检查相应 library/Wasm 边界。
+2. 把页面/共享源码加入应用配置，执行 `npm run anseronui -- build <ios|android|web> --config <配置路径>`。原生目标构建检查 library/AOT 边界；Web 构建使用 Vite 编译为 JavaScript，不能替代原生编译检查。
 3. lowering 报错先查 JSX/Hook；scriptc 报错从第一个诊断和源位置查起，避免只修后续级联错误。
 4. 在最小页面复现，并在目标宿主验证。上游 `scriptc coverage` 可辅助分析，但普通 CLI 分析不等于本项目打过补丁的 library 构建通过。
 

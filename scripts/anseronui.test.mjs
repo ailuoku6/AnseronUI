@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -92,6 +92,32 @@ if (tool === 'xcrun') {
 function appCLI(f, args, env = process.env) {
   return spawnSync(process.execPath, [cli, ...args], { cwd: f.app, encoding: 'utf8', env });
 }
+
+test('Web CLI builds configured pages as JavaScript and excludes stale Wasm while preserving public assets', () => {
+  const f = fixture();
+  try {
+    const config = JSON.parse(readFileSync(f.config, 'utf8'));
+    config.pages[1].name = 'renamed-details';
+    writeFileSync(f.config, JSON.stringify(config));
+    const publicDir = join(f.app, 'web/public');
+    mkdirSync(publicDir, { recursive: true });
+    for (const name of ['core.wasm', 'framework.wasm', 'core.manifest.json']) writeFileSync(join(publicDir, name), 'stale');
+    writeFileSync(join(publicDir, 'hello.txt'), 'public fixture');
+    const built = appCLI(f, ['build', 'web']);
+    assert.equal(built.status, 0, built.stderr || built.stdout);
+    assert.doesNotMatch(built.stdout, /Compiling.*wasm|Reusing.*wasm/);
+    const checked = appCLI(f, ['typecheck']);
+    assert.equal(checked.status, 0, checked.stderr || checked.stdout);
+    const dist = join(f.app, 'dist/web');
+    assert.equal(readFileSync(join(dist, 'hello.txt'), 'utf8'), 'public fixture');
+    for (const name of ['core.wasm', 'framework.wasm', 'core.manifest.json']) assert.equal(existsSync(join(dist, name)), false);
+    assert.equal(existsSync(join(f.app, '.verification/core-wasm')), false);
+    const bundle = readdirSync(join(dist, 'assets')).filter(name => name.endsWith('.js')).map(name => readFileSync(join(dist, 'assets', name), 'utf8')).join('\n');
+    assert.match(bundle, /renamed-details/);
+    assert.match(bundle, /JavaScript|详情页/);
+    assert.doesNotMatch(bundle, /WebAssembly\.instantiate|core\.wasm|framework\.wasm/);
+  } finally { f.cleanup(); }
+});
 
 test('create supports an external directory with spaces, keeps its identity and refuses overwrite', () => {
   const f = fixture();

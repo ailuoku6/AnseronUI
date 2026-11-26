@@ -7,7 +7,7 @@
 AnseronUI 的目标是把“业务和 UI 描述”放在共享 TypeScript/TSX Core，把“系统视图和平台能力”留在宿主：
 
 1. 业务只写一次页面、状态、布局描述和事件逻辑；
-2. Core 不依赖移动端 JavaScript 引擎，使用 scriptc AOT 编译为原生静态库或 Wasm reactor；
+2. 原生 Core 使用 scriptc AOT 编译为静态库，不依赖移动端 JavaScript 引擎；Web 使用 JavaScript；
 3. iOS、Android、macOS、HarmonyOS 和 Web 各自用平台渲染器创建真实控件；
 4. 布局、事件、页面生命周期和协议语义保持跨端一致；
 5. 网络、计时器、文本测量、系统返回键和原生组件通过宿主能力注入。
@@ -30,7 +30,7 @@ AnseronUI 的原生产物构建基于 **scriptc**，共享布局计算基于 **F
 
 Framework Core 独立编译布局、测量规划和渲染差分；Business Bundle 编译配置中的全部页面和业务 SDK（组件求值、Hooks、事件闭包、effect/ref、服务与生命周期）。业务变化只使业务包失效，内核变化只使内核失效；共享协议、UI 类型和编译模式变化按各自输入指纹失效。
 
-两侧只交换版本化 JSON，Framework Core 不引用业务页面或跨库闭包。原生两个 archive 使用独立 symbol/runtime 状态，组合 C facade 保留 `anseronui_core_*` 接口；Web 使用两份 Wasm/memory。Host / surface 是运行时状态隔离，不是页面级二进制。具体产物、指纹和 ABI 见[独立 Core 与业务包](core-bundles.md)。
+两侧只交换版本化 JSON，Framework Core 不引用业务页面或跨库闭包。原生两个 archive 使用独立 symbol/runtime 状态，组合 C facade 保留 `anseronui_core_*` 接口；Web 使用 `ReferenceRuntime` 在 JavaScript 中同步组合业务 SDK 与布局内核，由 Vite 打包。可选 Wasm 适配器使用两份 Wasm/memory。Host / surface 是运行时状态隔离，不是页面级二进制。具体产物、指纹和 ABI 见[独立 Core 与业务包](core-bundles.md)。
 
 ## 总体分层
 
@@ -49,7 +49,7 @@ flowchart TD
   G --> L[Android 宿主能力]
   H --> M[macOS 宿主能力]
   I --> N[HarmonyOS 宿主能力]
-  J --> O[浏览器/WASI 宿主能力]
+  J --> O[浏览器宿主能力]
 ```
 
 一次渲染可以理解为：TSX 产生描述树，业务 SDK 协调组件和状态，独立 Core 计算 frame 与差分，业务 SDK 输出 Commit，宿主把 Commit 应用到真实节点；用户交互再通过协议回到 Core。
@@ -113,7 +113,7 @@ flowchart TD
 - `android`：Android arm64；
 - `wasm`：Wasm32 WASI reactor。
 
-原生目标分别产出独立 Framework Core 与 Business Bundle archive，再合并组合适配器供现有 transport 链接；Android 最终生成 `libanseronui.so`，iOS 通过 Swift/C binding 调用。Web 产出两个 Wasm reactor，由组合 adapter 串行调用。iOS 构建固定 arm64。Android 支持 arm64-v8a 和 x86_64，默认构建 arm64-v8a，运行时按设备选择 ABI。
+原生目标分别产出独立 Framework Core 与 Business Bundle archive，再合并组合适配器供现有 transport 链接；Android 最终生成 `libanseronui.so`，iOS 通过 Swift/C binding 调用。Web 使用 Vite 编译 TSX 和 TypeScript，产出 JavaScript。显式选择 `build:core:wasm` 时产出两个 Wasm reactor，由组合 adapter 串行调用。iOS 构建固定 arm64。Android 支持 arm64-v8a 和 x86_64，默认构建 arm64-v8a，运行时按设备选择 ABI。
 
 ### 4. 启动与握手
 

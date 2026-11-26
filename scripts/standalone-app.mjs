@@ -136,7 +136,7 @@ export function createStandalone(targetPath, { name, applicationId, force = fals
   write(join(target, 'platforms/android/settings.gradle'), `pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\nrootProject.name = '${displayName}'\ninclude ':app', ':render'\n`);
   const renderer = posix(relative(join(target, 'platforms/android'), resolve(target, config.app.framework, 'packages/render-android')));
   write(join(target, 'platforms/android/render/build.gradle'), `plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }\nandroid {\n namespace 'org.anseronui.render'\n compileSdk 35\n defaultConfig { minSdk 26 }\n compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }\n kotlinOptions { jvmTarget = '17' }\n sourceSets.main {\n  java.srcDirs = [rootProject.file(${JSON.stringify(renderer + '/src/main/java')})]\n  manifest.srcFile rootProject.file(${JSON.stringify(renderer + '/src/main/AndroidManifest.xml')})\n  jniLibs.srcDirs = [rootProject.file('../../.verification/android-jni')]\n }\n}\napply from: rootProject.file(${JSON.stringify(renderer + '/../devtools/native/android.gradle')})\n`);
-  write(join(target, 'README.md'), `# ${displayName}\n\nAnseronUI 跨平台应用，应用标识 \`${identifier}\`。\n\n\`npm install\` → \`npm run setup\` → \`npm run ios\` / \`npm run android\` / \`npm run macos\`。\n\nsetup 使用 npm 包内的固定版本编译器源码构建工具链，无需 Git。iOS 需要 macOS、Xcode、模拟器 runtime 和 Python 3。macOS AppKit 需要 Apple Silicon、macOS 15+ 构建主机与 Xcode。Android 需要 SDK 35、NDK、JDK 17–22 及 arm64-v8a 或 x86_64 设备/模拟器。运行时自动选择设备 ABI；只构建时默认 ARM64，ANSERONUI_ANDROID_ABI=x86_64 可指定 x86_64。x86_64 构建还需要 LLVM 22+，可通过 ANSERONUI_ANDROID_LLVM_CLANG 指定路径。\n\n指定设备：\`npm run ios -- --device <UUID或名称>\`、\`npm run android -- --device <serial>\`，或 \`npm run android -- --avd <AVD名称>\`。\`--no-build\` 复用已有产物，\`--dry-run\` 预览操作。\n\n\`npm run check\` 检查配置；\`npm run typecheck\` 检查 TSX。\`npm run build:ios\` / \`npm run build:android\` / \`npm run build:macos\` 只构建；\`build:ios-device\` 生成未签名真机产物，需自行配置 Xcode 签名。\n\nWeb：\`npm run build:web\`，然后 \`npm run dev:web\`。修改 TSX 后需重新编译 Wasm。\n\n页面位于 \`src/pages\`；页面清单位于 \`anseronui.config.json\`。${localFramework ? '本地源码模式：页面路径相对于框架目录。' : '配置中的页面、源码及 Web 路径相对于本工程，可整体移动工程。npm 依赖固定版本，提交 package-lock.json 以锁定依赖。SDK 与编译器缓存位于 .anseronui/，构建产物位于 .verification/、platforms/android/app/build/ 和 dist/web/。无需框架源码仓库。'}\n\n应用图标：已附带默认图标及浅色／深色／着色、自适应和单色资源，位于 \`assets/icons/\`。替换图片，或在 \`anseronui.config.json\` 的 \`app.icon\` 配置 1024 × 1024 不透明 PNG，或按平台指定 iOS 浅色／深色／着色及 Icon Composer、Android 自适应／单色／night 资源。运行 \`npm run check\` 后重新构建。完整说明见[应用图标文档](node_modules/anseronui/dist/sdk/docs/guides/project/app-icons.md)，本地源码模式可查看框架 \`docs/guides/project/app-icons.md\`。\n\n五端使用共享 TSX 页面；iOS、Android 与 Web 支持范围见框架文档，macOS 使用原生 AppKit Renderer；鸿蒙使用 Stage/ArkUI Native Node。鸿蒙运行：\`npm run harmony\`，构建：\`npm run build:harmony\`。需要 DevEco HarmonyOS 6.0.1/API 21 SDK 和主机 LLVM 23（HARMONY_LLVM_CLANG）。构建与签名要求见框架 docs/platforms/harmonyos.md。\n\n调试工具：另开终端运行 \`npm run devtools\`，打开 http://127.0.0.1:8091/__anseronui_devtools，再启动 Debug App。业务代码无需导入或注册 DevTools。命令行用 \`npx anseronui inspect sessions\` 获取页面 ID，再用 \`npx anseronui inspect nodes --pager <pagerId>\`、\`logs\`、\`network\`、\`native\` 检索页面信息；支持过滤、分页及单条详情。正式 Release 构建排除调试插桩。完整说明见[DevTools 文档](node_modules/anseronui/dist/sdk/docs/diagnostics/devtools.md)。\n\n原生插件：使用 \`npm install <插件包>\` 安装到生产依赖，\`npm run check\` 查看已发现插件，再重新构建目标平台。构建自动接入包内的原生源码和注册表；生成文件位于 \`.anseronui/plugins/\`，请勿手动修改。插件发布协议见 AnseronUI 框架 README。\n`);
+  write(join(target, 'README.md'), `# ${displayName}\n\nAnseronUI 跨平台应用，应用标识 \`${identifier}\`。\n\n\`npm install\` → \`npm run setup\` → \`npm run ios\` / \`npm run android\` / \`npm run macos\`。\n\nsetup 使用 npm 包内的固定版本编译器源码构建工具链，无需 Git。iOS 需要 macOS、Xcode、模拟器 runtime 和 Python 3。macOS AppKit 需要 Apple Silicon、macOS 15+ 构建主机与 Xcode。Android 需要 SDK 35、NDK、JDK 17–22 及 arm64-v8a 或 x86_64 设备/模拟器。运行时自动选择设备 ABI；只构建时默认 ARM64，ANSERONUI_ANDROID_ABI=x86_64 可指定 x86_64。x86_64 构建还需要 LLVM 22+，可通过 ANSERONUI_ANDROID_LLVM_CLANG 指定路径。\n\n指定设备：\`npm run ios -- --device <UUID或名称>\`、\`npm run android -- --device <serial>\`，或 \`npm run android -- --avd <AVD名称>\`。\`--no-build\` 复用已有产物，\`--dry-run\` 预览操作。\n\n\`npm run check\` 检查配置；\`npm run typecheck\` 检查 TSX。\`npm run build:ios\` / \`npm run build:android\` / \`npm run build:macos\` 只构建；\`build:ios-device\` 生成未签名真机产物，需自行配置 Xcode 签名。\n\nWeb：\`npm run build:web\`，然后 \`npm run dev:web\`。Web 使用 JavaScript 运行时；开发服务器会更新 TSX 页面，无需编译 Wasm。\n\n页面位于 \`src/pages\`；页面清单位于 \`anseronui.config.json\`。${localFramework ? '本地源码模式：页面路径相对于框架目录。' : '配置中的页面、源码及 Web 路径相对于本工程，可整体移动工程。npm 依赖固定版本，提交 package-lock.json 以锁定依赖。SDK 与编译器缓存位于 .anseronui/，构建产物位于 .verification/、platforms/android/app/build/ 和 dist/web/。无需框架源码仓库。'}\n\n应用图标：已附带默认图标及浅色／深色／着色、自适应和单色资源，位于 \`assets/icons/\`。替换图片，或在 \`anseronui.config.json\` 的 \`app.icon\` 配置 1024 × 1024 不透明 PNG，或按平台指定 iOS 浅色／深色／着色及 Icon Composer、Android 自适应／单色／night 资源。运行 \`npm run check\` 后重新构建。完整说明见[应用图标文档](node_modules/anseronui/dist/sdk/docs/guides/project/app-icons.md)，本地源码模式可查看框架 \`docs/guides/project/app-icons.md\`。\n\n五端使用共享 TSX 页面；iOS、Android 与 Web 支持范围见框架文档，macOS 使用原生 AppKit Renderer；鸿蒙使用 Stage/ArkUI Native Node。鸿蒙运行：\`npm run harmony\`，构建：\`npm run build:harmony\`。需要 DevEco HarmonyOS 6.0.1/API 21 SDK 和主机 LLVM 23（HARMONY_LLVM_CLANG）。构建与签名要求见框架 docs/platforms/harmonyos.md。\n\n调试工具：另开终端运行 \`npm run devtools\`，打开 http://127.0.0.1:8091/__anseronui_devtools，再启动 Debug App。业务代码无需导入或注册 DevTools。命令行用 \`npx anseronui inspect sessions\` 获取页面 ID，再用 \`npx anseronui inspect nodes --pager <pagerId>\`、\`logs\`、\`network\`、\`native\` 检索页面信息；支持过滤、分页及单条详情。正式 Release 构建排除调试插桩。完整说明见[DevTools 文档](node_modules/anseronui/dist/sdk/docs/diagnostics/devtools.md)。\n\n原生插件：使用 \`npm install <插件包>\` 安装到生产依赖，\`npm run check\` 查看已发现插件，再重新构建目标平台。构建自动接入包内的原生源码和注册表；生成文件位于 \`.anseronui/plugins/\`，请勿手动修改。插件发布协议见 AnseronUI 框架 README。\n`);
   writeFileSync(join(target, 'README.md'), '\nAI 开发入口见 [AGENTS.md](AGENTS.md)，其中包含 [TSX 开发 skill](.agents/skills/anseronui-development/SKILL.md) 和 [页面调试 skill](.agents/skills/anseronui-debugging/SKILL.md)。\n', { flag: 'a' });
   generateNativePlugins(target, []);
   console.log(`Created independent AnseronUI app: ${target}\nApplication ID: ${identifier}\nNext: cd ${JSON.stringify(target)}${localFramework ? '' : ' && npm install'} && npm run setup && npm run ios\nAndroid: npm run android\nmacOS: npm run macos`);
@@ -248,8 +248,8 @@ export function buildStandalone(configPath, target, { release = false, signed = 
   const { app, config, file, framework } = ctx;
   const plugins = discoverNativePlugins(app);
   generateNativePlugins(app, plugins, target);
-  if (config.schemaVersion === 2 && (!existsSync(join(framework, '.compiler-fingerprint')) || readFileSync(join(framework, '.compiler-fingerprint'), 'utf8') !== readFileSync(join(framework, '.sdk-fingerprint'), 'utf8'))) throw new Error('SDK changed; run npm run setup before building.');
-  if (!existsSync(join(framework, 'internal/toolchain/scriptc/packages/compiler/dist/index.js'))) throw new Error('Run npm run setup from the app first.');
+  if (target !== 'web' && config.schemaVersion === 2 && (!existsSync(join(framework, '.compiler-fingerprint')) || readFileSync(join(framework, '.compiler-fingerprint'), 'utf8') !== readFileSync(join(framework, '.sdk-fingerprint'), 'utf8'))) throw new Error('SDK changed; run npm run setup before building.');
+  if (target !== 'web' && !existsSync(join(framework, 'internal/toolchain/scriptc/packages/compiler/dist/index.js'))) throw new Error('Run npm run setup from the app first.');
   const env = { ...(target === 'android' ? javaEnvironment(androidEnvironment()) : process.env), ANSERONUI_DEBUG_BUILD: release ? '0' : '1', ANSERONUI_RELEASE_BUILD: release ? '1' : '0' };
   if (target === 'android') env.ANSERONUI_ANDROID_ABI = androidABI(androidAbi ? { ...env, ANSERONUI_ANDROID_ABI: androidAbi } : env).abi;
   if (target === 'android' && release) {
@@ -267,16 +267,20 @@ export function buildStandalone(configPath, target, { release = false, signed = 
   try {
     const icons = ['web','macos','harmony'].includes(target) ? undefined : generateAppIcons(app, config, target);
     if (target === 'android' && config.app.icon !== undefined) integrateAndroidIcons(app);
-    const coreTarget = { web: 'wasm', ios: release ? 'ios-device' : 'ios-simulator', 'ios-device': 'ios-device', android: 'android', macos: 'macos-arm64', harmony:'harmony' }[target];
-    run(process.execPath, ['scripts/build-core.mjs', coreTarget, file], { env, cwd: framework });
-    const core = join(framework, '.verification/core-' + coreTarget);
-    const localCore = join(app, '.verification/core-' + coreTarget);
-    mkdirSync(localCore, { recursive: true });
-    const localArtifact = target === 'web' ? 'entry.wasm' : 'entry.lib.a';
-    copyFileSync(join(core, localArtifact), join(localCore, localArtifact));
-    const manifest = json(join(core, 'manifest.json'));
-    manifest.localArtifactSha256 = createHash('sha256').update(readFileSync(join(localCore, localArtifact))).digest('hex');
-    write(join(localCore, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+    const coreTarget = { ios: release ? 'ios-device' : 'ios-simulator', 'ios-device': 'ios-device', android: 'android', macos: 'macos-arm64', harmony:'harmony' }[target];
+    let core;
+    let localCore;
+    if (target !== 'web') {
+      run(process.execPath, ['scripts/build-core.mjs', coreTarget, file], { env, cwd: framework });
+      core = join(framework, '.verification/core-' + coreTarget);
+      localCore = join(app, '.verification/core-' + coreTarget);
+      mkdirSync(localCore, { recursive: true });
+      const localArtifact = 'entry.lib.a';
+      copyFileSync(join(core, localArtifact), join(localCore, localArtifact));
+      const manifest = json(join(core, 'manifest.json'));
+      manifest.localArtifactSha256 = createHash('sha256').update(readFileSync(join(localCore, localArtifact))).digest('hex');
+      write(join(localCore, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+    }
     if (target === 'harmony') buildHarmony({framework,app,config,core:localCore,standalone:true,release,requireSignature:signed,plugins});
     else if (target === 'macos') buildMacOS({framework,app,config,core:localCore,standalone:true,release,requireSignature:signed});
     else if (target === 'web') run(process.execPath, [join(framework, 'scripts/web-app.mjs'), 'build', resolve(framework, config.web.viteConfig), app, configPath], { cwd: framework });
@@ -334,8 +338,7 @@ export function typecheckStandalone(configPath) {
   run(process.execPath, [join(framework, 'node_modules/typescript/bin/tsc'), '-p', join(app, 'tsconfig.json')]);
 }
 export function devStandalone(configPath) {
-  const { app, config, framework, file } = setupStandalone(configPath);
-  run(process.execPath, [join(framework, 'scripts/build-core.mjs'), 'wasm', file], { cwd: framework, env: { ...process.env, ANSERONUI_DEBUG_BUILD: '1', ANSERONUI_RELEASE_BUILD: '0' } });
+  const { app, config, framework } = setupStandalone(configPath);
   run(process.execPath, [join(framework, 'scripts/web-app.mjs'), 'dev', resolve(framework, config.web.viteConfig), app, configPath], { cwd: app });
 }
 export function selectIOS(devices, requested) {

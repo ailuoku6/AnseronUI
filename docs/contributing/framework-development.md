@@ -11,7 +11,7 @@ iOS 模拟器和设备构建固定 arm64，需要 Apple Silicon Mac。Android �
 - iOS：完整 Xcode 和已选择的 Developer 目录；部署目标为 iOS 15+。
 - Android：JDK 17、Android SDK（compileSdk 35）、NDK；应用最低 Android API 26。x86_64 的异步 AOT 需要 LLVM 22+，可用 `ANSERONUI_ANDROID_LLVM_CLANG` 指定编译器路径。
 - macOS：Apple Silicon、macOS 15+ 构建主机与完整 Xcode；产物声明最低 macOS 14，兼容性验证边界见 [AppKit Renderer](../../packages/render-macos/README.md)。
-- Web/Wasm：同一套 [scriptc](https://github.com/vercel-labs/scriptc)/WASI 编译链。Wasm 相关编译需要可用的 Zig 工具链。
+- 可选 Web/Wasm 测试：同一套 [scriptc](https://github.com/vercel-labs/scriptc)/WASI 编译链。Wasm 相关编译需要可用的 Zig 工具链。
 
 在框架仓库根目录执行：
 
@@ -49,12 +49,12 @@ npm run ios
 
 ```sh
 npm run build:web
-npm run dev:wasm
+npm run dev:web
 ```
 
-打开终端显示的地址；配置端口为 5175，端口占用时以 Vite 实际输出为准。默认生产产物位于 `examples/dist/wasm-web/`。修改共享 TSX/Core 后需要重新执行 `build:web`，仅刷新 Vite 不会更新 AOT 业务包；未变化的 Framework Core 会复用。
+打开终端显示的地址；配置端口为 5175，端口占用时以 Vite 实际输出为准。默认生产产物位于 `dist/web/`。Web 使用 JavaScript 运行时，开发服务器会更新共享 TSX 页面。
 
-`npm run dev:counter`、`npm run dev:async-form` 启动的是 JavaScript 参考宿主，适合调试参考运行时，不能替代真实 Wasm 验证。
+`npm run dev:counter`、`npm run dev:async-form` 仍可单独启动页面级 JavaScript 参考宿主。需要验证 Wasm 时，使用 `npm run build:core:wasm` 和对应的 Wasm 测试。
 
 ### iOS 模拟器
 

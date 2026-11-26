@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import nativeWorkerURL from './native-worker?worker&url';
-import { BrowserHost, BrowserPageStack, WasmRuntime } from '@anseronui/render-web';
+import { BrowserReferenceHost, BrowserPageStack } from '@anseronui/render-web';
+import { pages } from 'virtual:anseronui-pages';
 import './style.css';
 const container=document.querySelector<HTMLElement>('#app')!;
 const status=document.querySelector<HTMLElement>('#status')!;
@@ -10,8 +11,9 @@ const nativeServices = 'serviceWorker' in navigator
     }).catch(() => ({}))
   : Promise.resolve({});
 const stack = new BrowserPageStack(container, async (root, page, router) => {
-    const runtime=await WasmRuntime.load('/core.wasm');
-    const host=new BrowserHost(root,runtime,undefined,{
+    const pageDefinition = pages.find(entry => entry.name === page);
+    if (!pageDefinition) throw new Error('Unknown page: ' + page);
+    const host=new BrowserReferenceHost(root,pageDefinition,undefined,{
       services: await nativeServices,
       router,
       modules: { device: (method) => {

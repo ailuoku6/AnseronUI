@@ -209,7 +209,19 @@ import AVKit
         let anchor = row(4000)!.convert(.zero, to: listScroll.documentView).y - listScroll.contentView.bounds.minY
         button("头部插入").accessibilityPerformPress()
         wait("native prepend keeps anchor") { row(4000) != nil && abs(row(4000)!.convert(.zero, to:listScroll.documentView).y - listScroll.contentView.bounds.minY - anchor) < 3 }
+        var hiddenRuntime = false
+        view.onRuntimeStats = { values in
+            hiddenRuntime = values["hiddenSurfaces"] == 1 && values["pendingRenders"] == 0
+            stats = values
+        }
         view.setVisibility(false)
+        // Visibility is queued on the Core owner. An already submitted commit
+        // may still reach AppKit before Core observes the hidden surface.
+        // Keep profiling enabled: the checks below use its accumulated metrics.
+        wait("hidden page reaches Core") {
+            view.inspectRuntime()
+            return hiddenRuntime
+        }
         let tick = descendants(view).compactMap { $0 as? NSTextField }.first { $0.identifier?.rawValue == "list-active-ticks" }!
         let beforeTick = tick.stringValue
         RunLoop.main.run(until:Date(timeIntervalSinceNow:1.1))

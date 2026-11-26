@@ -82,7 +82,9 @@ if (target === 'harmony') {
   }
   run('examples/native/android/gradlew',['-p','examples/native/android',`-PanseronuiAbi=${abi}`,...(release?[':app:assembleRelease',':app:bundleRelease']:[':app:assembleDebug']),'--console=plain'],env);
 } else if (target === 'web') {
-  run(process.execPath,['scripts/build-core.mjs','wasm', ...coreArgs]);
+  // Web uses the JavaScript reference runtime by default. Wasm remains
+  // available through the explicit `build:core:wasm` target for deployments
+  // that opt into it, but the ordinary Web app build must not emit Core Wasm.
   // The framework repository has a checked-in demo Vite host. Standalone
   // projects must still point at their own host config instead of silently
   // building the framework demo.

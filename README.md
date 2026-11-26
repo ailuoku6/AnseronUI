@@ -20,9 +20,9 @@ AnseronUI 用 TypeScript/TSX 编写共享页面，并将页面编译为 iOS、An
 | **Android** | **JDK 17–22**（推荐 17，支持 Android Studio 自带的 **JBR 21**）、**Android SDK Platform 35**、SDK Build-Tools、Platform-Tools（`adb`）、**NDK (Side by side)**、**Zig** | **arm64-v8a** 真机或 ARM64 模拟器，最低 **Android 8.0 / API 26**；当前不支持 x86/x86_64 模拟器 |
 | **macOS** | **Apple Silicon Mac**、**macOS 15+ 构建主机**、**完整 Xcode**（提供 macOS SDK、Clang 和 Swift） | 当前产物为 **arm64**；部署目标声明为 **macOS 14**，验证边界见 [AppKit Renderer](packages/render-macos/README.md) |
 | **HarmonyOS** | **DevEco Studio 6.0.1 / HarmonyOS 6.0.1 API 21 SDK**、SDK 内的 Native Clang/LLVM、另装的**主机 LLVM 23**、Python、`patch` | 当前产物为 **arm64**；设备或模拟器需 **HarmonyOS 6.0.1 / API 21+**；真机需配置 DevEco 开发者签名 |
-| **Web** | **Zig**；Vite 和 Wasm runtime 随 npm 依赖安装 | 支持 **WebAssembly 和 ES modules** 的现代浏览器 |
+| **Web** | Vite 随 npm 依赖安装 | 支持 **ES modules** 的现代浏览器 |
 
-Zig 需自行安装并加入 `PATH`，用 `zig version` 检查。AnseronUI 的 iOS、Android 和 Web AOT 构建使用它；Xcode 和 NDK 仍需分别安装。Gradle 使用工程内的 Wrapper，无需全局安装；`pnpm` 由 npm 依赖提供，无需全局安装。
+Zig 需自行安装并加入 `PATH`，用 `zig version` 检查。AnseronUI 的 iOS、Android 和可选 Wasm AOT 构建使用它；Web 使用 JavaScript。Xcode 和 NDK 仍需分别安装。Gradle 使用工程内的 Wrapper，无需全局安装；`pnpm` 由 npm 依赖提供，无需全局安装。
 
 ### iOS 配置
 

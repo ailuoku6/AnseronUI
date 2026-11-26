@@ -46,7 +46,7 @@ npm run build:web
 npm run dev:web
 ```
 
-默认地址是 `http://localhost:5175`。修改 TSX 后重新 `build:web`，再刷新浏览器。Vite 刷新不会重新编译 Core。
+默认地址是 `http://localhost:5175`。Web 把配置中的 TSX 页面、框架运行时和布局引擎编译成 JavaScript，由 Vite 打包。开发服务器会更新 TSX 页面。部署前运行 `build:web`，发布 `dist/web`。
 
 ## 只构建
 

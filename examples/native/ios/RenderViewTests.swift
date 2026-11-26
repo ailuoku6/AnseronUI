@@ -221,7 +221,38 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
         XCTAssertEqual(reenabled.layer.cornerRadius,16)
     }
 
+    func testGlassUsesAvailableSDKAndKeepsContentAcrossAppearanceChanges() throws {
+        let root = UIView()
+        let renderer = IOSRenderer(root: root)
+        defer { renderer.clear() }
+        try renderer.applyJSON(JSONSerialization.data(withJSONObject: ["type":"Commit","revision":1,"commands":[
+            ["type":"CreateNode","nodeId":1,"kind":"View"],
+            ["type":"SetProps","nodeId":1,"props":["glassEffect":true]],
+            ["type":"InsertChild","nodeId":1,"parentId":0,"index":0],
+            ["type":"CreateNode","nodeId":2,"kind":"Text"],
+            ["type":"SetProps","nodeId":2,"props":["text":"Glass content"]],
+            ["type":"InsertChild","nodeId":2,"parentId":1,"index":0],
+        ]]))
+        let view = try XCTUnwrap(renderer.view(for:1) as? TSPrimitiveView)
+        let child = try XCTUnwrap(renderer.view(for:2))
+        func checkMaterial(file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertTrue(child.superview === view.nodeContent, file:file, line:line)
+            if IOSRenderer.supportsNativeGlass {
+                XCTAssertNotNil(view.effect, file:file, line:line)
+                XCTAssertEqual(view.alpha,1,accuracy:0.01, file:file, line:line)
+            } else {
+                XCTAssertNil(view.effect, file:file, line:line)
+                XCTAssertEqual(view.alpha,0.88,accuracy:0.01, file:file, line:line)
+                XCTAssertTrue(view.contentView.subviews.compactMap { $0 as? UIVisualEffectView }.contains { $0.effect is UIBlurEffect }, file:file, line:line)
+            }
+        }
+        checkMaterial()
+        renderer.appearanceChanged()
+        checkMaterial()
+    }
+
     func testInteractiveGlassSurvivesUnrelatedCommits() throws {
+#if compiler(>=6.2)
         guard #available(iOS 26.0, *) else { throw XCTSkip("Liquid Glass requires iOS 26") }
         let renderer = IOSRenderer(root: UIView())
         defer { renderer.clear() }
@@ -252,6 +283,9 @@ private final class BackDrag: UIScreenEdgePanGestureRecognizer {
         XCTAssertFalse(try XCTUnwrap(view.effect as? UIGlassEffect).isInteractive)
         try apply([["type":"SetProps","nodeId":1,"props":[:]]])
         XCTAssertNil(view.effect)
+#else
+        throw XCTSkip("Native Liquid Glass requires the iOS 26 SDK (Xcode 26 or newer)")
+#endif
     }
 
     @MainActor func testAccessibilitySemanticsActionsAndReset() throws {

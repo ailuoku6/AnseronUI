@@ -29,7 +29,7 @@ npm run harmony
 npm run build:web && npm run dev:web
 ```
 
-Web 修改 TSX 后要重新 `build:web`，再刷新浏览器。设备选择、Release 和签名见[构建与运行](../reference/build.md)。
+Web 使用 JavaScript 运行时。开发服务器会更新 TSX 页面。设备选择、Release 和签名见[构建与运行](../reference/build.md)。
 
 ## 生成的工程
 

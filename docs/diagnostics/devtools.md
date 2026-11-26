@@ -76,7 +76,7 @@ ANSERONUI_DEVTOOLS_ENDPOINT=http://<电脑局域网IP>:8091/__anseronui_devtools
 
 ## 调试 Web
 
-`npm run dev:web` 同时启动 Web 应用和面板。修改 TSX 后重新 `npm run build:web`，再刷新 Web 页面。面板进程保持运行。
+`npm run dev:web` 同时启动 Web 应用和面板。Web 使用 JavaScript 运行时，开发服务器会更新 TSX 页面。面板进程保持运行。
 
 浏览器里的 fetch 和 XHR 属于该浏览器页面。同一窗口里的多个 Web 宿主共享这些浏览器日志和请求。不同标签页互不影响。这不影响各页面自己的元素树。
 

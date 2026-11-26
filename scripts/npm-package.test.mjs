@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, existsSync, cpSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, cpSync, mkdirSync, symlinkSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -45,7 +45,7 @@ test('packed SDK creates a portable app with all native templates and no private
       'scripts/templates/app/platforms/harmony/entry/src/main/ets/workability/WorkAbility.ets',
       'scripts/templates/app/platforms/harmony/entry/src/main/ets/ServiceSetup.ets',
       'scripts/templates/app/platforms/harmony/entry/src/main/cpp/types/libanseronui/Index.d.ts',
-      'scripts/native-plugins.mjs', 'scripts/macos-app.mjs', 'scripts/app-icons.mjs', 'scripts/web-app.mjs', 'scripts/templates/app/platforms/macos/App.swift',
+      'scripts/native-plugins.mjs', 'scripts/macos-app.mjs', 'scripts/app-icons.mjs', 'scripts/web-app.mjs', 'scripts/web-runtime.mjs', 'scripts/templates/app/platforms/macos/App.swift',
       'scripts/templates/app/assets/icons/app.png', 'scripts/templates/app/assets/icons/app-dark.png',
       'scripts/templates/app/assets/icons/app-tinted.png', 'scripts/templates/app/assets/icons/android-monochrome.xml',
       'packages/render-macos/Sources/AnseronUIRenderMacOS/Renderer.swift', 'packages/render-macos/Sources/AnseronUICoreC/module.modulemap',
@@ -126,5 +126,16 @@ test('packed SDK creates a portable app with all native templates and no private
     // The TSX lowerer must still emit a known alias into the AOT staging tree.
     assert.match(readFileSync(join(sdk, 'packages/ui-compiler/src/index.ts'), 'utf8'), /createStringLiteral\("@anseronui\/ui\/jsx-runtime"\)/);
     run(process.execPath, [join(sdk, 'scripts/anseronui.mjs'), 'check'], app);
+    // Build the published schema-2 Web host offline using its actual package
+    // exports and template. No scriptc compiler or Wasm artifact is needed.
+    for (const dependency of ['vite', 'tsx']) symlinkSync(join(root, 'node_modules', dependency), join(directory, 'package/node_modules', dependency), 'dir');
+    mkdirSync(join(app, 'node_modules'), { recursive: true });
+    symlinkSync(join(directory, 'package'), join(app, 'node_modules/anseronui'), 'dir');
+    symlinkSync(join(root, 'node_modules/vite'), join(app, 'node_modules/vite'), 'dir');
+    run(process.execPath, [join(sdk, 'scripts/web-app.mjs'), 'build', join(app, 'web/vite.config.ts'), app, join(app, 'anseronui.config.json')], app);
+    const webAssets = join(app, 'dist/web/assets');
+    const webCode = readdirSync(webAssets).filter(name => name.endsWith('.js')).map(name => readFileSync(join(webAssets, name), 'utf8')).join('\n');
+    assert.match(webCode, /详情页/);
+    assert.doesNotMatch(webCode, /WebAssembly\.instantiate|core\.wasm|framework\.wasm/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
