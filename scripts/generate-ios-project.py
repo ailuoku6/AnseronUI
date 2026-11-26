@@ -81,6 +81,7 @@ def encode(value):
     if isinstance(value, list): return '(' + ', '.join(encode(v) for v in value) + ')'
     return json.dumps(value)
 path = root/'examples/native/ios/AnseronUIDemo.xcodeproj/project.pbxproj'
+path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text('// !$*UTF8*$!\n'+encode({'archiveVersion':'1','classes':{},'objectVersion':'56','objects':objects,'rootObject':project})+'\n')
 print(path)
 

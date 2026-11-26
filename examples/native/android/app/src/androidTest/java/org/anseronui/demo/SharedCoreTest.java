@@ -50,15 +50,14 @@ public final class SharedCoreTest {
             instrumentation.waitForIdleSync();
             long downTime=android.os.SystemClock.uptimeMillis();
             pointer(downTime, android.view.MotionEvent.ACTION_DOWN, button);
-            long pressDeadline=android.os.SystemClock.uptimeMillis()+2000;
-            final float[] alpha={1};
-            do {
-                Thread.sleep(25);
-                instrumentation.runOnMainSync(() -> alpha[0]=findTag(activity.getWindow().getDecorView(),"component-increment").getAlpha());
-            } while (Math.abs(alpha[0]-0.6f)>0.01f && android.os.SystemClock.uptimeMillis()<pressDeadline);
-            instrumentation.runOnMainSync(() -> assertEquals(0.6f,findTag(activity.getWindow().getDecorView(),"component-increment").getAlpha(),0.01f));
-            pointer(downTime, android.view.MotionEvent.ACTION_UP, button);
+            try {
+                waitForButtonAlpha("component-increment", 0.6f);
+            } finally {
+                // End the injected stream even if the pressed-state assertion fails.
+                pointer(downTime, android.view.MotionEvent.ACTION_UP, button);
+            }
             waitFor("点击: 1");
+            waitForButtonAlpha("component-increment", 1f);
             button=visibleButtonBounds("component-disabled");
             downTime=android.os.SystemClock.uptimeMillis();
             pointer(downTime, android.view.MotionEvent.ACTION_DOWN, button);
@@ -67,6 +66,23 @@ public final class SharedCoreTest {
             assertFalse("事件: disabled ERROR".equals(taggedText("component-event")));
             saveButtonScreenshot("shared-buttons-android.png");
         } finally { instrumentation.runOnMainSync(() -> activity.finish()); }
+    }
+    private void waitForButtonAlpha(String tag, float expected) throws Exception {
+        // waitForIdleSync only drains Android's UI queue. Touch handlers run on
+        // the AOT owner thread and publish a commit back to UI; initial text
+        // measurements may still be in flight on a cold hosted emulator.
+        long deadline=android.os.SystemClock.uptimeMillis()+15000;
+        final float[] actual={Float.NaN};
+        do {
+            instrumentation.runOnMainSync(() -> {
+                View view=findTag(activity.getWindow().getDecorView(), tag);
+                actual[0]=view == null ? Float.NaN : view.getAlpha();
+            });
+            if (Math.abs(actual[0]-expected)<=0.01f) return;
+            Thread.sleep(25);
+        } while (android.os.SystemClock.uptimeMillis()<deadline);
+        saveButtonScreenshot("shared-buttons-android-failure.png");
+        assertEquals("Timed out waiting for " + tag + " alpha; bounds=" + bounds(tag) + "; event=" + taggedText("component-event"), expected, actual[0], 0.01f);
     }
     private TextView find(View root, String text) {
         if (root instanceof TextView && ((TextView)root).getText().toString().equals(text)) return (TextView)root;
