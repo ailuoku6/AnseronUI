@@ -514,6 +514,10 @@ export function VirtualList<T>(props: VirtualListProps<T>): UIElement {
   return ScrollView({ ref: scroll, testID: props.testID, scrollAnchorOffset: current.anchorAdjustment, style: { flexGrow: 1, flexBasis: 0, height: 0, minHeight: 0, minWidth: 0, flexDirection: 'column', ...props.style },
     onLayout: frame => { if (frame.width !== viewport.width || frame.height !== viewport.height) setViewport({ width: frame.width, height: frame.height }); },
     onScroll: (offset, event) => {
+      // A native offset can arrive while the requested window is still being
+      // measured. Apply the imperative jump after its commit before accepting
+      // offsets from the previous viewport, otherwise that event cancels it.
+      if (current.correction) return;
       const programmed = current.expectedOffset !== undefined && Math.abs(current.expectedOffset - offset) < 1;
       current.expectedOffset = undefined;
       const now = Date.now();

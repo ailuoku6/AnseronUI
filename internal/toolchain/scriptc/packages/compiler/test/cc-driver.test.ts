@@ -168,6 +168,7 @@ test.skipIf(process.platform === "win32")(
       "darwin",
     );
     expect(driver.targetArgs).toContain(sdk);
+    expect(driver.targetArgs).toContain("-U__ARM_NEON");
   },
 );
 
@@ -199,6 +200,12 @@ test("zigcc resolves to `zig cc`; linux triples add their libc target flags", ()
     "-DSCR_MUSL",
   ]);
   expect(armMusl.linkArgs).toEqual(["-lm"]);
+
+  const ios = resolveCc(
+    { SCRIPTC_CC: "zigcc", SCRIPTC_TARGET: "aarch64-apple-ios-simulator" },
+    "darwin",
+  );
+  expect(ios.targetArgs).toContain("-U__ARM_NEON");
 
   // Non-linux triples get the -target but not glibc's visibility macro.
   const mac = resolveCc({ SCRIPTC_CC: "zigcc", SCRIPTC_TARGET: "aarch64-macos" });

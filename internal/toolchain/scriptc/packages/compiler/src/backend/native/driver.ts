@@ -255,7 +255,10 @@ export function resolveCc(
       argv: ["zig", "cc"],
       target,
       zigTarget,
-      targetArgs: ["-target", zigTarget, "-isysroot", sdk, "-isystem", join(sdk, "usr", "include")],
+      // Zig 0.15's Apple target and ARM intrinsic headers disagree about
+      // per-function CPU features in the runtime's NEON fast paths. Keep the
+      // minimum iOS 15 CPU baseline and use the existing scalar fallbacks.
+      targetArgs: ["-target", zigTarget, "-U__ARM_NEON", "-isysroot", sdk, "-isystem", join(sdk, "usr", "include")],
       linkArgs: [],
     };
   }

@@ -335,6 +335,38 @@ it('mounts a bounded window of 5000 unequal rows, scrolls to distant indices and
   } finally { h.runtime.dispose(); }
 });
 
+it('preserves an imperative jump when the previous native viewport arrives during measurement', async () => {
+  const data = Array.from({ length: 5000 }, (_, id) => id);
+  const ref = createRef<VirtualListHandle>();
+  const h = new TestHost(definePage('jump-during-scroll', () => <View style={{ flexGrow: 1, flexDirection: 'column' }}>
+    <Button title="jump" onClick={() => { void ref.current!.scrollToIndex(4000); }} />
+    <VirtualList data={data} ref={ref} keyExtractor={id => id} estimatedItemHeight={100}
+      renderItem={id => <View testID={'row-' + id} style={{ height: 100 }}><Text>{'Row ' + id}</Text></View>} />
+  </View>));
+  try {
+    await h.mount('jump-during-scroll');
+    const scroll = [...h.nodes].find(([, node]) => node.kind === 'ScrollView')![0];
+    const button = [...h.nodes].find(([, node]) => node.props.accessibilityLabel === 'jump')![0];
+    const move = () => h.send({ type: 'NativeEvent', nodeId: scroll, revision: h.revision, event: 'scroll',
+      x: 0, y: 200000, contentWidth: 320, contentHeight: 500000 });
+    move(); await h.settle();
+    const step = h.runtime.step.bind(h.runtime);
+    h.runtime.step = () => step(1);
+    const send = h.send.bind(h);
+    let delivered = false;
+    h.send = payload => {
+      if (!delivered && payload.type === 'MeasureResult') { delivered = true; move(); }
+      send(payload);
+    };
+    h.send({ type: 'Tap', nodeId: button, revision: h.revision });
+    await h.settle();
+    expect(delivered).toBe(true);
+    expect([...h.nodes.values()].some(node => node.props.testID === 'row-4000')).toBe(true);
+    expect(h.scrolls.at(-1)).toBe(400000);
+    expect(h.runtime.getStats().pendingRenders).toBe(0);
+  } finally { h.runtime.dispose(); }
+});
+
 it('rejects invalid list configuration and imperative scroll targets', async () => {
   for (const [suffix, overscan] of [['negative', -1], ['nan', Number.NaN], ['infinite', Number.POSITIVE_INFINITY]] as const) {
     const pageName = 'invalid-list-' + suffix;
