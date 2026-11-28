@@ -333,14 +333,14 @@ export function Home(): UIElement {
 
   return <View style={{ flexGrow: 1, position: "relative", flexDirection: "row", backgroundColor: "#00000000" }}>
     <View animation={{ duration: 180, easing: "easeOut" }} style={{ position: "absolute", top: 14, bottom: 14, left: 12, right: 197, opacity: showWindows ? 1 : 0, translateX: showWindows ? 0 : 22, visibility: showWindows ? "visible" : "hidden" }}>
-      {showWindows && current ? <View style={{ flexGrow: 1, flexDirection: "column", gap: 10 }}>
-        <View style={{ height: 30, marginHorizontal: 6, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 10, backgroundBlurRadius: 8, backgroundColor: "#f5f5f7df", dmBackgroundColor: "#28282bdf" }}>
+      {showWindows && current ? <View style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0, flexDirection: "column", gap: 10 }}>
+        <View style={{ height: 30, flexShrink: 0, marginHorizontal: 6, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 10, backgroundBlurRadius: 8, backgroundColor: "#f5f5f7df", dmBackgroundColor: "#28282bdf" }}>
           <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: current.color }} />
           <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 13, fontWeight: "bold", color: "#1d1d1f", dmColor: "#f5f5f7" }}>{current.name}</Text>
           <View style={{ flexGrow: 1 }} /><Text style={{ fontSize: 11, color: "#6e6e73", dmColor: "#a1a1a6" }}>{currentWindows.length} 个窗口</Text>
         </View>
-        <ScrollView ref={windowsScroll} testID="ljump-window-list" style={{ flexGrow: 1, flexShrink: 1, flexDirection: "column" }}>
-          <View style={{ flexDirection: "column", gap: 10, paddingHorizontal: 6, paddingBottom: 6 }}>
+        <ScrollView ref={windowsScroll} testID="ljump-window-list" showsVerticalScrollIndicator style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, height: 0, minHeight: 0, flexDirection: "column" }}>
+          <View style={{ flexShrink: 0, flexDirection: "column", gap: 10, paddingHorizontal: 6, paddingBottom: 6 }}>
             {currentWindows.map((window, index) => <WindowCard key={`${window.pid}:${window.id}`}
               id={window.id} pid={window.pid} windowId={window.windowId} bundleId={window.bundleId} app={window.app}
               title={detailFor(window)?.title || window.title} context={detailFor(window)?.context ?? ""} document={detailFor(window)?.document ?? ""}

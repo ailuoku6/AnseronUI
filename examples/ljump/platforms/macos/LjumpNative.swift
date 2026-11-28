@@ -48,6 +48,7 @@ import QuartzCore
     private var eventEmit: NativeCompletion?
     private var monitoringSession: UUID?
     private var dragCandidate: WindowRecord?
+    private var restorePositionTask: Task<Void, Never>?
     private var draggedWindow: [String: Any]?
     private var cardDrag: CardDrag?
     private var suppressedCardClick: WindowKey?
@@ -364,6 +365,8 @@ import QuartzCore
     }
 
     private func stopMonitoring() {
+        restorePositionTask?.cancel()
+        restorePositionTask = nil
         hideTimer?.invalidate()
         hideTimer = nil
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
@@ -468,6 +471,8 @@ import QuartzCore
         let mouse = local ? point : (event.cgEvent.map { appKitPoint($0.location) } ?? NSEvent.mouseLocation)
         switch event.type {
         case .leftMouseDown:
+            restorePositionTask?.cancel()
+            restorePositionTask = nil
             suppressedCardClick = nil
             let target = isVisible ? identifier(at: mouse) : ""
             if local, event.window == panel, !editing, let key = cardKey(target) {
@@ -554,6 +559,7 @@ import QuartzCore
 
     private func finishDrag(at point: NSPoint) {
         let window = draggedWindow
+        let origin = dragCandidate
         let card = cardDrag
         let wasDragging = dragPreview != nil
         resetDrag()
@@ -569,9 +575,32 @@ import QuartzCore
         if let card {
             drop["id"] = Int(card.key.id)
             drop["pid"] = Int(card.key.pid)
-        } else if let window { drop["window"] = window }
+        } else if let window {
+            drop["window"] = window
+            if let origin { restorePosition(afterDrop: origin) }
+        }
         emit(drop)
         panel?.makeKey()
+    }
+
+    private func restorePosition(afterDrop origin: WindowRecord) {
+        restorePositionTask?.cancel()
+        restorePositionTask = Task { @MainActor [weak self] in
+            // The source app must finish handling mouse-up before we move its
+            // window, otherwise its final drag update can overwrite the restore.
+            do { try await Task.sleep(nanoseconds: 100_000_000) }
+            catch { return }
+            guard let self, !Task.isCancelled else { return }
+            defer { self.restorePositionTask = nil }
+            guard AXIsProcessTrusted(),
+                  let current = self.currentWindow(origin.key),
+                  let target = self.accessibilityWindow(current) else { return }
+            AXUIElementSetMessagingTimeout(target, 0.2)
+            var position = origin.bounds.origin
+            guard let value = AXValueCreate(.cgPoint, &position) else { return }
+            let result = AXUIElementSetAttributeValue(target, kAXPositionAttribute as CFString, value)
+            if result != .success { NSLog("Ljump restore position failed: %d", result.rawValue) }
+        }
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
