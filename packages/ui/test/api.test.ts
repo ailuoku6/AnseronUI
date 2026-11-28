@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  Fragment, NativeComponent, RefCell, Text, View, createContext, createNativeComponent, createRef,
+  DateTimePicker, Fragment, NativeComponent, RefCell, Text, View, createContext, createNativeComponent, createRef,
   definePage, normalizeChildren, setHookDispatcher, useCallback, useContext, useEffect, useImperativeHandle,
   useMemo, usePageEffect, usePageVisibility, useReducer, useRef, useRouter, useServices, useState, useTimers,
 } from '../src/index.js';
-import type { HookDispatcher, Services } from '../src/index.js';
+import type { HookDispatcher, NativeComponentProps, Services } from '../src/index.js';
 import { jsx, jsxs, jsxDEV } from '../src/jsx-runtime.js';
 import { template, templateNode } from '../src/template.js';
 
@@ -27,6 +27,30 @@ describe('public UI value constructors', () => {
       kind: 'host', tag: 'Native', props: expect.objectContaining({ name: 'Demo.Control', nativeProps: { enabled: false } }),
     });
     for (const name of ['', '1bad', 'bad name', 'x'.repeat(129)]) expect(() => createNativeComponent(name)).toThrow('INVALID_NATIVE_NAME');
+  });
+
+  it('bridges date picker props and change events to the native control', () => {
+    const value = '2026-11-28 09:30';
+    const selected = '2026-11-29 10:45';
+    const onChange = vi.fn();
+    const style = { width: 280, height: 184 };
+    const picker = DateTimePicker({ value, onChange, style, testID: 'reminder-time', accessibilityLabel: 'Reminder time' });
+    expect(picker).toMatchObject({
+      kind: 'host', tag: 'Native', props: {
+        name: 'AnseronUI.DateTimePicker', nativeProps: { value, disabled: false },
+        style, testID: 'reminder-time', accessibilityLabel: 'Reminder time',
+      },
+    });
+    expect(DateTimePicker({ value, onChange, disabled: true }).props).toMatchObject({
+      nativeProps: { value, disabled: true },
+    });
+
+    const { onNativeEvent } = picker.props as NativeComponentProps;
+    onNativeEvent?.({ name: 'focus', data: selected });
+    onNativeEvent?.({ name: 'change', data: { value: selected } });
+    expect(onChange).not.toHaveBeenCalled();
+    onNativeEvent?.({ name: 'change', data: selected });
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(selected);
   });
 
   it('validates page names and keeps ref storage identity', () => {

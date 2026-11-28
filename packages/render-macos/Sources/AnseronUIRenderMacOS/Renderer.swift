@@ -394,9 +394,8 @@ private final class DesktopScrollView: NSScrollView {
         if affects("testID") { r.widget.identifier = p.testID.map { NSUserInterfaceItemIdentifier($0) } }
         if affects("testID") { r.widget.setAccessibilityIdentifier(p.testID) }
         let font = textFont(size:p.fontSize ?? 14, weight:p.fontWeight, style:p.fontStyle)
-        if affects("textAlign"), let field = r.widget as? NSTextField, r.kind == "TextInput" {
-            field.alignment = p.textAlign == "center" ? .center : (p.textAlign == "right" ? .right : .left)
-            (field.currentEditor() as? NSTextView)?.alignment = field.alignment
+        if affects("textAlign", "secureTextEntry"), let field = r.widget as? NSTextField, r.kind == "TextInput" {
+            updateInputAlignment(field, record: r)
         }
         if affects("text", "spans", "fontSize", "fontWeight", "fontStyle", "color", "dmColor", "lineHeight", "textAlign", "textDecorationLine", "numberOfLines", "ellipsizeMode"), let label = r.widget as? NSTextField, r.kind == "Text" || r.kind == "RichText" {
             r.spans = p.spans.flatMap { try? JSONSerialization.jsonObject(with:Data($0.utf8)) as? [[String:Any]] } ?? []
@@ -697,15 +696,36 @@ private final class DesktopScrollView: NSScrollView {
         guard let id = id(for:sender), (sender.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
         publishInput(sender); emit("submit",id:id,value:sender.stringValue)
     }
+    private func updateInputAlignment(_ field: NSTextField, record: NodeRecord) {
+        let textAlign = record.declaredProps?.textAlign
+        let alignment: NSTextAlignment = textAlign == "center" ? .center : (textAlign == "right" ? .right : .left)
+        // Changing NSTextField.alignment can end editing. Use the active editor
+        // instead, and let the IME finish before changing its paragraph style.
+        if let editor = field.currentEditor() as? NSTextView {
+            if !editor.hasMarkedText(), editor.alignment != alignment { editor.alignment = alignment }
+        } else if field.alignment != alignment {
+            field.alignment = alignment
+        }
+    }
     public func controlTextDidBeginEditing(_ obj:Notification) {
-        guard let field = obj.object as? NSTextField, let id = id(for:field) else { return }
-        (field.currentEditor() as? NSTextView)?.isAutomaticSpellingCorrectionEnabled = nodes[id]?.inputAutoCorrect ?? false
+        guard let field = obj.object as? NSTextField, let id = id(for:field), let r = nodes[id] else { return }
+        updateInputAlignment(field, record: r)
+        (field.currentEditor() as? NSTextView)?.isAutomaticSpellingCorrectionEnabled = r.inputAutoCorrect
         emit("focus",id:id)
     }
-    public func controlTextDidEndEditing(_ obj:Notification) { guard let field = obj.object as? NSTextField, let id = id(for:field) else { return }; publishInput(field); emit("blur",id:id) }
+    public func controlTextDidEndEditing(_ obj:Notification) {
+        guard let field = obj.object as? NSTextField, let id = id(for:field) else { return }
+        publishInput(field); emit("blur",id:id)
+        // AppKit still owns the field editor during this notification.
+        DispatchQueue.main.async { [weak self, weak field] in
+            guard let self, let field, let r = self.nodes[id], r.widget === field else { return }
+            self.updateInputAlignment(field, record: r)
+        }
+    }
     public func controlTextDidChange(_ obj:Notification) {
         guard let field = obj.object as? NSTextField, let id = id(for:field), let r = nodes[id] else { return }
         r.inputRevision &+= 1; publishInput(field)
+        updateInputAlignment(field, record: r)
     }
     private func publishInput(_ field:NSTextField) {
         guard let id = id(for:field), let r = nodes[id], (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
