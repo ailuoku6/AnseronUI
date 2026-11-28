@@ -394,6 +394,10 @@ private final class DesktopScrollView: NSScrollView {
         if affects("testID") { r.widget.identifier = p.testID.map { NSUserInterfaceItemIdentifier($0) } }
         if affects("testID") { r.widget.setAccessibilityIdentifier(p.testID) }
         let font = textFont(size:p.fontSize ?? 14, weight:p.fontWeight, style:p.fontStyle)
+        if affects("textAlign"), let field = r.widget as? NSTextField, r.kind == "TextInput" {
+            field.alignment = p.textAlign == "center" ? .center : (p.textAlign == "right" ? .right : .left)
+            (field.currentEditor() as? NSTextView)?.alignment = field.alignment
+        }
         if affects("text", "spans", "fontSize", "fontWeight", "fontStyle", "color", "dmColor", "lineHeight", "textAlign", "textDecorationLine", "numberOfLines", "ellipsizeMode"), let label = r.widget as? NSTextField, r.kind == "Text" || r.kind == "RichText" {
             r.spans = p.spans.flatMap { try? JSONSerialization.jsonObject(with:Data($0.utf8)) as? [[String:Any]] } ?? []
             label.attributedStringValue = attributed(text:p.text ?? "", font:font, props:p)

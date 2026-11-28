@@ -38,6 +38,7 @@ import AVKit
     }
     static func main() throws {
         _ = NSApplication.shared
+        if CommandLine.arguments.contains("--date-time-picker-regression") { try DateTimePickerRegression.run(); return }
         if CommandLine.arguments.contains("--text-measurement") { try textMeasurement(); return }
         if CommandLine.arguments.contains("--drag-regression") {
             try RendererRegression.dragWorker()

@@ -1,0 +1,14 @@
+plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }
+android {
+ namespace 'org.anseronui.render'
+ compileSdk 35
+ defaultConfig { minSdk 26 }
+ compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+ kotlinOptions { jvmTarget = '17' }
+ sourceSets.main {
+  java.srcDirs = [rootProject.file("../../../../packages/render-android/src/main/java")]
+  manifest.srcFile rootProject.file("../../../../packages/render-android/src/main/AndroidManifest.xml")
+  jniLibs.srcDirs = [rootProject.file('../../.verification/android-jni')]
+ }
+}
+apply from: rootProject.file("../../../../packages/render-android/../devtools/native/android.gradle")

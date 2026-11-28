@@ -175,7 +175,7 @@ function FrostedPanel() {
 | 平台 | 实现与半径语义 |
 | --- | --- |
 | iOS | 原生 `UIVisualEffectView` + `UIBlurEffect`，按数值映射系统材质，并非精确可调的高斯半径 |
-| macOS | 原生 `NSVisualEffectView`，按数值映射系统材质，并非精确可调的高斯半径 |
+| macOS | 原生 `NSVisualEffectView`，按数值映射系统材质。普通窗口模糊窗口内的背景，透明窗口模糊窗口后方的内容 |
 | HarmonyOS | 原生 ArkUI `NODE_BACKGROUND_BLUR_STYLE`，将数值映射为背景模糊强度 |
 | Android | Android 12+（API 31+）硬件 Canvas 复用后方视图的 GPU 显示列表，在独立 `RenderNode` 上使用 `RenderEffect.createBlurEffect`，不生成背景位图、不做 CPU 像素采样；模糊层降低分辨率并换算半径。旧系统或软件 Canvas 的显式模糊仍使用背景位图和三轮盒式滤波。文字和子视图不参与滤镜 |
 | Web | 浏览器 CSS `backdrop-filter: blur(...)` |

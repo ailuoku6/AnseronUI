@@ -55,6 +55,7 @@ export function buildMacOS({ framework, app, config, core, standalone = false, r
       CFBundleName: config.app?.name ?? 'AnseronUI', CFBundleDisplayName: config.app?.name ?? 'AnseronUI',
       CFBundleExecutable:'App', CFBundlePackageType:'APPL', CFBundleVersion:'1', CFBundleShortVersionString:'0.1.0',
       LSMinimumSystemVersion:'14.0', NSHighResolutionCapable:true, NSPrincipalClass:'NSApplication', NSBluetoothAlwaysUsageDescription: "连接蓝牙设备并读取设备数据",
+      ...(config.app?.macosAgent ? { LSUIElement: true } : {}),
       ...(!standalone ? { NSLocationWhenInUseUsageDescription: "演示读取当前位置", NSLocationUsageDescription: "演示读取当前位置", NSCameraUsageDescription: "演示申请相机权限", NSMicrophoneUsageDescription: "演示申请麦克风权限", NSPhotoLibraryUsageDescription: "演示申请照片权限" } : {}),
       ...plugins.infoPlist,
       ...(icon.enabled ? { CFBundleIconFile: 'AppIcon.icns' } : {}),

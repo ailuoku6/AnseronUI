@@ -25,6 +25,9 @@ public extension MacOSNativeComponent {
     public var components: [String: ComponentFactory]
     public init(modules: [String: NativeModuleHandler] = [:], components: [String: ComponentFactory] = [:], subscriptions: [String: NativeEventSource] = [:]) {
         self.modules = modules; self.components = components; self.subscriptions = subscriptions
+        if self.components["AnseronUI.DateTimePicker"] == nil {
+            self.components["AnseronUI.DateTimePicker"] = { emit in MacOSDateTimePicker(emit: emit) }
+        }
     }
 }
 

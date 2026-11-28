@@ -22,6 +22,12 @@ import AppKit
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // A transparent overlay has no background content of its own to sample.
+        // Let AppKit sample the desktop behind it while ordinary windows blur their own content.
+        effectView.blendingMode = window?.isOpaque == false ? .behindWindow : .withinWindow
+    }
     func updateBlurRadius(_ radius: Double) {
         blurRadius = max(0, radius)
         // Like iOS's ultra-thin/regular material mapping, this is a semantic

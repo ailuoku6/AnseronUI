@@ -127,7 +127,21 @@ import AppKit
         synchronizeSize()
     }
 
-    public override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); routes.forEach { $0.host?.environmentChanged() } }
+    private var appearanceRefreshScheduled = false
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // AppKit notifies this container before its descendants inherit the new
+        // appearance. Refresh after propagation so retained Text/Image nodes use
+        // the same appearance as newly created nodes.
+        guard !isDestroyed, !appearanceRefreshScheduled else { return }
+        appearanceRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.appearanceRefreshScheduled = false
+            guard !self.isDestroyed else { return }
+            self.routes.forEach { $0.host?.environmentChanged() }
+        }
+    }
     public override func layout() {
         super.layout()
         renderRoot?.frame = bounds

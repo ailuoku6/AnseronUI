@@ -17,6 +17,7 @@
 | `Image` | 图片 | `src`、`dmSrc`、`placeholderSrc`、`resizeMode`、加载事件 |
 | `Video` | 视频 | `src`、`playControl`、`autoplay`、`loop`、`muted`、播放事件 |
 | `NativeComponent` | 自定义原生视图 | `name`、`nativeProps`、原生事件和 ref |
+| `DateTimePicker` | macOS 系统日历与时间调节 | `value`、`onChange`、`disabled` |
 
 这些组件支持 `style`、`ref`、`testID`、无障碍属性、`key` 和通用触摸事件。描述、角色、读屏动作、播报和聚焦见[无障碍](../guides/ui/accessibility.md)。具体类型以 [`packages/ui/src/index.ts`](../../packages/ui/src/index.ts) 为准。
 
@@ -50,6 +51,22 @@
 ```
 
 `TextInput` 是受控组件，使用 `value` 保存当前文本。图片和视频应设置可计算的宽高。媒体文件的打包位置和平台限制见[资源与媒体](#资源与媒体)。
+
+## 日期与时间选择（macOS）
+
+`DateTimePicker` 将系统月历与小时、分钟调节控件内嵌在 TSX 界面中。当前仅 macOS Renderer 提供实现，其他平台尚不支持。它是受控组件：`value` 和 `onChange` 使用本地时区的 `yyyy-MM-dd HH:mm` 字符串，选择日期保留时间，调整时间保留日期。格式错误或不存在的日期会被拒绝。业务负责校验是否允许过去的时间。
+
+```tsx
+<DateTimePicker
+  value={time}
+  onChange={setTime}
+  disabled={saving}
+  accessibilityLabel="提醒日期和时间"
+  style={{ width: 280, height: 184 }}
+/>
+```
+
+设置明确的宽高，为系统月历和时间行预留空间（建议至少 280 × 184）。月历不绘制额外边框和背景，方便嵌入应用表单。控件使用系统外观与本地化，支持键盘操作；受控属性更新不会再次触发 `onChange`，卸载时释放事件回调。
 
 ## Liquid Glass
 

@@ -1,0 +1,61 @@
+plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+android {
+    namespace 'com.ljump.app'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.ljump.app'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters (project.findProperty('anseronuiAbi') ?: System.getenv('ANSERONUI_ANDROID_ABI') ?: 'arm64-v8a') }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    sourceSets.main.assets.srcDirs += rootProject.file('../../assets')
+    signingConfigs {
+        release {
+            def signingValues = ['ANSERONUI_ANDROID_KEYSTORE', 'ANSERONUI_ANDROID_STORE_PASSWORD', 'ANSERONUI_ANDROID_KEY_ALIAS', 'ANSERONUI_ANDROID_KEY_PASSWORD'].collect { System.getenv(it) }
+            if (signingValues.any { it }) {
+                if (!signingValues.every { it }) throw new GradleException('Set all ANSERONUI_ANDROID_KEYSTORE, ANSERONUI_ANDROID_STORE_PASSWORD, ANSERONUI_ANDROID_KEY_ALIAS and ANSERONUI_ANDROID_KEY_PASSWORD values to sign the release build.')
+                if (!file(signingValues[0]).isFile()) throw new GradleException("Android keystore not found: ${signingValues[0]}")
+                storeFile file(signingValues[0])
+                storePassword signingValues[1]
+                keyAlias signingValues[2]
+                keyPassword signingValues[3]
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (System.getenv('ANSERONUI_ANDROID_KEYSTORE')) signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+}
+dependencies { implementation project(':render') }
+
+// Generated from installed npm plugins by AnseronUI setup/build.
+def pluginDir = rootProject.file('../../.anseronui/plugins')
+def nativePlugins = new groovy.json.JsonSlurper().parse(new File(pluginDir, 'android.json'))
+android.sourceSets.main.java.srcDirs += nativePlugins.sources
+android.sourceSets.main.java.srcDirs += pluginDir
+nativePlugins.dependencies.each { coordinate -> dependencies.add('implementation', coordinate) }
+// An overlay manifest adds permissions without modifying the app's own manifest.
+def permissionsManifest = new File(pluginDir, 'AndroidManifest.xml')
+permissionsManifest.text = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">' +
+    nativePlugins.permissions.collect { '<uses-permission android:name="' + it + '" />' }.join('') + '</manifest>'
+android.sourceSets.debug.manifest.srcFile permissionsManifest
+android.sourceSets.release.manifest.srcFile permissionsManifest
+
+// A direct Gradle Release build must not package a previously staged Debug Core.
+tasks.configureEach { task ->
+    if (task.name == 'preReleaseBuild') {
+        task.doFirst {
+            def manifestFile = file('src/main/assets/core.manifest.json')
+            if (manifestFile.exists() && new groovy.json.JsonSlurper().parse(manifestFile).devtools?.enabled) {
+                throw new GradleException('Release cannot package a Debug-instrumented Core. Rebuild with anseronui build android --release.')
+            }
+        }
+    }
+}

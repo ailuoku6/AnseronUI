@@ -1,0 +1,42 @@
+{
+  "name": "ljump",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "icons": "node scripts/generate-icons.mjs",
+    "setup": "node '../../scripts/anseronui.mjs' setup",
+    "check": "node '../../scripts/anseronui.mjs' check",
+    "typecheck": "node '../../scripts/anseronui.mjs' typecheck",
+    "devtools": "node '../../scripts/anseronui.mjs' devtools",
+    "dev:web": "node '../../scripts/anseronui.mjs' dev web",
+    "build:web": "node '../../scripts/anseronui.mjs' build web",
+    "build:ios": "node '../../scripts/anseronui.mjs' build ios",
+    "build:ios-device": "node '../../scripts/anseronui.mjs' build ios-device",
+    "build:android": "node '../../scripts/anseronui.mjs' build android",
+    "build:macos": "node '../../scripts/anseronui.mjs' build macos",
+    "build:harmony": "node '../../scripts/anseronui.mjs' build harmony",
+    "build:web:release": "node '../../scripts/anseronui.mjs' build web --release",
+    "build:ios:release": "node '../../scripts/anseronui.mjs' build ios-device --release",
+    "build:android:release": "node '../../scripts/anseronui.mjs' build android --release",
+    "build:macos:release": "node '../../scripts/anseronui.mjs' build macos --release",
+    "package:macos": "npm run build:macos:release && node scripts/package-macos.mjs",
+    "test:macos": "node scripts/test-macos.mjs",
+    "build:ios:signed": "node '../../scripts/anseronui.mjs' build ios-device --signed",
+    "build:android:signed": "node '../../scripts/anseronui.mjs' build android --signed",
+    "build:macos:signed": "node '../../scripts/anseronui.mjs' build macos --signed",
+    "build:harmony:release": "node '../../scripts/anseronui.mjs' build harmony --release",
+    "build:harmony:signed": "node '../../scripts/anseronui.mjs' build harmony --signed",
+    "harmony": "node '../../scripts/anseronui.mjs' run harmony",
+    "run:harmony": "node '../../scripts/anseronui.mjs' run harmony",
+    "ios": "node '../../scripts/anseronui.mjs' run ios",
+    "android": "node '../../scripts/anseronui.mjs' run android",
+    "macos": "node '../../scripts/anseronui.mjs' run macos",
+    "run:ios": "node '../../scripts/anseronui.mjs' run ios",
+    "run:android": "node '../../scripts/anseronui.mjs' run android",
+    "run:macos": "node '../../scripts/anseronui.mjs' run macos"
+  }
+}

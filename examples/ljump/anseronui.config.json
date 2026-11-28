@@ -1,0 +1,47 @@
+{
+  "buildId": "ljump-app",
+  "app": {
+    "name": "Ljump",
+    "applicationId": "com.ljump.app",
+    "macosAgent": true,
+    "framework": "../..",
+    "icon": {
+      "default": "assets/icons/app.png",
+      "macos": "assets/icons/app-macos.png",
+      "ios": {
+        "light": "assets/icons/app.png",
+        "dark": "assets/icons/app-dark.png",
+        "tinted": "assets/icons/app-tinted.png"
+      },
+      "android": {
+        "adaptive": {
+          "foreground": "assets/icons/android-foreground.xml",
+          "background": {
+            "color": "#3559DC"
+          },
+          "monochrome": "assets/icons/android-monochrome.xml"
+        },
+        "night": {
+          "legacy": "assets/icons/app-dark.png",
+          "background": {
+            "color": "#111D35"
+          }
+        }
+      }
+    }
+  },
+  "sourceDirs": [
+    "examples/ljump/src"
+  ],
+  "pages": [
+    {
+      "name": "home",
+      "source": "examples/ljump/src/pages/home.tsx",
+      "export": "homePage"
+    }
+  ],
+  "web": {
+    "viteConfig": "examples/ljump/web/vite.config.ts",
+    "publicDir": "examples/ljump/web/public"
+  }
+}

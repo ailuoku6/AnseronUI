@@ -90,8 +90,10 @@ import AVKit
     }
     #endif
     static func run() throws {
+        try DateTimePickerRegression.run()
         try accessibility()
         try darkStyles()
+        try inheritedAppearance()
         try liquidGlass()
         try dragWorker()
         try themeImagesAndLineHeight()
@@ -106,6 +108,7 @@ import AVKit
         print("PASS: renderer regressions (text layout/hits, image scaling, IME, input, mouse cancellation, animations, video lifecycle)")
     }
     private final class MotionCore: MacOSCoreTransport {
+        var initialCommands: [[String: Any]] = []
         let bundleBuildId = "motion-test"
         let runtimeEpoch: UInt32 = 1
         let lock = NSLock()
@@ -123,7 +126,7 @@ import AVKit
             let output: [String: Any]
             switch payload["type"] as? String {
             case "Handshake": output = ["type": "Ready", "supportedNodes": payload["requiredNodes"]!]
-            case "CreateSurface": output = ["type": "Commit", "revision": 1, "commands": []]
+            case "CreateSurface": output = ["type": "Commit", "revision": 1, "commands": initialCommands]
             case "DestroySurface": output = ["type": "SurfaceDisposed"]
             default: return
             }
@@ -135,6 +138,30 @@ import AVKit
         func step(maxMessages: Int) throws -> [Data] { lock.lock(); defer { lock.unlock() }; let result = outputs; outputs = []; return result }
         func hasPendingWork() -> Bool { false }
         func dispose() {}
+    }
+    static func inheritedAppearance() throws {
+        let core = MotionCore()
+        core.initialCommands = [
+            ["type":"CreateNode", "nodeId":1, "kind":"Text"],
+            ["type":"SetProps", "nodeId":1, "props":["testID":"retained-theme-label", "text":"Group", "color":"#000000", "dmColor":"#ffffff"]],
+            ["type":"InsertChild", "nodeId":1, "parentId":0, "index":0],
+            ["type":"SetFrame", "nodeId":1, "frame":["x":0, "y":0, "width":100, "height":30]],
+        ]
+        let view = AnseronUIRenderView(frame:NSRect(x:0,y:0,width:200,height:100), createCore:{ core })
+        view.appearance = NSAppearance(named:.aqua)
+        view.load(page:"test")
+        defer { view.destroy() }
+        func label() -> NSTextField? { Integration.descendants(view).first { $0.identifier?.rawValue == "retained-theme-label" } as? NSTextField }
+        Integration.wait("appearance test label mounted") { label() != nil }
+        let retained = label()!
+        func red() -> CGFloat { (retained.attributedStringValue.attribute(.foregroundColor, at:0, effectiveRange:nil) as! NSColor).usingColorSpace(.sRGB)!.redComponent }
+        Integration.check(red() < 0.01, "initial light label")
+        view.appearance = NSAppearance(named:.darkAqua)
+        Integration.wait("retained label inherits dark appearance") { red() > 0.99 }
+        view.appearance = NSAppearance(named:.aqua)
+        Integration.wait("retained label returns to light appearance") { red() < 0.01 }
+        Integration.check(label() === retained, "appearance refresh preserves existing nodes")
+        print("PASS: retained label follows inherited light/dark appearance without remounting")
     }
     static func dragWorker() throws {
         let core = MotionCore()
@@ -302,6 +329,11 @@ import AVKit
         Integration.check(Integration.descendants(materialRoot).contains(materialChild),"material retains content in flipped coordinates")
         let backdrop = materialRoot.subviews.compactMap { $0 as? DesktopBackgroundBlurView }.first!
         Integration.check(backdrop.effectView.blendingMode == .withinWindow && backdrop.effectView.state == .active,"native backdrop composites within the window")
+        let overlay = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
+        overlay.isOpaque = false
+        let overlayBackdrop = DesktopBackgroundBlurView(frame: overlay.contentView!.bounds)
+        overlay.contentView!.addSubview(overlayBackdrop)
+        Integration.check(overlayBackdrop.effectView.blendingMode == .behindWindow, "transparent overlays blur the desktop behind their window")
         Integration.check(backdrop.effectView.material == .popover,"regular blur uses a translucent native material")
         Integration.check(!Integration.descendants(backdrop.effectView).contains(materialChild),"foreground stays outside the vibrant effect subtree")
         Integration.check(backdrop.blurRadius == 20,"plain blur uses the declared Gaussian radius")
@@ -430,9 +462,12 @@ import AVKit
     }
     static func input() throws {
         let f = Fixture(); defer { f.close() }
-        try f.create(1,"TextInput",["testID":"input","value":"","maxLength":2,"placeholder":"提示","placeholderTextColor":"#d44c30","autoCorrect":true],NSRect(x:10,y:10,width:200,height:40))
+        try f.create(1,"TextInput",["testID":"input","value":"","textAlign":"right","maxLength":2,"placeholder":"提示","placeholderTextColor":"#d44c30","autoCorrect":true],NSRect(x:10,y:10,width:200,height:40))
         try f.bind(1,["changeText","focus","blur","submit"])
         let field = f.widget("input") as! NSTextField
+        Integration.check(field.alignment == .right, "TextInput honors right alignment")
+        try f.apply([["type":"PatchProps","nodeId":1,"set":["textAlign":"center"],"unset":[]]])
+        Integration.check(field.alignment == .center, "TextInput alignment updates without replacing field")
         f.window.makeKeyAndOrderFront(nil)
         Integration.check(f.window.makeFirstResponder(field),"input focus")
         guard let editor = field.currentEditor() as? NSTextView else { Integration.check(false,"native field editor"); return }

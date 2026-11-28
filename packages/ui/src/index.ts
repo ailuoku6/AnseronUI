@@ -198,6 +198,23 @@ export interface NativeComponentProps<P = object> extends CommonProps {
   onNativeEvent?: (event: NativeComponentEvent) => void;
 }
 export function NativeComponent<P = object>(props: NativeComponentProps<P>): HostElement { return host("Native", props); }
+/** Inline system calendar and time control. Currently supported by the macOS renderer. */
+export interface DateTimePickerProps extends CommonProps {
+  /** Local wall-clock time in yyyy-MM-dd HH:mm format. */
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}
+export function DateTimePicker(props: DateTimePickerProps): HostElement {
+  return NativeComponent({
+    name: "AnseronUI.DateTimePicker",
+    nativeProps: { value: props.value, disabled: props.disabled === true },
+    style: props.style, testID: props.testID, accessibilityLabel: props.accessibilityLabel,
+    onNativeEvent: event => {
+      if (event.name === "change" && typeof event.data === "string") props.onChange(event.data);
+    },
+  });
+}
 export function createNativeComponent<P = object>(name: string): Component<Omit<NativeComponentProps<P>, "name">> {
   if (!/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(name)) throw new Error("INVALID_NATIVE_NAME");
   return props => NativeComponent({ ...props, name });

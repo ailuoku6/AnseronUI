@@ -1,0 +1,64 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "ESNext.Disposable",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "@anseronui/ui",
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "anseronui": [
+        "/Users/ailuoku6/web_project/TSNative/packages/ui/src/index.ts"
+      ],
+      "anseronui/core": [
+        "/Users/ailuoku6/web_project/TSNative/packages/core/src/index.ts"
+      ],
+      "anseronui/ui": [
+        "/Users/ailuoku6/web_project/TSNative/packages/ui/src/index.ts"
+      ],
+      "anseronui/layout": [
+        "/Users/ailuoku6/web_project/TSNative/packages/layout/src/index.ts"
+      ],
+      "anseronui/protocol": [
+        "/Users/ailuoku6/web_project/TSNative/packages/protocol/src/index.ts"
+      ],
+      "anseronui/render-web": [
+        "/Users/ailuoku6/web_project/TSNative/packages/render-web/src/index.ts"
+      ],
+      "anseronui/devtools": [
+        "/Users/ailuoku6/web_project/TSNative/packages/devtools/src/index.ts"
+      ],
+      "anseronui/devtools/client": [
+        "/Users/ailuoku6/web_project/TSNative/packages/devtools/src/client.ts"
+      ],
+      "anseronui/devtools/server": [
+        "/Users/ailuoku6/web_project/TSNative/packages/devtools/src/server.ts"
+      ],
+      "anseronui/devtools/vite": [
+        "/Users/ailuoku6/web_project/TSNative/packages/devtools/src/vite.ts"
+      ],
+      "anseronui/ui/jsx-runtime": [
+        "/Users/ailuoku6/web_project/TSNative/packages/ui/src/jsx-runtime.ts"
+      ],
+      "anseronui/ui/jsx-dev-runtime": [
+        "/Users/ailuoku6/web_project/TSNative/packages/ui/src/jsx-runtime.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "web/**/*.ts"
+  ]
+}
